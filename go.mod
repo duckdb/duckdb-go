@@ -13,12 +13,12 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/duckdb/duckdb-go-bindings v0.1.21 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.21 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.21 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.21 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.21 // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.21 // indirect
+	github.com/duckdb/duckdb-go-bindings v0.2.0-0.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.2.0-0.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.2.0-0.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.2.0-0.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.2.0-0.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.2.0-0.preview // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -35,4 +35,9 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+
+replace (
+	github.com/duckdb/duckdb-go/arrowmapping => ./arrowmapping
+	github.com/duckdb/duckdb-go/mapping => ./mapping
 )

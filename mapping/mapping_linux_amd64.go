@@ -768,12 +768,14 @@ var (
 // Table description.
 
 var (
-	TableDescriptionCreate        = bindings.TableDescriptionCreate
-	TableDescriptionCreateExt     = bindings.TableDescriptionCreateExt
-	TableDescriptionDestroy       = bindings.TableDescriptionDestroy
-	TableDescriptionError         = bindings.TableDescriptionError
-	ColumnHasDefault              = bindings.ColumnHasDefault
-	TableDescriptionGetColumnName = bindings.TableDescriptionGetColumnName
+	TableDescriptionCreate         = bindings.TableDescriptionCreate
+	TableDescriptionCreateExt      = bindings.TableDescriptionCreateExt
+	TableDescriptionDestroy        = bindings.TableDescriptionDestroy
+	TableDescriptionError          = bindings.TableDescriptionError
+	ColumnHasDefault               = bindings.ColumnHasDefault
+	TableDescriptionGetColumnCount = bindings.TableDescriptionGetColumnCount
+	TableDescriptionGetColumnName  = bindings.TableDescriptionGetColumnName
+	TableDescriptionGetColumnType  = bindings.TableDescriptionGetColumnType
 )
 
 // Expression.

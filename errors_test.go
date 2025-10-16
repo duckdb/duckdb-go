@@ -168,14 +168,14 @@ func TestErrAppender(t *testing.T) {
 	})
 
 	t.Run(columnCountErrMsg, func(t *testing.T) {
-		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (a VARCHAR, b VARCHAR)`)
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (a VARCHAR, b VARCHAR)`)
 		defer cleanupAppender(t, c, db, conn, a)
 		err := a.AppendRow("hello")
 		testError(t, err, errAppenderAppendRow.Error(), columnCountErrMsg)
 	})
 
 	t.Run(errAppenderAppendAfterClose.Error(), func(t *testing.T) {
-		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (str VARCHAR)`)
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (str VARCHAR)`)
 		closeAppenderWrapper(t, a)
 		defer closeDriverConnWrapper(t, &conn)
 		defer closeDbWrapper(t, db)
@@ -186,7 +186,7 @@ func TestErrAppender(t *testing.T) {
 	})
 
 	t.Run(errAppenderFlush.Error(), func(t *testing.T) {
-		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (c1 INTEGER PRIMARY KEY)`)
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (c1 INTEGER PRIMARY KEY)`)
 		defer closeDriverConnWrapper(t, &conn)
 		defer closeDbWrapper(t, db)
 		defer closeConnectorWrapper(t, c)
@@ -201,7 +201,7 @@ func TestErrAppender(t *testing.T) {
 	})
 
 	t.Run(errAppenderClose.Error(), func(t *testing.T) {
-		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (c1 INTEGER PRIMARY KEY)`)
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (c1 INTEGER PRIMARY KEY)`)
 		defer closeDriverConnWrapper(t, &conn)
 		defer closeDbWrapper(t, db)
 		defer closeConnectorWrapper(t, c)
@@ -231,7 +231,7 @@ func TestErrAppender(t *testing.T) {
 	})
 
 	t.Run(invalidInputErrMsg, func(t *testing.T) {
-		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (col INT[3])`)
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (col INT[3])`)
 		defer cleanupAppender(t, c, db, conn, a)
 		err := a.AppendRow([]int32{1, 2})
 		testError(t, err, errAppenderAppendRow.Error(), invalidInputErrMsg)
@@ -239,7 +239,7 @@ func TestErrAppender(t *testing.T) {
 }
 
 func TestErrAppend(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (id BIGINT, str VARCHAR)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id BIGINT, str VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow("hello", "world")
@@ -249,7 +249,7 @@ func TestErrAppend(t *testing.T) {
 }
 
 func TestErrAppendDecimal(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (d DECIMAL(8, 2))`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (d DECIMAL(8, 2))`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow(Decimal{Width: 9, Scale: 2})
@@ -259,7 +259,7 @@ func TestErrAppendDecimal(t *testing.T) {
 }
 
 func TestErrAppendEnum(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, testTypesEnumSQL+";"+`CREATE TABLE test (e my_enum)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, testTypesEnumSQL+";"+`CREATE TABLE test (e my_enum)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow("3")
@@ -267,7 +267,7 @@ func TestErrAppendEnum(t *testing.T) {
 }
 
 func TestErrAppendSimpleStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 			simple_struct STRUCT(A INT, B VARCHAR)
 		)`)
@@ -303,7 +303,7 @@ func TestErrAppendSimpleStruct(t *testing.T) {
 }
 
 func TestErrAppendDuplicateStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 			duplicate_struct STRUCT(Duplicate INT)
 		)`)
@@ -314,7 +314,7 @@ func TestErrAppendDuplicateStruct(t *testing.T) {
 }
 
 func TestErrAppendStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 			mix STRUCT(a STRUCT(L VARCHAR[]), B STRUCT(L INT[])[])
 		)`)
@@ -325,7 +325,7 @@ func TestErrAppendStruct(t *testing.T) {
 }
 
 func TestErrAppendList(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test(intSlice INT[])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test(intSlice INT[])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow([]string{"foo", "bar", "baz"})
@@ -335,7 +335,7 @@ func TestErrAppendList(t *testing.T) {
 }
 
 func TestErrAppendStructWithList(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (struct_with_list STRUCT(L INT[]))`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (struct_with_list STRUCT(L INT[]))`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow([]int32{1, 2, 3})
@@ -345,7 +345,7 @@ func TestErrAppendStructWithList(t *testing.T) {
 }
 
 func TestErrAppendNestedStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 			wrapped_simple_struct STRUCT(a VARCHAR, B STRUCT(A INT, B VARCHAR)),
 		)`)
@@ -356,7 +356,7 @@ func TestErrAppendNestedStruct(t *testing.T) {
 }
 
 func TestErrAppendNestedList(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test(int_slice INT[][][])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test(int_slice INT[][][])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow([]int32{1, 2, 3})
@@ -371,7 +371,7 @@ func TestErrAppenderTSConversion(t *testing.T) {
 	testCases := []string{"TIMESTAMP_NS", "TIMESTAMP", "TIMESTAMPTZ"}
 	for _, tc := range testCases {
 		t.Run(tc+" conversion error", func(t *testing.T) {
-			c, db, conn, a := prepareAppender(t, `CREATE TABLE test (t `+tc+`)`)
+			c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t `+tc+`)`)
 			defer cleanupAppender(t, c, db, conn, a)
 
 			tsLess := time.Date(-290407, time.January, 1, 15, 0o4, 5, 123456, time.UTC)
