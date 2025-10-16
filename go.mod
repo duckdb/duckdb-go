@@ -4,8 +4,8 @@ go 1.24
 
 require (
 	github.com/apache/arrow-go/v18 v18.4.1
-	github.com/duckdb/duckdb-go/arrowmapping v0.0.22
-	github.com/duckdb/duckdb-go/mapping v0.0.22
+	github.com/duckdb/duckdb-go/arrowmapping v0.1.0-0.preview
+	github.com/duckdb/duckdb-go/mapping v0.1.0-0.preview
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.0
@@ -35,9 +35,4 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-)
-
-replace (
-	github.com/duckdb/duckdb-go/arrowmapping => ./arrowmapping
-	github.com/duckdb/duckdb-go/mapping => ./mapping
 )

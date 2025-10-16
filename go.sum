@@ -19,6 +19,10 @@ github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.2.0-0.preview h1:/0iYDT707l7
 github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.2.0-0.preview/go.mod h1:o7crKMpT2eOIi5/FY6HPqaXcvieeLSqdXXaXbruGX7w=
 github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.2.0-0.preview h1:S8ljGCZUp7HMqYuc7RuJOcY7HVunUbSNDtok7qIXlJw=
 github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.2.0-0.preview/go.mod h1:IlOhJdVKUJCAPj3QsDszUo8DVdvp1nBFp4TUJVdw99s=
+github.com/duckdb/duckdb-go/arrowmapping v0.1.0-0.preview h1:GdBB2fQohmWdB14yrRyOhCKLGl3WH1GA1RAP3h6jBYg=
+github.com/duckdb/duckdb-go/arrowmapping v0.1.0-0.preview/go.mod h1:RvM89Tcoz0qJvCXpWh4FVfBbcVRQ6omz2SSBoGCvFe0=
+github.com/duckdb/duckdb-go/mapping v0.1.0-0.preview h1:IyRcHUAS0fMA7osBrCSDfYy1Uoe4uXNh4yRpTz0rvGg=
+github.com/duckdb/duckdb-go/mapping v0.1.0-0.preview/go.mod h1:Ty1OY2RmCqYYIsmyh1qwH29nURJTiJlW19gPrbsiH2Y=
 github.com/go-viper/mapstructure/v2 v2.4.0 h1:EBsztssimR/CONLSZZ04E8qAkxNYq4Qp9LvH92wZUgs=
 github.com/go-viper/mapstructure/v2 v2.4.0/go.mod h1:oJDH3BJKyqBA2TXFhDsKDGDTlndYOZ6rGS0BRZIxGhM=
 github.com/goccy/go-json v0.10.5 h1:Fq85nIqj+gXn/S5ahsiTlK3TmC85qgirsdTP/+DeaC4=
