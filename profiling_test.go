@@ -56,6 +56,11 @@ func TestErrProfiling(t *testing.T) {
 }
 
 func TestCustomProfiling(t *testing.T) {
+	defer func() {
+		err := os.Remove("profile.db")
+		require.NoError(t, err)
+	}()
+
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
 
@@ -71,10 +76,6 @@ func TestCustomProfiling(t *testing.T) {
 
 	_, err = conn.ExecContext(ctx, `ATTACH 'profile.db'`)
 	require.NoError(t, err)
-	defer func() {
-		err = os.Remove("profile.db")
-		require.NoError(t, err)
-	}()
 
 	_, err = conn.ExecContext(ctx, `CREATE TABLE profile.tbl (i INT)`)
 	require.NoError(t, err)
