@@ -125,7 +125,7 @@ const (
 
 var appenderTypes = []string{appenderTypeDefault, appenderTypeTable}
 
-func prepareAppender[T require.TestingT](t T, appenderType string, createQuery string) (*Connector, *sql.DB, driver.Conn, *Appender) {
+func prepareAppender[T require.TestingT](t T, appenderType, createQuery string) (*Connector, *sql.DB, driver.Conn, *Appender) {
 	c := newConnectorWrapper(t, ``, nil)
 
 	// Create the table.

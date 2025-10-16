@@ -85,6 +85,7 @@ func TestCustomProfiling(t *testing.T) {
 	_, err = conn.ExecContext(ctx, `PRAGMA profiling_coverage = 'ALL'`)
 	require.NoError(t, err)
 	_, err = conn.ExecContext(ctx, `PRAGMA custom_profiling_settings='{"CHECKPOINT_LATENCY": "true"}'`)
+	require.NoError(t, err)
 
 	res, err := conn.QueryContext(ctx, `CHECKPOINT profile`)
 	require.NoError(t, err)
