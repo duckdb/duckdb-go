@@ -41,7 +41,7 @@ func TestProfiling(t *testing.T) {
 	_, err = conn.ExecContext(ctx, `PRAGMA disable_profiling`)
 	require.NoError(t, err)
 
-	info, err = GetProfilingInfo(conn)
+	_, err = GetProfilingInfo(conn)
 	require.ErrorContains(t, err, errProfilingInfoEmpty.Error())
 }
 
@@ -98,5 +98,5 @@ func TestCustomProfiling(t *testing.T) {
 	require.True(t, ok)
 	f, err := strconv.ParseFloat(latency, 64)
 	require.NoError(t, err)
-	require.True(t, f > 0)
+	require.Positive(t, f)
 }
