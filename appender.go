@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 
@@ -127,9 +128,23 @@ func (a *Appender) Flush() error {
 	if err := a.appendDataChunk(); err != nil {
 		return getError(errAppenderFlush, invalidatedAppenderError(err))
 	}
+	if err := a.flush(); err != nil {
+		return getError(errAppenderFlush, invalidatedAppenderError(err))
+	}
 
-	if mapping.AppenderFlush(a.appender) == mapping.StateError {
-		err := getDuckDBError(mapping.AppenderError(a.appender))
+	return nil
+}
+
+// FlushWithCancel flushes the data chunks to the underlying table and clears the internal cache.
+// Does not close the appender, even if it returns an error. Unless you have a good reason to call this,
+// call CloseWithCancel when you are done with the appender.
+// Takes a context for cancellation.
+func (a *Appender) FlushWithCancel(ctx context.Context) error {
+	if err := a.appendDataChunk(); err != nil {
+		return getError(errAppenderFlush, invalidatedAppenderError(err))
+	}
+
+	if err := a.flushWithCancel(ctx); err != nil {
 		return getError(errAppenderFlush, invalidatedAppenderError(err))
 	}
 
@@ -139,34 +154,18 @@ func (a *Appender) Flush() error {
 // Close the appender. This will flush the appender to the underlying table.
 // It is vital to call this when you are done with the appender to avoid leaking memory.
 func (a *Appender) Close() error {
-	if a.closed {
-		return getError(errAppenderDoubleClose, nil)
-	}
-	a.closed = true
+	return a.close(nil, func(ctx *context.Context) error {
+		return a.flush()
+	})
+}
 
-	// Append all remaining chunks.
-	errAppend := a.appendDataChunk()
-	a.chunk.close()
-
-	// We flush before closing to get a meaningful error message.
-	var errFlush error
-	if mapping.AppenderFlush(a.appender) == mapping.StateError {
-		errFlush = getDuckDBError(mapping.AppenderError(a.appender))
-	}
-
-	// Destroy all appender data and the appender.
-	destroyLogicalTypes(a.types)
-	var errClose error
-	if mapping.AppenderDestroy(&a.appender) == mapping.StateError {
-		errClose = errAppenderClose
-	}
-
-	err := errors.Join(errAppend, errFlush, errClose)
-	if err != nil {
-		return getError(invalidatedAppenderError(err), nil)
-	}
-
-	return nil
+// CloseWithCancel the appender. This will flush the appender to the underlying table.
+// It is vital to call this when you are done with the appender to avoid leaking memory.
+// Takes a context for cancellation.
+func (a *Appender) CloseWithCancel(ctx context.Context) error {
+	return a.close(&ctx, func(innerCtx *context.Context) error {
+		return a.FlushWithCancel(*innerCtx)
+	})
 }
 
 // AppendRow loads a row of values into the appender. The values are provided as separate arguments.
@@ -246,6 +245,84 @@ func (a *Appender) appendDataChunk() error {
 
 	a.chunk.reset(true)
 	a.rowCount = 0
+
+	return nil
+}
+
+func (a *Appender) flush() error {
+	if mapping.AppenderFlush(a.appender) == mapping.StateError {
+		return getDuckDBError(mapping.AppenderError(a.appender))
+	}
+	return nil
+}
+
+func (a *Appender) flushWithCancel(ctx context.Context) error {
+	// Spawn go-routine waiting to receive on the context or main channel.
+	mainDoneCh := make(chan struct{})
+	bgDoneCh := make(chan struct{})
+	go interruptRoutine(&mainDoneCh, &bgDoneCh, ctx, a.conn)
+
+	err := a.flush()
+
+	// We finished flushing the Appender.
+	// Close the main channel.
+	close(mainDoneCh)
+
+	// Wait for the background go-routine to finish, too.
+	// Sometimes the go-routine is not scheduled immediately.
+	// By the time it is scheduled, another query might be running on this connection.
+	// If we don't wait for the go-routine to finish, it can cancel that new query.
+	<-bgDoneCh
+
+	return err
+}
+
+func (a *Appender) close(ctx *context.Context, flushFn func(ctx *context.Context) error) error {
+	if a.closed {
+		return getError(errAppenderDoubleClose, nil)
+	}
+	a.closed = true
+
+	// Append all remaining chunks.
+	errAppend := a.appendDataChunk()
+	a.chunk.close()
+
+	// We flush before closing to get a meaningful error message.
+	errFlush := flushFn(ctx)
+
+	// Destroy all appender data and the appender.
+	destroyLogicalTypes(a.types)
+	var errClose error
+
+	if ctx == nil {
+		if mapping.AppenderDestroy(&a.appender) == mapping.StateError {
+			errClose = errAppenderClose
+		}
+	} else {
+		// Spawn go-routine waiting to receive on the context or main channel.
+		mainDoneCh := make(chan struct{})
+		bgDoneCh := make(chan struct{})
+		go interruptRoutine(&mainDoneCh, &bgDoneCh, *ctx, a.conn)
+
+		if mapping.AppenderDestroy(&a.appender) == mapping.StateError {
+			errClose = errAppenderClose
+		}
+
+		// We finished flushing the Appender.
+		// Close the main channel.
+		close(mainDoneCh)
+
+		// Wait for the background go-routine to finish, too.
+		// Sometimes the go-routine is not scheduled immediately.
+		// By the time it is scheduled, another query might be running on this connection.
+		// If we don't wait for the go-routine to finish, it can cancel that new query.
+		<-bgDoneCh
+	}
+
+	err := errors.Join(errAppend, errFlush, errClose)
+	if err != nil {
+		return getError(invalidatedAppenderError(err), nil)
+	}
 
 	return nil
 }

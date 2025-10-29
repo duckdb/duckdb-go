@@ -1063,6 +1063,80 @@ func TestAppenderUpsert(t *testing.T) {
 	require.Equal(t, len(testCases), i)
 }
 
+func TestAppenderInterrupt(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		func() {
+			c := newConnectorWrapper(t, ``, nil)
+			defer closeConnectorWrapper(t, c)
+
+			// Create a table with a PK for UPSERT.
+			db := sql.OpenDB(c)
+			defer closeDbWrapper(t, db)
+			_, err := db.Exec(`
+				CREATE TABLE test (
+					id INT PRIMARY KEY
+			)`)
+			require.NoError(t, err)
+
+			conn := openDriverConnWrapper(t, c)
+			defer closeDriverConnWrapper(t, &conn)
+
+			// Create the types.
+			intType, err := NewTypeInfo(TYPE_INTEGER)
+			require.NoError(t, err)
+
+			// Create the appender.
+			query := `INSERT INTO test SELECT col1 FROM appended_data WHERE [col1] = (SELECT LIST(range)::BIGINT[] FROM range(1_000_000_000))`
+			colTypes := []TypeInfo{intType}
+			a := newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+
+			// Insert a row.
+			require.NoError(t, a.AppendRow(0))
+
+			if i == 0 {
+				// Long-running flush.
+				ctx, cancel := context.WithCancel(context.Background())
+				go func() {
+					err = a.FlushWithCancel(ctx)
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+
+				// Also use interrupt for closing it (also runs long, same query).
+				go func() {
+					err = a.CloseWithCancel(ctx)
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+
+			} else {
+				// Long-running close.
+				ctx, cancel := context.WithCancel(context.Background())
+				go func() {
+					err = a.CloseWithCancel(ctx)
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+			}
+		}()
+	}
+}
+
 func BenchmarkAppenderNested(b *testing.B) {
 	c, db, conn, a := prepareAppender(b, createNestedDataTableSQL)
 	defer cleanupAppender(b, c, db, conn, a)
