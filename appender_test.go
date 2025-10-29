@@ -1064,7 +1064,7 @@ func TestAppenderUpsert(t *testing.T) {
 }
 
 func TestAppenderInterrupt(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			c := newConnectorWrapper(t, ``, nil)
 			defer closeConnectorWrapper(t, c)
