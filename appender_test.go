@@ -1118,7 +1118,6 @@ func TestAppenderInterrupt(t *testing.T) {
 				go func() {
 					cancel()
 				}()
-
 			} else {
 				// Long-running close.
 				ctx, cancel := context.WithCancel(context.Background())
