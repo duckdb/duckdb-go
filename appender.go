@@ -157,14 +157,14 @@ func NewTableAppender(driverConn driver.Conn, query, catalog, schema, table stri
 
 	// Now set the logical types.
 	colCount := mapping.TableDescriptionGetColumnCount(desc)
-	for i := mapping.IdxT(0); i < colCount; i++ {
+	for i := range uint64(colCount) {
 		if !allColumns {
-			colName := mapping.TableDescriptionGetColumnName(desc, i)
+			colName := mapping.TableDescriptionGetColumnName(desc, mapping.IdxT(i))
 			if _, ok := m[colName]; !ok {
 				continue
 			}
 		}
-		logicalType := mapping.TableDescriptionGetColumnType(desc, i)
+		logicalType := mapping.TableDescriptionGetColumnType(desc, mapping.IdxT(i))
 		a.types = append(a.types, logicalType)
 	}
 
