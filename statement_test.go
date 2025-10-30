@@ -39,7 +39,7 @@ func TestPrepareQuery(t *testing.T) {
 	closePreparedWrapper(t, prepared)
 
 	// Access the raw connection and statement.
-	err = conn.Raw(func(driverConn interface{}) error {
+	err = conn.Raw(func(driverConn any) error {
 		innerConn := driverConn.(*Conn)
 		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT * FROM foo WHERE baz = ?`)
 		require.NoError(t, innerErr)
@@ -129,7 +129,7 @@ func TestPrepareQueryPositional(t *testing.T) {
 	closePreparedWrapper(t, prepared)
 
 	// Access the raw connection and statement.
-	err = conn.Raw(func(driverConn interface{}) error {
+	err = conn.Raw(func(driverConn any) error {
 		innerConn := driverConn.(*Conn)
 		s, innerErr := innerConn.PrepareContext(context.Background(), `UPDATE foo SET bar = $2 WHERE baz = $1`)
 		require.NoError(t, innerErr)
@@ -236,7 +236,7 @@ func TestPrepareQueryNamed(t *testing.T) {
 	closePreparedWrapper(t, prepared)
 
 	// Access the raw connection and statement.
-	err = conn.Raw(func(driverConn interface{}) error {
+	err = conn.Raw(func(driverConn any) error {
 		innerConn := driverConn.(*Conn)
 		s, innerErr := innerConn.PrepareContext(context.Background(), `INSERT INTO foo VALUES ($bar, $baz)`)
 		require.NoError(t, innerErr)

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -834,10 +835,11 @@ func TestHugeUnionQuery(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
 
+	var query strings.Builder
+	query.WriteString(`SELECT 1`)
 	part := ` UNION SELECT 1`
-	query := `SELECT 1`
 	for range 350 {
-		query += part
+		query.WriteString(part)
 	}
 
 	wg := sync.WaitGroup{}
@@ -845,7 +847,7 @@ func TestHugeUnionQuery(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r, err := db.Query(query)
+			r, err := db.Query(query.String())
 			require.NoError(t, err)
 			defer closeRowsWrapper(t, r)
 			require.True(t, r.Next())

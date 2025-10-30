@@ -778,6 +778,10 @@ var (
 	TableDescriptionGetColumnType  = bindings.TableDescriptionGetColumnType
 )
 
+// Result interface.
+
+var FetchChunk = bindings.FetchChunk
+
 // Expression.
 
 var (

@@ -307,7 +307,7 @@ func (udf *incTableUDF) GetFunction() RowTableFunction {
 	}
 }
 
-func bindIncTableUDF(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindIncTableUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 	return &incTableUDF{
 		count: 0,
 		n:     args[0].(int64),
@@ -341,7 +341,7 @@ func (udf *incTableUDF) Cardinality() *CardinalityInfo {
 	return nil
 }
 
-func bindParallelIncTableUDF(namedArgs map[string]any, args ...interface{}) (ParallelRowTableSource, error) {
+func bindParallelIncTableUDF(namedArgs map[string]any, args ...any) (ParallelRowTableSource, error) {
 	return &parallelIncTableUDF{
 		lock:    &sync.Mutex{},
 		claimed: 0,
@@ -412,7 +412,7 @@ func (udf *parallelIncTableUDF) GetFunction() ParallelRowTableFunction {
 	}
 }
 
-func bindParallelChunkIncTableUDF(namedArgs map[string]any, args ...interface{}) (ParallelChunkTableSource, error) {
+func bindParallelChunkIncTableUDF(namedArgs map[string]any, args ...any) (ParallelChunkTableSource, error) {
 	return &parallelChunkIncTableUDF{
 		lock:    &sync.Mutex{},
 		claimed: 0,
@@ -494,7 +494,7 @@ func (udf *structTableUDF) GetFunction() RowTableFunction {
 	}
 }
 
-func bindStructTableUDF(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindStructTableUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 	return &structTableUDF{
 		count: 0,
 		n:     args[0].(int64),
@@ -537,7 +537,7 @@ func (udf *pushdownTableUDF) GetFunction() RowTableFunction {
 	}
 }
 
-func bindPushdownTableUDF(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindPushdownTableUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 	return &pushdownTableUDF{
 		count: 0,
 		n:     args[0].(int64),
@@ -598,7 +598,7 @@ func (udf *incTableNamedUDF) GetFunction() RowTableFunction {
 	}
 }
 
-func bindIncTableNamedUDF(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindIncTableNamedUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 	return &incTableNamedUDF{
 		count: 0,
 		n:     namedArgs["ARG"].(int64),
@@ -642,8 +642,8 @@ func (udf *constTableUDF[T]) GetFunction() RowTableFunction {
 	}
 }
 
-func bindConstTableUDF[T any](_ T, t Type) func(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
-	return func(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindConstTableUDF[T any](_ T, t Type) func(namedArgs map[string]any, args ...any) (RowTableSource, error) {
+	return func(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 		return &constTableUDF[T]{
 			count: 0,
 			value: args[0].(T),
@@ -689,7 +689,7 @@ func (udf *chunkIncTableUDF) GetFunction() ChunkTableFunction {
 	}
 }
 
-func bindChunkIncTableUDF(namedArgs map[string]any, args ...interface{}) (ChunkTableSource, error) {
+func bindChunkIncTableUDF(namedArgs map[string]any, args ...any) (ChunkTableSource, error) {
 	return &chunkIncTableUDF{
 		count: 0,
 		n:     args[0].(int64),
@@ -743,7 +743,7 @@ func (udf *unionTableUDF) GetFunction() RowTableFunction {
 	}
 }
 
-func bindUnionTableUDF(namedArgs map[string]any, args ...interface{}) (RowTableSource, error) {
+func bindUnionTableUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
 	return &unionTableUDF{
 		count: 0,
 		n:     args[0].(int64),
@@ -854,7 +854,7 @@ func singleTableUDF[T TableFunction](t *testing.T, fun tableUDFTest[T]) {
 	defer closeRowsWrapper(t, res)
 
 	values := fun.udf.GetTypes()
-	args := make([]interface{}, len(values))
+	args := make([]any, len(values))
 	for i := range values {
 		args[i] = &values[i]
 	}
@@ -922,7 +922,7 @@ func BenchmarkRowTableUDF(b *testing.B) {
 	require.NoError(b, err)
 
 	b.StartTimer()
-	for range b.N {
+	for b.Loop() {
 		res, errQuery := db.QueryContext(context.Background(), "SELECT * FROM whoo(2048*64)")
 		require.NoError(b, errQuery)
 		closeRowsWrapper(b, res)
@@ -942,7 +942,7 @@ func BenchmarkChunkTableUDF(b *testing.B) {
 	require.NoError(b, err)
 
 	b.StartTimer()
-	for range b.N {
+	for b.Loop() {
 		res, errQuery := db.QueryContext(context.Background(), "SELECT * FROM whoo(2048*64)")
 		require.NoError(b, errQuery)
 		closeRowsWrapper(b, res)

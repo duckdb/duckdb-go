@@ -20,10 +20,6 @@ type rows struct {
 	chunk DataChunk
 	// closeChunk is true after the first iteration of Next.
 	closeChunk bool
-	// chunkCount is the number of chunks in the result.
-	chunkCount mapping.IdxT
-	// chunkIdx is the chunk index in the result.
-	chunkIdx mapping.IdxT
 	// rowCount is the number of scanned rows.
 	rowCount int
 	// cached column metadata to avoid repeated CGO calls
@@ -37,20 +33,18 @@ func newRowsWithStmt(res mapping.Result, stmt *Stmt) *rows {
 		res:         res,
 		stmt:        stmt,
 		chunk:       DataChunk{},
-		chunkCount:  mapping.ResultChunkCount(res),
-		chunkIdx:    0,
 		rowCount:    0,
 		scanTypes:   make([]reflect.Type, columnCount),
 		dbTypeNames: make([]string, columnCount),
 	}
 
-	for i := mapping.IdxT(0); i < columnCount; i++ {
-		columnName := mapping.ColumnName(&res, i)
+	for i := range uint64(columnCount) {
+		columnName := mapping.ColumnName(&res, mapping.IdxT(i))
 		r.chunk.columnNames = append(r.chunk.columnNames, columnName)
 
 		// Cache column metadata
-		logicalType := mapping.ColumnLogicalType(&res, i)
-		r.scanTypes[i] = r.getScanType(logicalType, i)
+		logicalType := mapping.ColumnLogicalType(&res, mapping.IdxT(i))
+		r.scanTypes[i] = r.getScanType(logicalType, mapping.IdxT(i))
 		r.dbTypeNames[i] = logicalTypeString(logicalType)
 		mapping.DestroyLogicalType(&logicalType)
 	}
@@ -68,16 +62,14 @@ func (r *rows) Next(dst []driver.Value) error {
 			r.chunk.close()
 			r.closeChunk = false
 		}
-		if r.chunkIdx == r.chunkCount {
+		chunk := mapping.FetchChunk(r.res)
+		if chunk.Ptr == nil {
 			return io.EOF
 		}
-		chunk := mapping.ResultGetChunk(r.res, r.chunkIdx)
 		r.closeChunk = true
 		if err := r.chunk.initFromDuckDataChunk(chunk, false); err != nil {
 			return getError(err, nil)
 		}
-
-		r.chunkIdx++
 		r.rowCount = 0
 	}
 
@@ -240,13 +232,13 @@ func logicalTypeNameStruct(logicalType mapping.LogicalType) string {
 
 	count := mapping.StructTypeChildCount(logicalType)
 
-	for i := mapping.IdxT(0); i < count; i++ {
+	for i := range uint64(count) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 
-		childName := mapping.StructTypeChildName(logicalType, i)
-		childType := mapping.StructTypeChildType(logicalType, i)
+		childName := mapping.StructTypeChildName(logicalType, mapping.IdxT(i))
+		childType := mapping.StructTypeChildType(logicalType, mapping.IdxT(i))
 
 		sb.WriteString(escapeStructFieldName(childName))
 		sb.WriteByte(' ')

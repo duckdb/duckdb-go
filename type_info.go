@@ -357,7 +357,7 @@ func (info *typeInfo) logicalUnionType() mapping.LogicalType {
 	return mapping.CreateUnionType(types, info.names)
 }
 
-func funcName(i interface{}) string {
+func funcName(i any) string {
 	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 }
 

@@ -321,7 +321,7 @@ func BenchmarkTypes(b *testing.B) {
 
 	var r []testTypesRow
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		r = testTypes(b, db, a, expectedRows)
 		testTypesReset(b, c)
 	}

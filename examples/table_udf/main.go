@@ -13,7 +13,7 @@ type incrementTableUDF struct {
 	currentRow int64
 }
 
-func bindTableUDF(namedArgs map[string]any, args ...interface{}) (duckdb.RowTableSource, error) {
+func bindTableUDF(namedArgs map[string]any, args ...any) (duckdb.RowTableSource, error) {
 	return &incrementTableUDF{
 		currentRow: 0,
 		tableSize:  args[0].(int64),
@@ -70,8 +70,8 @@ func main() {
 	columns, err := rows.Columns()
 	check(err)
 
-	values := make([]interface{}, len(columns))
-	args := make([]interface{}, len(values))
+	values := make([]any, len(columns))
+	args := make([]any, len(values))
 	for i := range values {
 		args[i] = &values[i]
 	}
@@ -93,7 +93,7 @@ func main() {
 	check(db.Close())
 }
 
-func check(err interface{}) {
+func check(err any) {
 	if err != nil {
 		panic(err)
 	}

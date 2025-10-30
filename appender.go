@@ -57,8 +57,8 @@ func NewAppender(driverConn driver.Conn, catalog, schema, table string) (*Append
 
 	// Get the column types.
 	columnCount := mapping.AppenderColumnCount(a.appender)
-	for i := mapping.IdxT(0); i < columnCount; i++ {
-		colType := mapping.AppenderColumnType(a.appender, i)
+	for i := range uint64(columnCount) {
+		colType := mapping.AppenderColumnType(a.appender, mapping.IdxT(i))
 		a.types = append(a.types, colType)
 
 		// Ensure that we only create an appender for supported column types.

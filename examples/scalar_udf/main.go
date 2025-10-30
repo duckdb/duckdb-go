@@ -158,7 +158,7 @@ func main() {
 	wrapSumScalarUDF()
 }
 
-func check(args ...interface{}) {
+func check(args ...any) {
 	err := args[len(args)-1]
 	if err != nil {
 		panic(err)

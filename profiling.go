@@ -41,9 +41,9 @@ func (info *ProfilingInfo) getMetrics(profilingInfo mapping.ProfilingInfo) {
 	count := mapping.GetMapSize(metricsMap)
 	info.Metrics = make(map[string]string, count)
 
-	for i := mapping.IdxT(0); i < count; i++ {
-		key := mapping.GetMapKey(metricsMap, i)
-		value := mapping.GetMapValue(metricsMap, i)
+	for i := range uint64(count) {
+		key := mapping.GetMapKey(metricsMap, mapping.IdxT(i))
+		value := mapping.GetMapValue(metricsMap, mapping.IdxT(i))
 
 		keyStr := mapping.GetVarchar(key)
 		valueStr := mapping.GetVarchar(value)
@@ -55,8 +55,8 @@ func (info *ProfilingInfo) getMetrics(profilingInfo mapping.ProfilingInfo) {
 	mapping.DestroyValue(&metricsMap)
 
 	childCount := mapping.ProfilingInfoGetChildCount(profilingInfo)
-	for i := mapping.IdxT(0); i < childCount; i++ {
-		profilingInfoChild := mapping.ProfilingInfoGetChild(profilingInfo, i)
+	for i := range uint64(childCount) {
+		profilingInfoChild := mapping.ProfilingInfoGetChild(profilingInfo, mapping.IdxT(i))
 		childInfo := ProfilingInfo{}
 		childInfo.getMetrics(profilingInfoChild)
 		info.Children = append(info.Children, childInfo)

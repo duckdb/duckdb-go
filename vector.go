@@ -386,8 +386,8 @@ func (vec *vector) initList(logicalType mapping.LogicalType, colIdx int) error {
 func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error {
 	childCount := mapping.StructTypeChildCount(logicalType)
 	var structEntries []StructEntry
-	for i := mapping.IdxT(0); i < childCount; i++ {
-		name := mapping.StructTypeChildName(logicalType, i)
+	for i := range uint64(childCount) {
+		name := mapping.StructTypeChildName(logicalType, mapping.IdxT(i))
 		entry, err := NewStructEntry(nil, name)
 		structEntries = append(structEntries, entry)
 		if err != nil {
@@ -399,8 +399,8 @@ func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error
 	vec.structEntries = structEntries
 
 	// Recurse into the children.
-	for i := mapping.IdxT(0); i < childCount; i++ {
-		childType := mapping.StructTypeChildType(logicalType, i)
+	for i := range uint64(childCount) {
+		childType := mapping.StructTypeChildType(logicalType, mapping.IdxT(i))
 		err := vec.childVectors[i].init(childType, colIdx)
 		mapping.DestroyLogicalType(&childType)
 		if err != nil {

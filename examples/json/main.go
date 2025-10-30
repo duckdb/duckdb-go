@@ -36,7 +36,7 @@ func main() {
 	log.Printf("coolness: %f", jsonMap.Get()["coolness"])
 }
 
-func check(args ...interface{}) {
+func check(args ...any) {
 	err := args[len(args)-1]
 	if err != nil {
 		panic(err)

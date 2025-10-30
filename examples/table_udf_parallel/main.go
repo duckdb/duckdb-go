@@ -22,7 +22,7 @@ type (
 	}
 )
 
-func bindParallelTableUDF(namedArgs map[string]any, args ...interface{}) (duckdb.ParallelRowTableSource, error) {
+func bindParallelTableUDF(namedArgs map[string]any, args ...any) (duckdb.ParallelRowTableSource, error) {
 	return &parallelIncrementTableUDF{
 		lock:    &sync.Mutex{},
 		claimed: 0,
@@ -126,8 +126,8 @@ func main() {
 	columns, err := rows.Columns()
 	check(err)
 
-	values := make([]interface{}, len(columns))
-	args := make([]interface{}, len(values))
+	values := make([]any, len(columns))
+	args := make([]any, len(values))
 	for i := range values {
 		args[i] = &values[i]
 	}
@@ -149,7 +149,7 @@ func main() {
 	check(db.Close())
 }
 
-func check(err interface{}) {
+func check(err any) {
 	if err != nil {
 		panic(err)
 	}

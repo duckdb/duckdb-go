@@ -458,9 +458,9 @@ func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	defer destroyValueSlice(values)
 
 	childCount := mapping.StructTypeChildCount(lt)
-	for i := mapping.IdxT(0); i < childCount; i++ {
-		name := mapping.StructTypeChildName(lt, i)
-		t := mapping.StructTypeChildType(lt, i)
+	for i := range uint64(childCount) {
+		name := mapping.StructTypeChildName(lt, mapping.IdxT(i))
+		t := mapping.StructTypeChildType(lt, mapping.IdxT(i))
 		defer mapping.DestroyLogicalType(&t)
 
 		v, exists := m[name]

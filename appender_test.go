@@ -826,7 +826,7 @@ func TestAppendToCatalog(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	err = conn.Raw(func(anyConn interface{}) error {
+	err = conn.Raw(func(anyConn any) error {
 		driverConn := anyConn.(driver.Conn)
 		a, innerErr := NewAppender(driverConn, "other", "", "test")
 		require.NoError(t, innerErr)
@@ -884,7 +884,7 @@ func TestAppenderWithJSON(t *testing.T) {
 	defer cleanupAppender(t, c, db, conn, a)
 
 	for _, jsonInput := range jsonInputs {
-		var jsonData map[string]interface{}
+		var jsonData map[string]any
 		err := json.Unmarshal(jsonInput, &jsonData)
 		require.NoError(t, err)
 		require.NoError(t, a.AppendRow(jsonData["c1"], jsonData["l1"], jsonData["s1"], jsonData["l2"]))
@@ -900,10 +900,10 @@ func TestAppenderWithJSON(t *testing.T) {
 	i := 0
 	for res.Next() {
 		var (
-			c1 interface{}
-			l1 interface{}
-			s1 interface{}
-			l2 interface{}
+			c1 any
+			l1 any
+			s1 any
+			l2 any
 		)
 		err := res.Scan(&c1, &l1, &s1, &l2)
 		require.NoError(t, err)
@@ -1102,7 +1102,7 @@ func BenchmarkAppenderNested(b *testing.B) {
 	rowsToAppend := prepareNestedData(rowCount)
 
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		appendNestedData(b, a, rowsToAppend)
 	}
 	b.StopTimer()
