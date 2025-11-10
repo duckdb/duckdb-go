@@ -1,5 +1,7 @@
 package duckdb
 
+import "context"
+
 type (
 	tableSource interface {
 		// ColumnInfos returns column information for each column of the table function.
@@ -34,7 +36,7 @@ type (
 		sequentialTableSource
 		// FillRow takes a Row and fills it with values.
 		// Returns true, if there are more rows to fill.
-		FillRow(Row) (bool, error)
+		FillRow(context.Context, Row) (bool, error)
 	}
 
 	// A ParallelRowTableSource represents anything that produces rows in a non-vectorised way.
@@ -47,7 +49,7 @@ type (
 		parallelTableSource
 		// FillRow takes a Row and fills it with values.
 		// Returns true, if there are more rows to fill.
-		FillRow(any, Row) (bool, error)
+		FillRow(context.Context, any, Row) (bool, error)
 	}
 
 	// A ChunkTableSource represents anything that produces rows in a vectorised way.
@@ -58,7 +60,7 @@ type (
 		sequentialTableSource
 		// FillChunk takes a Chunk and fills it with values.
 		// Set the chunk size to 0 to end the function.
-		FillChunk(DataChunk) error
+		FillChunk(context.Context, DataChunk) error
 	}
 
 	// A ParallelChunkTableSource represents anything that produces rows in a vectorised way.
@@ -71,7 +73,7 @@ type (
 		parallelTableSource
 		// FillChunk takes a Chunk and fills it with values.
 		// Set the chunk size to 0 to end the function
-		FillChunk(any, DataChunk) error
+		FillChunk(context.Context, any, DataChunk) error
 	}
 
 	// parallelRowTSWrapper wraps a synchronous table source for a parallel context with nthreads=1
@@ -113,8 +115,8 @@ func (s parallelRowTSWrapper) NewLocalState() any {
 	return struct{}{}
 }
 
-func (s parallelRowTSWrapper) FillRow(ls any, chunk Row) (bool, error) {
-	return s.s.FillRow(chunk)
+func (s parallelRowTSWrapper) FillRow(ctx context.Context, ls any, chunk Row) (bool, error) {
+	return s.s.FillRow(ctx, chunk)
 }
 
 // ParallelChunk wrapper
@@ -138,6 +140,6 @@ func (s parallelChunkTSWrapper) NewLocalState() any {
 	return struct{}{}
 }
 
-func (s parallelChunkTSWrapper) FillChunk(ls any, chunk DataChunk) error {
-	return s.s.FillChunk(chunk)
+func (s parallelChunkTSWrapper) FillChunk(ctx context.Context, ls any, chunk DataChunk) error {
+	return s.s.FillChunk(ctx, chunk)
 }

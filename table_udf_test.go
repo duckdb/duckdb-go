@@ -320,7 +320,7 @@ func (udf *incTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *incTableUDF) Init() {}
 
-func (udf *incTableUDF) FillRow(row Row) (bool, error) {
+func (udf *incTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -364,7 +364,7 @@ func (udf *parallelIncTableUDF) NewLocalState() any {
 	}
 }
 
-func (udf *parallelIncTableUDF) FillRow(localState any, row Row) (bool, error) {
+func (udf *parallelIncTableUDF) FillRow(ctx context.Context, localState any, row Row) (bool, error) {
 	state := localState.(*parallelIncTableLocalState)
 
 	if state.start >= state.end {
@@ -435,7 +435,7 @@ func (udf *parallelChunkIncTableUDF) NewLocalState() any {
 	}
 }
 
-func (udf *parallelChunkIncTableUDF) FillChunk(localState any, chunk DataChunk) error {
+func (udf *parallelChunkIncTableUDF) FillChunk(ctx context.Context, localState any, chunk DataChunk) error {
 	state := localState.(*parallelChunkIncTableLocalState)
 
 	// Claim a new work unit.
@@ -507,7 +507,7 @@ func (udf *structTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *structTableUDF) Init() {}
 
-func (udf *structTableUDF) FillRow(row Row) (bool, error) {
+func (udf *structTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -553,7 +553,7 @@ func (udf *pushdownTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *pushdownTableUDF) Init() {}
 
-func (udf *pushdownTableUDF) FillRow(row Row) (bool, error) {
+func (udf *pushdownTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -611,7 +611,7 @@ func (udf *incTableNamedUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *incTableNamedUDF) Init() {}
 
-func (udf *incTableNamedUDF) FillRow(row Row) (bool, error) {
+func (udf *incTableNamedUDF) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -659,7 +659,7 @@ func (udf *constTableUDF[T]) ColumnInfos() []ColumnInfo {
 
 func (udf *constTableUDF[T]) Init() {}
 
-func (udf *constTableUDF[T]) FillRow(row Row) (bool, error) {
+func (udf *constTableUDF[T]) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= 1 {
 		return false, nil
 	}
@@ -702,7 +702,7 @@ func (udf *chunkIncTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *chunkIncTableUDF) Init() {}
 
-func (udf *chunkIncTableUDF) FillChunk(chunk DataChunk) error {
+func (udf *chunkIncTableUDF) FillChunk(ctx context.Context, chunk DataChunk) error {
 	size := 2048
 	i := 0
 
@@ -766,7 +766,7 @@ func (udf *unionTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *unionTableUDF) Init() {}
 
-func (udf *unionTableUDF) FillRow(row Row) (bool, error) {
+func (udf *unionTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -849,7 +849,10 @@ func singleTableUDF[T TableFunction](t *testing.T, fun tableUDFTest[T]) {
 	err := RegisterTableUDF(conn, fun.name, fun.udf.GetFunction())
 	require.NoError(t, err)
 
-	res, err := db.QueryContext(context.Background(), fmt.Sprintf(fun.query, fun.name))
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, testCtxKey, fun.name)
+
+	res, err := db.QueryContext(ctx, fmt.Sprintf(fun.query, fun.name))
 	require.NoError(t, err)
 	defer closeRowsWrapper(t, res)
 

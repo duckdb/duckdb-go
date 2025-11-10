@@ -50,6 +50,7 @@ type (
 	tableFunctionData struct {
 		fun        any
 		projection []int
+		connId     uint64
 	}
 
 	// TableFunctionConfig contains any information passed to DuckDB when registering the table function.
@@ -81,7 +82,7 @@ type (
 	// A ParallelChunkTableFunction is a type which can be bound to return a ParallelChunkTableSource.
 	ParallelChunkTableFunction = tableFunction[ParallelChunkTableSource]
 
-	tableFunction[T any] struct {
+	tableFunction[T tableSource] struct {
 		// Config returns the table function configuration, including the function arguments.
 		Config TableFunctionConfig
 		// BindArguments binds the arguments and returns a TableSource.
@@ -139,7 +140,8 @@ func table_udf_bind_chunk(infoPtr unsafe.Pointer) {
 func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 	info := mapping.BindInfo{Ptr: infoPtr}
 
-	f := getPinned[tableFunction[T]](mapping.BindGetExtraInfo(info))
+	fc := getPinned[*tableFuncContext[T]](mapping.BindGetExtraInfo(info))
+	f := fc.f
 	config := f.Config
 
 	argCount := len(config.Arguments)
@@ -176,10 +178,16 @@ func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 		return
 	}
 
+	var ctx mapping.ClientContext
+	mapping.TableFunctionGetClientContext(info, &ctx)
+	defer mapping.DestroyClientContext(&ctx)
+	connId := mapping.ClientContextGetConnectionId(ctx)
+
 	columnInfos := instance.ColumnInfos()
 	instanceData := tableFunctionData{
 		fun:        instance,
 		projection: make([]int, len(columnInfos)),
+		connId:     uint64(connId),
 	}
 
 	for i, v := range columnInfos {
@@ -247,9 +255,13 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 	}
 
 	localState := getPinned[any](mapping.FunctionGetLocalInitData(info))
+	extraInfo := mapping.FunctionGetExtraInfo(info)
 
 	switch fun := instance.fun.(type) {
 	case ParallelRowTableSource:
+		function := getPinned[*tableFuncContext[ParallelRowTableSource]](extraInfo)
+		ctx := function.ctxStore.load(instance.connId)
+
 		row := Row{
 			chunk:      &chunk,
 			projection: instance.projection,
@@ -258,7 +270,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 
 		// At the end of the loop row.r must be the index of the last row.
 		for row.r = 0; row.r < maxSize; row.r++ {
-			next, errRow := fun.FillRow(localState, row)
+			next, errRow := fun.FillRow(ctx, localState, row)
 			if errRow != nil {
 				mapping.FunctionSetError(info, errRow.Error())
 				break
@@ -269,7 +281,10 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 		}
 		mapping.DataChunkSetSize(output, row.r)
 	case ParallelChunkTableSource:
-		err = fun.FillChunk(localState, chunk)
+		function := getPinned[*tableFuncContext[ParallelChunkTableSource]](extraInfo)
+		ctx := function.ctxStore.load(instance.connId)
+
+		err = fun.FillChunk(ctx, localState, chunk)
 		if err != nil {
 			mapping.FunctionSetError(info, err.Error())
 		}
@@ -306,16 +321,28 @@ func RegisterTableUDF[TFT TableFunction](conn *sql.Conn, name string, f TFT) err
 	}
 }
 
-func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name string, f TFT) error {
+type tableFuncContext[T tableSource] struct {
+	f        tableFunction[T]
+	ctxStore *contextStore
+}
+
+func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tableFunction[T]) error {
 	function := mapping.CreateTableFunction()
 	mapping.TableFunctionSetName(function, name)
 
 	var config TableFunctionConfig
 
+	// Get the context store for the connection.
+	ctxStore, err := contextStoreFromConn(conn)
+	if err != nil {
+		mapping.DestroyTableFunction(&function)
+		return err
+	}
+
 	// Pin the table function f.
-	value := pinnedValue[TFT]{
+	value := pinnedValue[*tableFuncContext[T]]{
 		pinner: &runtime.Pinner{},
-		value:  f,
+		value:  &tableFuncContext[T]{f: f, ctxStore: ctxStore},
 	}
 	h := cgo.NewHandle(value)
 	value.pinner.Pin(&h)
@@ -380,7 +407,7 @@ func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name st
 	}
 
 	// Register the function on the underlying driver connection exposed by c.Raw.
-	err := conn.Raw(func(driverConn any) error {
+	err = conn.Raw(func(driverConn any) error {
 		c := driverConn.(*Conn)
 		state := mapping.RegisterTableFunction(c.conn, function)
 		mapping.DestroyTableFunction(&function)
