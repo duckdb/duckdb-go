@@ -763,6 +763,7 @@ var (
 	AppenderClearColumns = bindings.AppenderClearColumns
 	AppendDefaultToChunk = bindings.AppendDefaultToChunk
 	AppendDataChunk      = bindings.AppendDataChunk
+	AppenderClear        = bindings.AppenderClear
 )
 
 // Table description.
