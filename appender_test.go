@@ -1096,7 +1096,7 @@ func TestAppenderUpsert(t *testing.T) {
 }
 
 func TestAppenderInterrupt(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			c := newConnectorWrapper(t, ``, nil)
 			defer closeConnectorWrapper(t, c)
@@ -1155,7 +1155,6 @@ func TestAppenderInterrupt(t *testing.T) {
 				go func() {
 					cancel()
 				}()
-
 			} else {
 				// Long-running close.
 				ctx, cancel := context.WithCancel(context.Background())
