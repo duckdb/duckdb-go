@@ -195,6 +195,18 @@ func (a *Appender) Flush() error {
 	return nil
 }
 
+func (a *Appender) Clear() error {
+	var errClear error
+	if mapping.AppenderClear(a.appender) == mapping.StateError {
+		errClear = getDuckDBError(mapping.AppenderError(a.appender))
+	}
+
+	if errClear != nil {
+		return getError(invalidatedAppenderError(errClear), nil)
+	}
+	return nil
+}
+
 // Close the appender. This will flush the appender to the underlying table.
 // It is vital to call this when you are done with the appender to avoid leaking memory.
 func (a *Appender) Close() error {
@@ -214,6 +226,9 @@ func (a *Appender) Close() error {
 	}
 
 	// Destroy all appender data and the appender.
+	if errFlush != nil {
+		_ = a.Clear()
+	}
 	destroyLogicalTypes(a.types)
 	var errClose error
 	if mapping.AppenderDestroy(&a.appender) == mapping.StateError {

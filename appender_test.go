@@ -10,10 +10,12 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 	_ "time/tzdata"
 
+	"github.com/duckdb/duckdb-go/mapping"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -1092,6 +1094,93 @@ func TestAppenderUpsert(t *testing.T) {
 		i++
 	}
 	require.Equal(t, len(testCases), i)
+}
+
+func TestAppenderInterrupt(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		func() {
+			c := newConnectorWrapper(t, ``, nil)
+			defer closeConnectorWrapper(t, c)
+
+			// Create a table with a PK for UPSERT.
+			db := sql.OpenDB(c)
+			defer closeDbWrapper(t, db)
+			_, err := db.Exec(`
+				CREATE TABLE test (
+					id INT PRIMARY KEY
+			)`)
+			require.NoError(t, err)
+
+			conn := openDriverConnWrapper(t, c)
+			defer closeDriverConnWrapper(t, &conn)
+
+			// Create the types.
+			intType, err := NewTypeInfo(TYPE_INTEGER)
+			require.NoError(t, err)
+
+			// Create the appender.
+			query := `INSERT INTO test SELECT col1 FROM appended_data WHERE [col1] = (SELECT LIST(range)::BIGINT[] FROM range(1_000_000_000))`
+			colTypes := []TypeInfo{intType}
+			a := newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+
+			// Insert a row.
+			require.NoError(t, a.AppendRow(0))
+
+			connPtr := conn.(*Conn)
+
+			if i == 0 {
+				// Long-running flush.
+				flushStarted := make(chan struct{})
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					close(flushStarted) // Signal that Flush is about to start
+					err = a.Flush()
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Wait for Flush to start, then interrupt it.
+				<-flushStarted
+				time.Sleep(200 * time.Millisecond) // Give Flush time to actually start executing
+
+				mapping.Interrupt(connPtr.conn)
+
+				err = a.Clear()
+				require.NoError(t, err)
+				wg.Wait()
+
+				closeStarted := make(chan struct{})
+				go func() {
+					close(closeStarted) // Signal that Close is about to start
+					err = a.Close()
+					require.NoError(t, err)
+				}()
+
+				// Wait for Close to start, then interrupt it.
+				<-closeStarted
+				mapping.Interrupt(connPtr.conn)
+			} else {
+				// Long-running close.
+				closeStarted := make(chan struct{})
+
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					close(closeStarted) // Signal that Close is about to start
+					err = a.Close()
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Wait for Close to start, then interrupt it.
+				<-closeStarted
+				time.Sleep(100 * time.Millisecond) // Give it a moment to actually start executing
+				mapping.Interrupt(connPtr.conn)
+				wg.Wait()
+			}
+		}()
+	}
 }
 
 func BenchmarkAppenderNested(b *testing.B) {
