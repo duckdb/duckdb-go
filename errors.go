@@ -50,6 +50,13 @@ func invalidatedAppenderError(err error) error {
 	return fmt.Errorf("%w: %s", err, invalidatedAppenderMsg)
 }
 
+func invalidatedAppenderClearError(err error) error {
+	if err == nil {
+		return errors.New(invalidatedAppenderClearMsg)
+	}
+	return fmt.Errorf("%w: %s", err, invalidatedAppenderClearMsg)
+}
+
 func tryOtherFuncError(hint string) error {
 	return fmt.Errorf("%s: %s", tryOtherFuncErrMsg, hint)
 }
@@ -67,20 +74,21 @@ func duplicateNameError(name string) error {
 }
 
 const (
-	driverErrMsg           = "database/sql/driver"
-	castErrMsg             = "cast error"
-	convertErrMsg          = "conversion error"
-	invalidInputErrMsg     = "invalid input"
-	structFieldErrMsg      = "invalid STRUCT field"
-	columnCountErrMsg      = "invalid column count"
-	unsupportedTypeErrMsg  = "unsupported data type"
-	invalidatedAppenderMsg = "appended and not yet flushed data has been invalidated due to error"
-	tryOtherFuncErrMsg     = "please try this function instead"
-	indexErrMsg            = "index"
-	unknownTypeErrMsg      = "unknown type"
-	interfaceIsNilErrMsg   = "interface is nil"
-	duplicateNameErrMsg    = "duplicate name"
-	paramIndexErrMsg       = "invalid parameter index"
+	driverErrMsg                = "database/sql/driver"
+	castErrMsg                  = "cast error"
+	convertErrMsg               = "conversion error"
+	invalidInputErrMsg          = "invalid input"
+	structFieldErrMsg           = "invalid STRUCT field"
+	columnCountErrMsg           = "invalid column count"
+	unsupportedTypeErrMsg       = "unsupported data type"
+	invalidatedAppenderMsg      = "appended and not yet flushed data has been invalidated due to error"
+	invalidatedAppenderClearMsg = "failed to clear appender's internal data (this likely indicates a bug - please consider opening a bug report at https://github.com/duckdb/duckdb-go/issues)"
+	tryOtherFuncErrMsg          = "please try this function instead"
+	indexErrMsg                 = "index"
+	unknownTypeErrMsg           = "unknown type"
+	interfaceIsNilErrMsg        = "interface is nil"
+	duplicateNameErrMsg         = "duplicate name"
+	paramIndexErrMsg            = "invalid parameter index"
 )
 
 var (

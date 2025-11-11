@@ -197,7 +197,7 @@ func TestErrAppender(t *testing.T) {
 		testError(t, err, errAppenderFlush.Error())
 
 		err = a.Close()
-		testError(t, err, errAppenderClose.Error())
+		testError(t, err, invalidatedAppenderMsg)
 	})
 
 	t.Run(errAppenderClose.Error(), func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestErrAppender(t *testing.T) {
 		require.NoError(t, a.AppendRow(int32(1)))
 
 		err := a.Close()
-		testError(t, err, errAppenderClose.Error())
+		testError(t, err, invalidatedAppenderMsg)
 	})
 
 	t.Run(errUnsupportedMapKeyType.Error(), func(t *testing.T) {

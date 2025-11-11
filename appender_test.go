@@ -15,7 +15,6 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/duckdb/duckdb-go/mapping"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -1126,57 +1125,53 @@ func TestAppenderInterrupt(t *testing.T) {
 			// Insert a row.
 			require.NoError(t, a.AppendRow(0))
 
-			connPtr := conn.(*Conn)
-
 			if i == 0 {
 				// Long-running flush.
-				flushStarted := make(chan struct{})
+				ctx, cancel := context.WithCancel(context.Background())
 				var wg sync.WaitGroup
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					close(flushStarted) // Signal that Flush is about to start
-					err = a.Flush()
+					err = a.FlushWithCancel(ctx)
 					require.ErrorContains(t, err, "Interrupted!")
 				}()
 
-				// Wait for Flush to start, then interrupt it.
-				<-flushStarted
-				time.Sleep(200 * time.Millisecond) // Give Flush time to actually start executing
-
-				mapping.Interrupt(connPtr.conn)
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+				wg.Wait()
 
 				err = a.Clear()
 				require.NoError(t, err)
-				wg.Wait()
-
-				closeStarted := make(chan struct{})
 				go func() {
-					close(closeStarted) // Signal that Close is about to start
-					err = a.Close()
+					err = a.CloseWithCancel(ctx)
 					require.NoError(t, err)
 				}()
 
-				// Wait for Close to start, then interrupt it.
-				<-closeStarted
-				mapping.Interrupt(connPtr.conn)
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+
 			} else {
 				// Long-running close.
-				closeStarted := make(chan struct{})
-
+				ctx, cancel := context.WithCancel(context.Background())
 				var wg sync.WaitGroup
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					close(closeStarted) // Signal that Close is about to start
-					err = a.Close()
+					err = a.CloseWithCancel(ctx)
 					require.ErrorContains(t, err, "Interrupted!")
 				}()
 
-				// Wait for Close to start, then interrupt it.
-				<-closeStarted
-				time.Sleep(100 * time.Millisecond) // Give it a moment to actually start executing
-				mapping.Interrupt(connPtr.conn)
+				// Interrupt it.
+				time.Sleep(1 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
 				wg.Wait()
 			}
 		}()

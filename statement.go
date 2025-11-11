@@ -547,6 +547,20 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 	return s.executeBound(ctx)
 }
 
+func interruptRoutine(mainDoneCh, bgDoneCh *chan struct{}, ctx context.Context, conn *Conn) {
+	select {
+	// Await an interrupt on the context.
+	case <-ctx.Done():
+		mapping.Interrupt(conn.conn)
+		break
+	// Await a done-signal on the main channel.
+	// Reading from a closed channel succeeds immediately.
+	case <-*mainDoneCh:
+		break
+	}
+	close(*bgDoneCh)
+}
+
 func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 	var pendingRes mapping.PendingResult
 	if mapping.PendingPrepared(*s.preparedStmt, &pendingRes) == mapping.StateError {
@@ -556,23 +570,10 @@ func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 	}
 	defer mapping.DestroyPending(&pendingRes)
 
+	// Spawn go-routine waiting to receive on the context or main channel.
 	mainDoneCh := make(chan struct{})
 	bgDoneCh := make(chan struct{})
-
-	// go-routine waiting to receive on the context or main channel.
-	go func() {
-		select {
-		// Await an interrupt on the context.
-		case <-ctx.Done():
-			mapping.Interrupt(s.conn.conn)
-			break
-		// Await a done-signal on the main channel.
-		// Reading from a closed channel succeeds immediately.
-		case <-mainDoneCh:
-			break
-		}
-		close(bgDoneCh)
-	}()
+	go interruptRoutine(&mainDoneCh, &bgDoneCh, ctx, s.conn)
 
 	var res mapping.Result
 	state := mapping.ExecutePending(pendingRes, &res)
