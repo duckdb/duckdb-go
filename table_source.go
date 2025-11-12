@@ -36,6 +36,13 @@ type (
 		sequentialTableSource
 		// FillRow takes a Row and fills it with values.
 		// Returns true, if there are more rows to fill.
+		FillRow(Row) (bool, error)
+	}
+
+	RowTableSourceContext interface {
+		sequentialTableSource
+		// FillRow takes a context and a Row and fills it with values.
+		// Returns true, if there are more rows to fill.
 		FillRow(context.Context, Row) (bool, error)
 	}
 
@@ -49,6 +56,13 @@ type (
 		parallelTableSource
 		// FillRow takes a Row and fills it with values.
 		// Returns true, if there are more rows to fill.
+		FillRow(any, Row) (bool, error)
+	}
+
+	ParallelRowTableSourceContext interface {
+		parallelTableSource
+		// FillRow takes a context and a Row and fills it with values.
+		// Returns true, if there are more rows to fill.
 		FillRow(context.Context, any, Row) (bool, error)
 	}
 
@@ -59,6 +73,13 @@ type (
 	ChunkTableSource interface {
 		sequentialTableSource
 		// FillChunk takes a Chunk and fills it with values.
+		// Set the chunk size to 0 to end the function.
+		FillChunk(DataChunk) error
+	}
+
+	ChunkTableSourceContext interface {
+		sequentialTableSource
+		// FillChunk takes a context and a Chunk and fills it with values.
 		// Set the chunk size to 0 to end the function.
 		FillChunk(context.Context, DataChunk) error
 	}
@@ -73,6 +94,13 @@ type (
 		parallelTableSource
 		// FillChunk takes a Chunk and fills it with values.
 		// Set the chunk size to 0 to end the function
+		FillChunk(any, DataChunk) error
+	}
+
+	ParallelChunkTableSourceContext interface {
+		parallelTableSource
+		// FillChunk takes a context and a Chunk and fills it with values.
+		// Set the chunk size to 0 to end the function
 		FillChunk(context.Context, any, DataChunk) error
 	}
 
@@ -81,9 +109,17 @@ type (
 		s RowTableSource
 	}
 
+	parallelRowTSContextWrapper struct {
+		s RowTableSourceContext
+	}
+
 	// parallelChunkTSWrapper wraps a synchronous table source for a parallel context with nthreads=1
 	parallelChunkTSWrapper struct {
 		s ChunkTableSource
+	}
+
+	parallelChunkTSContextWrapper struct {
+		s ChunkTableSourceContext
 	}
 
 	// ParallelTableSourceInfo contains information for initializing a parallelism-aware table source.
@@ -115,7 +151,31 @@ func (s parallelRowTSWrapper) NewLocalState() any {
 	return struct{}{}
 }
 
-func (s parallelRowTSWrapper) FillRow(ctx context.Context, ls any, chunk Row) (bool, error) {
+func (s parallelRowTSWrapper) FillRow(ls any, chunk Row) (bool, error) {
+	return s.s.FillRow(chunk)
+}
+
+// ParallelRowContext wrapper
+func (s parallelRowTSContextWrapper) ColumnInfos() []ColumnInfo {
+	return s.s.ColumnInfos()
+}
+
+func (s parallelRowTSContextWrapper) Cardinality() *CardinalityInfo {
+	return s.s.Cardinality()
+}
+
+func (s parallelRowTSContextWrapper) Init() ParallelTableSourceInfo {
+	s.s.Init()
+	return ParallelTableSourceInfo{
+		MaxThreads: 1,
+	}
+}
+
+func (s parallelRowTSContextWrapper) NewLocalState() any {
+	return struct{}{}
+}
+
+func (s parallelRowTSContextWrapper) FillRow(ctx context.Context, ls any, chunk Row) (bool, error) {
 	return s.s.FillRow(ctx, chunk)
 }
 
@@ -140,6 +200,30 @@ func (s parallelChunkTSWrapper) NewLocalState() any {
 	return struct{}{}
 }
 
-func (s parallelChunkTSWrapper) FillChunk(ctx context.Context, ls any, chunk DataChunk) error {
+func (s parallelChunkTSWrapper) FillChunk(ls any, chunk DataChunk) error {
+	return s.s.FillChunk(chunk)
+}
+
+// ParallelChunkContext wrapper
+func (s parallelChunkTSContextWrapper) ColumnInfos() []ColumnInfo {
+	return s.s.ColumnInfos()
+}
+
+func (s parallelChunkTSContextWrapper) Cardinality() *CardinalityInfo {
+	return s.s.Cardinality()
+}
+
+func (s parallelChunkTSContextWrapper) Init() ParallelTableSourceInfo {
+	s.s.Init()
+	return ParallelTableSourceInfo{
+		MaxThreads: 1,
+	}
+}
+
+func (s parallelChunkTSContextWrapper) NewLocalState() any {
+	return struct{}{}
+}
+
+func (s parallelChunkTSContextWrapper) FillChunk(ctx context.Context, ls any, chunk DataChunk) error {
 	return s.s.FillChunk(ctx, chunk)
 }

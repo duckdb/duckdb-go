@@ -64,23 +64,31 @@ type (
 	// TableFunction implements different table function types:
 	// RowTableFunction, ParallelRowTableFunction, ChunkTableFunction, and ParallelChunkTableFunction.
 	TableFunction interface {
-		RowTableFunction | ParallelRowTableFunction | ChunkTableFunction | ParallelChunkTableFunction
+		RowTableFunction | RowTableFunctionContext | ParallelRowTableFunction | ParallelRowTableFunctionContext | ChunkTableFunction | ChunkTableFunctionContext | ParallelChunkTableFunction | ParallelChunkTableFunctionContext
 	}
 
 	// parallelTableFunction implements different table function types:
 	// ParallelRowTableFunction and ParallelChunkTableFunction.
 	parallelTableFunction interface {
-		ParallelRowTableFunction | ParallelChunkTableFunction
+		ParallelRowTableFunction | ParallelRowTableFunctionContext | ParallelChunkTableFunction | ParallelChunkTableFunctionContext
 	}
 
 	// A RowTableFunction is a type which can be bound to return a RowTableSource.
 	RowTableFunction = tableFunction[RowTableSource]
+	// A RowTableFunctionContext is a type which can be bound to return a RowTableSourceContext.
+	RowTableFunctionContext = tableFunction[RowTableSourceContext]
 	// A ParallelRowTableFunction is a type which can be bound to return a ParallelRowTableSource.
 	ParallelRowTableFunction = tableFunction[ParallelRowTableSource]
+	// A ParallelRowTableFunctionContext is a type which can be bound to return a ParallelRowTableSourceContext.
+	ParallelRowTableFunctionContext = tableFunction[ParallelRowTableSourceContext]
 	// A ChunkTableFunction is a type which can be bound to return a ChunkTableSource.
 	ChunkTableFunction = tableFunction[ChunkTableSource]
+	// A ChunkTableFunctionContext is a type which can be bound to return a ChunkTableSourceContext.
+	ChunkTableFunctionContext = tableFunction[ChunkTableSourceContext]
 	// A ParallelChunkTableFunction is a type which can be bound to return a ParallelChunkTableSource.
 	ParallelChunkTableFunction = tableFunction[ParallelChunkTableSource]
+	// A ParallelChunkTableFunctionContext is a type which can be bound to return a ParallelChunkTableSourceContext.
+	ParallelChunkTableFunctionContext = tableFunction[ParallelChunkTableSourceContext]
 
 	tableFunction[T tableSource] struct {
 		// Config returns the table function configuration, including the function arguments.
@@ -110,6 +118,26 @@ func wrapChunkTF(f ChunkTableFunction) ParallelChunkTableFunction {
 	}
 }
 
+func wrapRowTFContext(f RowTableFunctionContext) ParallelRowTableFunctionContext {
+	return ParallelRowTableFunctionContext{
+		Config: f.Config,
+		BindArguments: func(named map[string]any, args ...any) (ParallelRowTableSourceContext, error) {
+			rts, err := f.BindArguments(named, args...)
+			return parallelRowTSContextWrapper{s: rts}, err
+		},
+	}
+}
+
+func wrapChunkTFContext(f ChunkTableFunctionContext) ParallelChunkTableFunctionContext {
+	return ParallelChunkTableFunctionContext{
+		Config: f.Config,
+		BindArguments: func(named map[string]any, args ...any) (ParallelChunkTableSourceContext, error) {
+			rts, err := f.BindArguments(named, args...)
+			return parallelChunkTSContextWrapper{s: rts}, err
+		},
+	}
+}
+
 func isRowIdColumn(i mapping.IdxT) bool {
 	// FIXME: Replace this with mapping.IsRowIdColumn(i) / virtual column changes, once available in the C API.
 	return i == 18446744073709551615
@@ -129,12 +157,38 @@ func (tfd *tableFunctionData) setColumnCount(info mapping.InitInfo) {
 
 //export table_udf_bind_row
 func table_udf_bind_row(infoPtr unsafe.Pointer) {
-	udfBindTyped[ParallelRowTableSource](infoPtr)
+	udfBindTypedRow(infoPtr)
 }
 
 //export table_udf_bind_chunk
 func table_udf_bind_chunk(infoPtr unsafe.Pointer) {
-	udfBindTyped[ParallelChunkTableSource](infoPtr)
+	udfBindTypedChunk(infoPtr)
+}
+
+func udfBindTypedRow(infoPtr unsafe.Pointer) {
+	info := mapping.BindInfo{Ptr: infoPtr}
+	extraInfo := mapping.BindGetExtraInfo(info)
+
+	// Try to determine if it's a context function by checking the type
+	contextFunc := tryGetPinned[*tableFuncContext[ParallelRowTableSourceContext]](extraInfo)
+	if contextFunc != nil {
+		udfBindTyped[ParallelRowTableSourceContext](infoPtr)
+	} else {
+		udfBindTyped[ParallelRowTableSource](infoPtr)
+	}
+}
+
+func udfBindTypedChunk(infoPtr unsafe.Pointer) {
+	info := mapping.BindInfo{Ptr: infoPtr}
+	extraInfo := mapping.BindGetExtraInfo(info)
+
+	// Try to determine if it's a context function by checking the type
+	contextFunc := tryGetPinned[*tableFuncContext[ParallelChunkTableSourceContext]](extraInfo)
+	if contextFunc != nil {
+		udfBindTyped[ParallelChunkTableSourceContext](infoPtr)
+	} else {
+		udfBindTyped[ParallelChunkTableSource](infoPtr)
+	}
 }
 
 func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
@@ -259,7 +313,26 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 
 	switch fun := instance.fun.(type) {
 	case ParallelRowTableSource:
-		function := getPinned[*tableFuncContext[ParallelRowTableSource]](extraInfo)
+		row := Row{
+			chunk:      &chunk,
+			projection: instance.projection,
+		}
+		maxSize := mapping.IdxT(GetDataChunkCapacity())
+
+		// At the end of the loop row.r must be the index of the last row.
+		for row.r = 0; row.r < maxSize; row.r++ {
+			next, errRow := fun.FillRow(localState, row)
+			if errRow != nil {
+				mapping.FunctionSetError(info, errRow.Error())
+				break
+			}
+			if !next {
+				break
+			}
+		}
+		mapping.DataChunkSetSize(output, row.r)
+	case ParallelRowTableSourceContext:
+		function := getPinned[*tableFuncContext[ParallelRowTableSourceContext]](extraInfo)
 		ctx := function.ctxStore.load(instance.connId)
 
 		row := Row{
@@ -280,8 +353,14 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 			}
 		}
 		mapping.DataChunkSetSize(output, row.r)
+
 	case ParallelChunkTableSource:
-		function := getPinned[*tableFuncContext[ParallelChunkTableSource]](extraInfo)
+		err = fun.FillChunk(localState, chunk)
+		if err != nil {
+			mapping.FunctionSetError(info, err.Error())
+		}
+	case ParallelChunkTableSourceContext:
+		function := getPinned[*tableFuncContext[ParallelChunkTableSourceContext]](extraInfo)
 		ctx := function.ctxStore.load(instance.connId)
 
 		err = fun.FillChunk(ctx, localState, chunk)
@@ -310,11 +389,19 @@ func RegisterTableUDF[TFT TableFunction](conn *sql.Conn, name string, f TFT) err
 	switch tableFunc := x.(type) {
 	case RowTableFunction:
 		return registerParallelTableUDF(conn, name, wrapRowTF(tableFunc))
+	case RowTableFunctionContext:
+		return registerParallelTableUDF(conn, name, wrapRowTFContext(tableFunc))
 	case ChunkTableFunction:
 		return registerParallelTableUDF(conn, name, wrapChunkTF(tableFunc))
+	case ChunkTableFunctionContext:
+		return registerParallelTableUDF(conn, name, wrapChunkTFContext(tableFunc))
 	case ParallelRowTableFunction:
 		return registerParallelTableUDF(conn, name, tableFunc)
+	case ParallelRowTableFunctionContext:
+		return registerParallelTableUDF(conn, name, tableFunc)
 	case ParallelChunkTableFunction:
+		return registerParallelTableUDF(conn, name, tableFunc)
+	case ParallelChunkTableFunctionContext:
 		return registerParallelTableUDF(conn, name, tableFunc)
 	default:
 		return getError(errInternal, nil)
@@ -373,7 +460,25 @@ func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tabl
 			return getError(errAPI, errTableUDFMissingBindArgs)
 		}
 
+	case ParallelRowTableFunctionContext:
+		bindCallbackPtr := unsafe.Pointer(C.table_udf_bind_t(C.table_udf_bind_row))
+		mapping.TableFunctionSetBind(function, bindCallbackPtr)
+
+		config = tableFunc.Config
+		if tableFunc.BindArguments == nil {
+			return getError(errAPI, errTableUDFMissingBindArgs)
+		}
+
 	case ParallelChunkTableFunction:
+		bindCallbackPtr := unsafe.Pointer(C.table_udf_bind_t(C.table_udf_bind_chunk))
+		mapping.TableFunctionSetBind(function, bindCallbackPtr)
+
+		config = tableFunc.Config
+		if tableFunc.BindArguments == nil {
+			return getError(errAPI, errTableUDFMissingBindArgs)
+		}
+
+	case ParallelChunkTableFunctionContext:
 		bindCallbackPtr := unsafe.Pointer(C.table_udf_bind_t(C.table_udf_bind_chunk))
 		mapping.TableFunctionSetBind(function, bindCallbackPtr)
 

@@ -94,6 +94,39 @@ type (
 		start int64
 		end   int64
 	}
+
+	// Context-aware table UDF tests.
+
+	contextRowTableUDF struct {
+		count int64
+	}
+
+	contextParallelRowTableUDF struct {
+		lock    *sync.Mutex
+		claimed int64
+		n       int64
+	}
+
+	contextParallelRowTableLocalState struct {
+		start int64
+		end   int64
+	}
+
+	contextChunkTableUDF struct {
+		n     int64
+		count int64
+	}
+
+	contextParallelChunkTableUDF struct {
+		lock    *sync.Mutex
+		claimed int64
+		n       int64
+	}
+
+	contextParallelChunkTableLocalState struct {
+		start int64
+		end   int64
+	}
 )
 
 var (
@@ -285,6 +318,38 @@ var (
 			resultCount: 2048,
 		},
 	}
+	contextRowTableUDFs = []tableUDFTest[RowTableFunctionContext]{
+		{
+			udf:         &contextRowTableUDF{},
+			name:        "contextRowTableUDF",
+			query:       `SELECT * FROM %s()`,
+			resultCount: 1,
+		},
+	}
+	contextParallelRowTableUDFs = []tableUDFTest[ParallelRowTableFunctionContext]{
+		{
+			udf:         &contextParallelRowTableUDF{},
+			name:        "contextParallelRowTableUDF",
+			query:       `SELECT * FROM %s(100) ORDER BY context_result`,
+			resultCount: 100,
+		},
+	}
+	contextChunkTableUDFs = []tableUDFTest[ChunkTableFunctionContext]{
+		{
+			udf:         &contextChunkTableUDF{},
+			name:        "contextChunkTableUDF",
+			query:       `SELECT * FROM %s(100)`,
+			resultCount: 100,
+		},
+	}
+	contextParallelChunkTableUDFs = []tableUDFTest[ParallelChunkTableFunctionContext]{
+		{
+			udf:         &contextParallelChunkTableUDF{},
+			name:        "contextParallelChunkTableUDF",
+			query:       `SELECT * FROM %s(100) ORDER BY context_parallel_chunk_result`,
+			resultCount: 100,
+		},
+	}
 )
 
 var (
@@ -320,7 +385,7 @@ func (udf *incTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *incTableUDF) Init() {}
 
-func (udf *incTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *incTableUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -364,7 +429,7 @@ func (udf *parallelIncTableUDF) NewLocalState() any {
 	}
 }
 
-func (udf *parallelIncTableUDF) FillRow(ctx context.Context, localState any, row Row) (bool, error) {
+func (udf *parallelIncTableUDF) FillRow(localState any, row Row) (bool, error) {
 	state := localState.(*parallelIncTableLocalState)
 
 	if state.start >= state.end {
@@ -435,7 +500,7 @@ func (udf *parallelChunkIncTableUDF) NewLocalState() any {
 	}
 }
 
-func (udf *parallelChunkIncTableUDF) FillChunk(ctx context.Context, localState any, chunk DataChunk) error {
+func (udf *parallelChunkIncTableUDF) FillChunk(localState any, chunk DataChunk) error {
 	state := localState.(*parallelChunkIncTableLocalState)
 
 	// Claim a new work unit.
@@ -507,7 +572,7 @@ func (udf *structTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *structTableUDF) Init() {}
 
-func (udf *structTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *structTableUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -553,7 +618,7 @@ func (udf *pushdownTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *pushdownTableUDF) Init() {}
 
-func (udf *pushdownTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *pushdownTableUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -611,7 +676,7 @@ func (udf *incTableNamedUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *incTableNamedUDF) Init() {}
 
-func (udf *incTableNamedUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *incTableNamedUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -659,7 +724,7 @@ func (udf *constTableUDF[T]) ColumnInfos() []ColumnInfo {
 
 func (udf *constTableUDF[T]) Init() {}
 
-func (udf *constTableUDF[T]) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *constTableUDF[T]) FillRow(row Row) (bool, error) {
 	if udf.count >= 1 {
 		return false, nil
 	}
@@ -702,7 +767,7 @@ func (udf *chunkIncTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *chunkIncTableUDF) Init() {}
 
-func (udf *chunkIncTableUDF) FillChunk(ctx context.Context, chunk DataChunk) error {
+func (udf *chunkIncTableUDF) FillChunk(chunk DataChunk) error {
 	size := 2048
 	i := 0
 
@@ -766,7 +831,7 @@ func (udf *unionTableUDF) ColumnInfos() []ColumnInfo {
 
 func (udf *unionTableUDF) Init() {}
 
-func (udf *unionTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+func (udf *unionTableUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
 		return false, nil
 	}
@@ -813,6 +878,290 @@ func (udf *unionTableUDF) Cardinality() *CardinalityInfo {
 	return nil
 }
 
+func (udf *contextRowTableUDF) GetFunction() RowTableFunctionContext {
+	return RowTableFunctionContext{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{},
+		},
+		BindArguments: bindContextRowTableUDF,
+	}
+}
+
+func bindContextRowTableUDF(namedArgs map[string]any, args ...any) (RowTableSourceContext, error) {
+	return &contextRowTableUDF{
+		count: 0,
+	}, nil
+}
+
+func (udf *contextRowTableUDF) ColumnInfos() []ColumnInfo {
+	varcharInfo, _ := NewTypeInfo(TYPE_VARCHAR)
+	return []ColumnInfo{{Name: "context_value", T: varcharInfo}}
+}
+
+func (udf *contextRowTableUDF) Init() {}
+
+func (udf *contextRowTableUDF) FillRow(ctx context.Context, row Row) (bool, error) {
+	if udf.count >= 1 {
+		return false, nil
+	}
+	udf.count++
+
+	// Get the test value from the context
+	value := ctx.Value(testCtxKey)
+	var result string
+	if value != nil {
+		result = fmt.Sprintf("context_value: %v", value)
+	} else {
+		result = "no context value"
+	}
+
+	err := SetRowValue(row, 0, result)
+	return true, err
+}
+
+func (udf *contextRowTableUDF) GetValue(r, c int) any {
+	return "context_value: contextRowTableUDF"
+}
+
+func (udf *contextRowTableUDF) GetTypes() []any {
+	return []any{""}
+}
+
+func (udf *contextRowTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *contextParallelRowTableUDF) GetFunction() ParallelRowTableFunctionContext {
+	return ParallelRowTableFunctionContext{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{typeBigintTableUDF},
+		},
+		BindArguments: bindContextParallelRowTableUDF,
+	}
+}
+
+func bindContextParallelRowTableUDF(namedArgs map[string]any, args ...any) (ParallelRowTableSourceContext, error) {
+	return &contextParallelRowTableUDF{
+		lock:    &sync.Mutex{},
+		claimed: 0,
+		n:       args[0].(int64),
+	}, nil
+}
+
+func (udf *contextParallelRowTableUDF) ColumnInfos() []ColumnInfo {
+	varcharInfo, _ := NewTypeInfo(TYPE_VARCHAR)
+	return []ColumnInfo{{Name: "context_result", T: varcharInfo}}
+}
+
+func (udf *contextParallelRowTableUDF) Init() ParallelTableSourceInfo {
+	return ParallelTableSourceInfo{MaxThreads: 8}
+}
+
+func (udf *contextParallelRowTableUDF) NewLocalState() any {
+	return &contextParallelRowTableLocalState{
+		start: 0,
+		end:   -1,
+	}
+}
+
+func (udf *contextParallelRowTableUDF) FillRow(ctx context.Context, localState any, row Row) (bool, error) {
+	state := localState.(*contextParallelRowTableLocalState)
+
+	if state.start >= state.end {
+		// Claim a new work unit.
+		udf.lock.Lock()
+		remaining := udf.n - udf.claimed
+
+		if remaining <= 0 {
+			// No more work.
+			udf.lock.Unlock()
+			return false, nil
+		} else if remaining >= 2024 {
+			remaining = 2024
+		}
+
+		state.start = udf.claimed
+		state.end = udf.claimed + remaining
+		udf.claimed += remaining
+		udf.lock.Unlock()
+	}
+
+	state.start++
+
+	// Get the test value from the context
+	value := ctx.Value(testCtxKey)
+	var result string
+	if value != nil {
+		result = fmt.Sprintf("context_parallel_row: %v", value)
+	} else {
+		result = "context_parallel_row: no context value"
+	}
+
+	err := SetRowValue(row, 0, result)
+	return true, err
+}
+
+func (udf *contextParallelRowTableUDF) GetValue(r, c int) any {
+	return "context_parallel_row: contextParallelRowTableUDF"
+}
+
+func (udf *contextParallelRowTableUDF) GetTypes() []any {
+	return []any{""}
+}
+
+func (udf *contextParallelRowTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *contextChunkTableUDF) GetFunction() ChunkTableFunctionContext {
+	return ChunkTableFunctionContext{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{typeBigintTableUDF},
+		},
+		BindArguments: bindContextChunkTableUDF,
+	}
+}
+
+func bindContextChunkTableUDF(namedArgs map[string]any, args ...any) (ChunkTableSourceContext, error) {
+	return &contextChunkTableUDF{
+		count: 0,
+		n:     args[0].(int64),
+	}, nil
+}
+
+func (udf *contextChunkTableUDF) ColumnInfos() []ColumnInfo {
+	varcharInfo, _ := NewTypeInfo(TYPE_VARCHAR)
+	return []ColumnInfo{{Name: "context_chunk_result", T: varcharInfo}}
+}
+
+func (udf *contextChunkTableUDF) Init() {}
+
+func (udf *contextChunkTableUDF) FillChunk(ctx context.Context, chunk DataChunk) error {
+	size := 2048
+	i := 0
+
+	// Get the test value from the context
+	value := ctx.Value(testCtxKey)
+	var contextValue string
+	if value != nil {
+		contextValue = fmt.Sprintf("%v", value)
+	} else {
+		contextValue = "no context value"
+	}
+
+	for ; i < size; i++ {
+		if udf.count >= udf.n {
+			err := chunk.SetSize(i)
+			return err
+		}
+		udf.count++
+		result := fmt.Sprintf("context_chunk: %s", contextValue)
+		err := chunk.SetValue(0, i, result)
+		if err != nil {
+			return err
+		}
+	}
+
+	err := chunk.SetSize(i)
+	return err
+}
+
+func (udf *contextChunkTableUDF) GetValue(r, c int) any {
+	return "context_chunk: contextChunkTableUDF"
+}
+
+func (udf *contextChunkTableUDF) GetTypes() []any {
+	return []any{""}
+}
+
+func (udf *contextChunkTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *contextParallelChunkTableUDF) GetFunction() ParallelChunkTableFunctionContext {
+	return ParallelChunkTableFunctionContext{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{typeBigintTableUDF},
+		},
+		BindArguments: bindContextParallelChunkTableUDF,
+	}
+}
+
+func bindContextParallelChunkTableUDF(namedArgs map[string]any, args ...any) (ParallelChunkTableSourceContext, error) {
+	return &contextParallelChunkTableUDF{
+		lock:    &sync.Mutex{},
+		claimed: 0,
+		n:       args[0].(int64),
+	}, nil
+}
+
+func (udf *contextParallelChunkTableUDF) ColumnInfos() []ColumnInfo {
+	varcharInfo, _ := NewTypeInfo(TYPE_VARCHAR)
+	return []ColumnInfo{{Name: "context_parallel_chunk_result", T: varcharInfo}}
+}
+
+func (udf *contextParallelChunkTableUDF) Init() ParallelTableSourceInfo {
+	return ParallelTableSourceInfo{MaxThreads: 8}
+}
+
+func (udf *contextParallelChunkTableUDF) NewLocalState() any {
+	return &contextParallelChunkTableLocalState{
+		start: 0,
+		end:   -1,
+	}
+}
+
+func (udf *contextParallelChunkTableUDF) FillChunk(ctx context.Context, localState any, chunk DataChunk) error {
+	state := localState.(*contextParallelChunkTableLocalState)
+
+	// Claim a new work unit.
+	udf.lock.Lock()
+	remaining := udf.n - udf.claimed
+	if remaining <= 0 {
+		// No more work.
+		udf.lock.Unlock()
+		return nil
+	} else if remaining >= 2048 {
+		remaining = 2048
+	}
+	state.start = udf.claimed
+	state.end = udf.claimed + remaining
+	udf.claimed += remaining
+	udf.lock.Unlock()
+
+	// Get the test value from the context
+	value := ctx.Value(testCtxKey)
+	var contextValue string
+	if value != nil {
+		contextValue = fmt.Sprintf("%v", value)
+	} else {
+		contextValue = "no context value"
+	}
+
+	for i := range int(remaining) {
+		result := fmt.Sprintf("context_parallel_chunk: %s", contextValue)
+		err := chunk.SetValue(0, i, result)
+		if err != nil {
+			return err
+		}
+	}
+
+	err := chunk.SetSize(int(remaining))
+	return err
+}
+
+func (udf *contextParallelChunkTableUDF) GetValue(r, c int) any {
+	return "context_parallel_chunk: contextParallelChunkTableUDF"
+}
+
+func (udf *contextParallelChunkTableUDF) GetTypes() []any {
+	return []any{""}
+}
+
+func (udf *contextParallelChunkTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
 func TestTableUDF(t *testing.T) {
 	for _, udf := range rowTableUDFs {
 		t.Run(udf.name, func(t *testing.T) {
@@ -833,6 +1182,30 @@ func TestTableUDF(t *testing.T) {
 	}
 
 	for _, udf := range parallelChunkTableUDFs {
+		t.Run(udf.name, func(t *testing.T) {
+			singleTableUDF(t, udf)
+		})
+	}
+
+	for _, udf := range contextRowTableUDFs {
+		t.Run(udf.name, func(t *testing.T) {
+			singleTableUDF(t, udf)
+		})
+	}
+
+	for _, udf := range contextParallelRowTableUDFs {
+		t.Run(udf.name, func(t *testing.T) {
+			singleTableUDF(t, udf)
+		})
+	}
+
+	for _, udf := range contextChunkTableUDFs {
+		t.Run(udf.name, func(t *testing.T) {
+			singleTableUDF(t, udf)
+		})
+	}
+
+	for _, udf := range contextParallelChunkTableUDFs {
 		t.Run(udf.name, func(t *testing.T) {
 			singleTableUDF(t, udf)
 		})
@@ -930,6 +1303,40 @@ func BenchmarkRowTableUDF(b *testing.B) {
 		require.NoError(b, errQuery)
 		closeRowsWrapper(b, res)
 	}
+}
+
+func TestTableUDFContext(t *testing.T) {
+	db := openDbWrapper(t, `?access_mode=READ_WRITE`)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// Register the context-aware table UDF
+	var contextUDF contextRowTableUDF
+	err := RegisterTableUDF(conn, "context_test", contextUDF.GetFunction())
+	require.NoError(t, err)
+
+	// Set a test value in the context
+	testValue := "test_context_value"
+	ctx := context.WithValue(context.Background(), testCtxKey, testValue)
+
+	// Query the UDF with the context
+	res, err := db.QueryContext(ctx, `SELECT * FROM context_test()`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	// Verify the result contains the context value
+	require.True(t, res.Next())
+	var result string
+	err = res.Scan(&result)
+	require.NoError(t, err)
+
+	expected := fmt.Sprintf("context_value: %s", testValue)
+	require.Equal(t, expected, result)
+
+	// Ensure only one row was returned
+	require.False(t, res.Next())
 }
 
 func BenchmarkChunkTableUDF(b *testing.B) {
