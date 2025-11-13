@@ -27,9 +27,6 @@ func getPinned[T any](handle unsafe.Pointer) T {
 }
 
 func tryGetPinned[T any](handle unsafe.Pointer) T {
-	defer func() {
-		recover() // ignore panics
-	}()
 	h := *(*cgo.Handle)(handle)
 	if val, ok := h.Value().(pinnedValue[T]); ok {
 		return val.value
