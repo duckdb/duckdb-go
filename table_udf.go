@@ -62,15 +62,25 @@ type (
 	}
 
 	// TableFunction implements different table function types:
-	// RowTableFunction, ParallelRowTableFunction, ChunkTableFunction, and ParallelChunkTableFunction.
+	// RowTableFunction, RowTableFunctionContext, ParallelRowTableFunction, ParallelRowTableFunctionContext, ChunkTableFunction, ChunkTableFunctionContext, ParallelChunkTableFunction, and ParallelChunkTableFunctionContext.
 	TableFunction interface {
-		RowTableFunction | RowTableFunctionContext | ParallelRowTableFunction | ParallelRowTableFunctionContext | ChunkTableFunction | ChunkTableFunctionContext | ParallelChunkTableFunction | ParallelChunkTableFunctionContext
+		RowTableFunction |
+		RowTableFunctionContext |
+		ParallelRowTableFunction |
+		ParallelRowTableFunctionContext |
+		ChunkTableFunction |
+		ChunkTableFunctionContext |
+		ParallelChunkTableFunction |
+		ParallelChunkTableFunctionContext
 	}
 
 	// parallelTableFunction implements different table function types:
-	// ParallelRowTableFunction and ParallelChunkTableFunction.
+	// ParallelRowTableFunction, ParallelRowTableFunctionContext, ParallelChunkTableFunction, and ParallelChunkTableFunctionContext.
 	parallelTableFunction interface {
-		ParallelRowTableFunction | ParallelRowTableFunctionContext | ParallelChunkTableFunction | ParallelChunkTableFunctionContext
+		ParallelRowTableFunction |
+		ParallelRowTableFunctionContext |
+		ParallelChunkTableFunction |
+		ParallelChunkTableFunctionContext
 	}
 
 	// A RowTableFunction is a type which can be bound to return a RowTableSource.

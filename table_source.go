@@ -100,7 +100,7 @@ type (
 	ParallelChunkTableSourceContext interface {
 		parallelTableSource
 		// FillChunk takes a context and a Chunk and fills it with values.
-		// Set the chunk size to 0 to end the function
+		// Set the chunk size to 0 to end the function.
 		FillChunk(context.Context, any, DataChunk) error
 	}
 
