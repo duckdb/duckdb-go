@@ -152,6 +152,8 @@ var (
 	errTableUDFColumnTypeIsNil = fmt.Errorf("%w: column type is nil", errTableUDFCreate)
 
 	errProfilingInfoEmpty = errors.New("no profiling information available for this connection")
+
+	errFailedToRegisterLogStorage = errors.New("failed to register log storage")
 )
 
 type ErrorType int
