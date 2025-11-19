@@ -281,6 +281,7 @@ type (
 	BindInfo            = bindings.BindInfo
 	InitInfo            = bindings.InitInfo
 	ReplacementScanInfo = bindings.ReplacementScanInfo
+	LogStorage          = bindings.LogStorage
 )
 
 // Functions.
@@ -790,6 +791,15 @@ var (
 	ExpressionReturnType = bindings.ExpressionReturnType
 	ExpressionIsFoldable = bindings.ExpressionIsFoldable
 	ExpressionFold       = bindings.ExpressionFold
+)
+
+// Logging.
+
+var (
+	CreateLogStorage           = bindings.CreateLogStorage
+	DestroyLogStorage          = bindings.DestroyLogStorage
+	LogStorageSetWriteLogEntry = bindings.LogStorageSetWriteLogEntry
+	RegisterLogStorage         = bindings.RegisterLogStorage
 )
 
 // Go bindings helper.
