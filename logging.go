@@ -10,10 +10,11 @@ typedef void (*log_storage_delete_callback_t)(void *);
 import "C"
 
 import (
-	"github.com/duckdb/duckdb-go/mapping"
 	"runtime"
 	"runtime/cgo"
 	"unsafe"
+
+	"github.com/duckdb/duckdb-go/mapping"
 )
 
 type DefaultLoggerCallbackFn func(level, logType, logMsg string)
