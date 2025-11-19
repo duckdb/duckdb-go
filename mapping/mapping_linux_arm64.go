@@ -799,6 +799,8 @@ var (
 	CreateLogStorage           = bindings.CreateLogStorage
 	DestroyLogStorage          = bindings.DestroyLogStorage
 	LogStorageSetWriteLogEntry = bindings.LogStorageSetWriteLogEntry
+	LogStorageSetExtraData     = bindings.LogStorageSetExtraData
+	LogStorageSetName          = bindings.LogStorageSetName
 	RegisterLogStorage         = bindings.RegisterLogStorage
 )
 
