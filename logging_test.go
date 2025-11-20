@@ -3,10 +3,11 @@ package duckdb
 import (
 	"database/sql"
 	"database/sql/driver"
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type logStore struct {
