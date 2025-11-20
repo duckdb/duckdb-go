@@ -1118,7 +1118,7 @@ func TestAppenderInterrupt(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create the appender.
-			query := `INSERT INTO test SELECT col1 FROM appended_data WHERE [col1] = (SELECT LIST(range)::BIGINT[] FROM range(1_000_000_000))`
+			query := `INSERT INTO test SELECT col1 FROM appended_data WHERE col1 = (SELECT SUM(range) FROM range(100_000_000_000) t(range))`
 			colTypes := []TypeInfo{intType}
 			a := newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
 
