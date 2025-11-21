@@ -1,6 +1,8 @@
 module github.com/duckdb/duckdb-go/mapping
 
-go 1.24
+go 1.24.0
+
+toolchain go1.24.1
 
 require (
 	github.com/duckdb/duckdb-go-bindings v0.1.23
