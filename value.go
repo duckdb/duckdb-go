@@ -66,6 +66,8 @@ func getValue(v mapping.Value) (any, error) {
 		return hugeIntToNative(&hugeInt), nil
 	case TYPE_VARCHAR:
 		return mapping.GetVarchar(v), nil
+	case TYPE_SQLNULL:
+		return nil, nil
 	default:
 		return nil, unsupportedTypeError(typeToStringMap[t])
 	}
@@ -276,8 +278,7 @@ func inferLogicalTypeAndValue(v any) (mapping.LogicalType, mapping.Value, error)
 }
 
 func inferPrimitiveType(v any) (Type, any) {
-	// Return TYPE_INVALID for
-	// TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_ARRAY,
+	// Return TYPE_INVALID for TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_ARRAY,
 	// and for the unsupported types.
 	t := TYPE_INVALID
 
