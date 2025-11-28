@@ -35,6 +35,10 @@ func columnCountError(actual, expected int) error {
 	return fmt.Errorf("%s: expected %d, got %d", columnCountErrMsg, expected, actual)
 }
 
+func unprojectedColumnError(colIdx int) error {
+	return fmt.Errorf("%s: column index %d is not projected", unprojectedColumnErrMsg, colIdx)
+}
+
 func paramIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [1, %d]", paramIndexErrMsg, idx, max)
 }
@@ -67,20 +71,21 @@ func duplicateNameError(name string) error {
 }
 
 const (
-	driverErrMsg           = "database/sql/driver"
-	castErrMsg             = "cast error"
-	convertErrMsg          = "conversion error"
-	invalidInputErrMsg     = "invalid input"
-	structFieldErrMsg      = "invalid STRUCT field"
-	columnCountErrMsg      = "invalid column count"
-	unsupportedTypeErrMsg  = "unsupported data type"
-	invalidatedAppenderMsg = "appended and not yet flushed data has been invalidated due to error"
-	tryOtherFuncErrMsg     = "please try this function instead"
-	indexErrMsg            = "index"
-	unknownTypeErrMsg      = "unknown type"
-	interfaceIsNilErrMsg   = "interface is nil"
-	duplicateNameErrMsg    = "duplicate name"
-	paramIndexErrMsg       = "invalid parameter index"
+	driverErrMsg            = "database/sql/driver"
+	castErrMsg              = "cast error"
+	convertErrMsg           = "conversion error"
+	invalidInputErrMsg      = "invalid input"
+	structFieldErrMsg       = "invalid STRUCT field"
+	columnCountErrMsg       = "invalid column count"
+	unprojectedColumnErrMsg = "unprojected column"
+	unsupportedTypeErrMsg   = "unsupported data type"
+	invalidatedAppenderMsg  = "appended and not yet flushed data has been invalidated due to error"
+	tryOtherFuncErrMsg      = "please try this function instead"
+	indexErrMsg             = "index"
+	unknownTypeErrMsg       = "unknown type"
+	interfaceIsNilErrMsg    = "interface is nil"
+	duplicateNameErrMsg     = "duplicate name"
+	paramIndexErrMsg        = "invalid parameter index"
 )
 
 var (

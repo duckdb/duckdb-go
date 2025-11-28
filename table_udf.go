@@ -285,6 +285,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 	instance := getPinned[tableFunctionData](mapping.FunctionGetBindData(info))
 
 	var chunk DataChunk
+	chunk.projection = instance.projection
 	err := chunk.initFromDuckDataChunk(output, true)
 	if err != nil {
 		mapping.FunctionSetError(info, err.Error())
@@ -296,8 +297,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 	switch fun := instance.fun.(type) {
 	case ParallelRowTableSource:
 		row := Row{
-			chunk:      &chunk,
-			projection: instance.projection,
+			chunk: &chunk,
 		}
 		maxSize := mapping.IdxT(GetDataChunkCapacity())
 

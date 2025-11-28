@@ -15,6 +15,8 @@ type DataChunk struct {
 	columnNames []string
 	// size caches the size after initialization.
 	size int
+	// projection mapping of projected columns, when known (otherwise empty)
+	projection []int
 }
 
 // GetDataChunkCapacity returns the capacity of a data chunk.
@@ -39,11 +41,24 @@ func (chunk *DataChunk) SetSize(size int) error {
 
 // GetValue returns a single value of a column.
 func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
-	if colIdx >= len(chunk.columns) {
+	if chunk.projection == nil && (colIdx < 0 || colIdx >= len(chunk.columns)) {
 		return nil, getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
 	}
-	column := &chunk.columns[colIdx]
 
+	if chunk.projection != nil && (colIdx < 0 || colIdx >= len(chunk.projection)) {
+		return nil, getError(errAPI, columnCountError(colIdx, len(chunk.projection)))
+	}
+
+	// Rewrite colIdx for projection, if provided. Otherwise, use as is for bwc.
+	if chunk.projection != nil {
+		origColIdx := colIdx
+		colIdx = chunk.projection[colIdx]
+		if colIdx < 0 || colIdx >= len(chunk.columns) {
+			return nil, getError(errAPI, unprojectedColumnError(origColIdx))
+		}
+	}
+
+	column := &chunk.columns[colIdx]
 	return column.getFn(column, mapping.IdxT(rowIdx)), nil
 }
 
@@ -51,11 +66,23 @@ func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
 // Note that this requires casting the type for each invocation.
 // NOTE: Custom ENUM types must be passed as string.
 func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
-	if colIdx >= len(chunk.columns) {
+	if chunk.projection == nil && (colIdx < 0 || colIdx >= len(chunk.columns)) {
 		return getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
 	}
-	column := &chunk.columns[colIdx]
 
+	if chunk.projection != nil && (colIdx < 0 || colIdx >= len(chunk.projection)) {
+		return getError(errAPI, columnCountError(colIdx, len(chunk.projection)))
+	}
+
+	// Rewrite colIdx for projection
+	if chunk.projection != nil {
+		colIdx = chunk.projection[colIdx]
+		if colIdx < 0 || colIdx >= len(chunk.columns) {
+			return nil // Ignore unprojected columns
+		}
+	}
+
+	column := &chunk.columns[colIdx]
 	return column.setFn(column, mapping.IdxT(rowIdx), val)
 }
 
@@ -64,9 +91,22 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 // require casting the value to `any` (implicitly).
 // NOTE: Custom ENUM types must be passed as string.
 func SetChunkValue[T any](chunk DataChunk, colIdx, rowIdx int, val T) error {
-	if colIdx >= len(chunk.columns) {
+	if chunk.projection == nil && (colIdx < 0 || colIdx >= len(chunk.columns)) {
 		return getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
 	}
+
+	if chunk.projection != nil && (colIdx < 0 || colIdx >= len(chunk.projection)) {
+		return getError(errAPI, columnCountError(colIdx, len(chunk.projection)))
+	}
+
+	// Rewrite colIdx for projection
+	if chunk.projection != nil {
+		colIdx = chunk.projection[colIdx]
+		if colIdx < 0 || colIdx >= len(chunk.columns) {
+			return nil // Ignore unprojected columns
+		}
+	}
+
 	return setVectorVal(&chunk.columns[colIdx], mapping.IdxT(rowIdx), val)
 }
 

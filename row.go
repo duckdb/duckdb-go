@@ -7,25 +7,23 @@ import (
 // Row represents one row in duckdb.
 // It references the internal vectors.
 type Row struct {
-	chunk      *DataChunk
-	r          mapping.IdxT
-	projection []int
+	chunk *DataChunk
+	r     mapping.IdxT
 }
 
 // IsProjected returns whether the column is projected.
 func (r Row) IsProjected(colIdx int) bool {
-	return r.projection[colIdx] != -1
+	if len(r.chunk.projection) == 0 || colIdx < 0 || colIdx >= len(r.chunk.projection) {
+		return false
+	}
+
+	return r.chunk.projection[colIdx] != -1
 }
 
 // SetRowValue sets the value at colIdx to val.
 // Returns an error on failure, and nil for non-projected columns.
 func SetRowValue[T any](row Row, colIdx int, val T) error {
-	projectedIdx := row.projection[colIdx]
-	if projectedIdx < 0 || projectedIdx >= len(row.chunk.columns) {
-		return nil
-	}
-	vec := row.chunk.columns[projectedIdx]
-	return setVectorVal(&vec, row.r, val)
+	return SetChunkValue(*row.chunk, colIdx, int(row.r), val)
 }
 
 // SetRowValue sets the value at colIdx to val.
