@@ -39,6 +39,10 @@ func paramIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [1, %d]", paramIndexErrMsg, idx, max)
 }
 
+func columnIndexError(idx int, max uint64) error {
+	return fmt.Errorf("%s: %d is out of range [0, %d)", columnIndexErrMsg, idx, max)
+}
+
 func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
 }
@@ -81,6 +85,7 @@ const (
 	interfaceIsNilErrMsg   = "interface is nil"
 	duplicateNameErrMsg    = "duplicate name"
 	paramIndexErrMsg       = "invalid parameter index"
+	columnIndexErrMsg      = "invalid column index"
 )
 
 var (
