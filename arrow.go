@@ -302,6 +302,8 @@ func (r *recordReader) Err() error {
 	return r.err
 }
 
+// MoveArrowToDataChunk moves a record batch into an existing DuckDB DataChunk.
+// Useful for implementing table functions that read from Arrow sources.
 func (a *Arrow) MoveArrowToDataChunk(rec arrow.RecordBatch, chunk DataChunk) error {
 	ed := arrowmapping.MoveArrowToDataChunk(a.conn.conn, rec, chunk.chunk)
 	return errorDataError(ed)

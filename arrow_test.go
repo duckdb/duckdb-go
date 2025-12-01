@@ -364,6 +364,7 @@ func TestArrowTableUDF(t *testing.T) {
 	for res.Next() {
 		var val float64
 		require.NoError(t, res.Scan(&val))
+		require.Equal(t, 0.5, val)
 		rowCount++
 	}
 	require.Equal(t, 10000, rowCount)
