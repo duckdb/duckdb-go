@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -314,4 +315,95 @@ func TestArrowClosedConn(t *testing.T) {
 		return driver.ErrBadConn
 	})
 	require.Error(t, err)
+}
+
+func TestArrowTableUDF(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	innerConn := openDriverConnWrapper(t, c)
+	defer closeDriverConnWrapper(t, &innerConn)
+
+	ar, err := NewArrowFromConn(innerConn)
+	require.NoError(t, err)
+
+	// Create an arrow array of type Float64 buffered in memory
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "col0", Type: arrow.PrimitiveTypes.Float64},
+	}, nil)
+	alloc := memory.NewGoAllocator()
+	builder := array.NewFloat64Builder(alloc)
+	defer builder.Release()
+
+	// Add values > data chunk size to test multiple chunks
+	for range 10000 {
+		builder.Append(float64(0.5))
+	}
+
+	arr := builder.NewArray()
+	rb := array.NewRecordBatch(schema, []arrow.Array{arr}, int64(arr.Len()))
+	tbl := array.NewTableFromRecords(schema, []arrow.RecordBatch{rb})
+
+	RegisterTableUDF(conn, "get_arrow", ChunkTableFunction{
+		BindArguments: func(named map[string]any, args ...any) (ChunkTableSource, error) {
+			return &arrowTableUdf{tbl: tbl, ar: ar}, nil
+		},
+	})
+
+	res, err := db.QueryContext(context.Background(), `SELECT * FROM get_arrow()`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var rowCount int
+	for res.Next() {
+		var val float64
+		require.NoError(t, res.Scan(&val))
+		require.Equal(t, 0.5, val)
+		rowCount++
+	}
+	require.Equal(t, 10000, rowCount)
+}
+
+// Define a table UDF
+type arrowTableUdf struct {
+	ar  *Arrow
+	tbl arrow.Table
+	rdr *array.TableReader
+}
+
+func (u *arrowTableUdf) Init() {
+	u.rdr = array.NewTableReader(u.tbl, int64(GetDataChunkCapacity()))
+}
+
+func (u *arrowTableUdf) ColumnInfos() []ColumnInfo {
+	t, _ := NewTypeInfo(TYPE_DOUBLE)
+	return []ColumnInfo{{
+		Name: "col0",
+		T:    t,
+	}}
+}
+
+func (u *arrowTableUdf) Cardinality() *CardinalityInfo {
+	return &CardinalityInfo{
+		Cardinality: uint(u.tbl.NumRows()),
+		Exact:       true,
+	}
+}
+
+func (u *arrowTableUdf) FillChunk(chunk DataChunk) error {
+	if u.rdr.Next() {
+		b := u.rdr.RecordBatch()
+		defer b.Release()
+		if err := u.ar.DataChunkFromArrow(b, chunk); err != nil {
+			return fmt.Errorf("failed to move arrow to data chunk: %w", err)
+		}
+	}
+
+	return nil
 }
