@@ -301,3 +301,8 @@ func (r *recordReader) Err() error {
 	defer r.mu.Unlock()
 	return r.err
 }
+
+func (a *Arrow) MoveArrowToDataChunk(rec arrow.RecordBatch, chunk DataChunk) error {
+	ed := arrowmapping.MoveArrowToDataChunk(a.conn.conn, rec, chunk.chunk)
+	return errorDataError(ed)
+}
