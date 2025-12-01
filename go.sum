@@ -6,8 +6,6 @@ github.com/apache/thrift v0.22.0 h1:r7mTJdj51TMDe6RtcmNdQxgn9XcyfGDOzegMDRg47uc=
 github.com/apache/thrift v0.22.0/go.mod h1:1e7J/O1Ae6ZQMTYdy9xa3w9k+XHWPfRvdPyJeynQ+/g=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/duckdb/duckdb-go-bindings v0.1.23 h1:sJRXraxfC/gdHI2T7oHqrdp1VdKemrgqWGQ8986mH1c=
-github.com/duckdb/duckdb-go-bindings v0.1.23/go.mod h1:WA7U/o+b37MK2kiOPPueVZ+FIxt5AZFCjszi8hHeH18=
 github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.23 h1:Xyw1fWu4jzOtv2Hqkaehr7f+qbIWNRfBMbZyD+g8dyU=
 github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.23/go.mod h1:jfbOHwGZqNCpMAxV4g4g5jmWr0gKdMvh2fGusPubxC4=
 github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.23 h1:85Xomx5NxZ+Nt+VepUJzuMYbBTH+nB6JlBXIyJuTovA=
@@ -50,6 +48,8 @@ github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRI
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/wmTJc9IK0Q/duckdb-go-bindings v0.0.0-20251201050337-6b010671d08c h1:DUXYLuHDhiy+pcrgFxQHZo/SxLG3Gun0xAJOnlq1HnA=
+github.com/wmTJc9IK0Q/duckdb-go-bindings v0.0.0-20251201050337-6b010671d08c/go.mod h1:WA7U/o+b37MK2kiOPPueVZ+FIxt5AZFCjszi8hHeH18=
 github.com/zeebo/assert v1.3.0 h1:g7C04CbJuIDKNPFHmsk4hwZDO5O+kntRxzaUoNXj+IQ=
 github.com/zeebo/assert v1.3.0/go.mod h1:Pq9JiuJQpG8JLJdtkwrJESF0Foym2/D9XMU5ciN/wJ0=
 github.com/zeebo/xxh3 v1.0.2 h1:xZmwmqxHZA8AI603jOQ0tMqmBr9lPeFwGg6d+xy9DC0=
