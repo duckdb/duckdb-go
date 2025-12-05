@@ -36,5 +36,6 @@ var (
 	NewArrowSchema        = bindings.NewArrowSchema
 	DataChunkToArrowArray = bindings.DataChunkToArrowArray
 	SchemaFromArrow       = bindings.SchemaFromArrow
-	DataChunkFromArrow    = bindings.DataChunkFromArrow
+	DataChunkFromArrow    = bindings.NewDataChunkFromArrow
+	MoveArrowToDataChunk  = bindings.MoveArrowToDataChunk
 )
