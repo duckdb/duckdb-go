@@ -67,20 +67,21 @@ func duplicateNameError(name string) error {
 }
 
 const (
-	driverErrMsg           = "database/sql/driver"
-	castErrMsg             = "cast error"
-	convertErrMsg          = "conversion error"
-	invalidInputErrMsg     = "invalid input"
-	structFieldErrMsg      = "invalid STRUCT field"
-	columnCountErrMsg      = "invalid column count"
-	unsupportedTypeErrMsg  = "unsupported data type"
-	invalidatedAppenderMsg = "appended and not yet flushed data has been invalidated due to error"
-	tryOtherFuncErrMsg     = "please try this function instead"
-	indexErrMsg            = "index"
-	unknownTypeErrMsg      = "unknown type"
-	interfaceIsNilErrMsg   = "interface is nil"
-	duplicateNameErrMsg    = "duplicate name"
-	paramIndexErrMsg       = "invalid parameter index"
+	driverErrMsg            = "database/sql/driver"
+	castErrMsg              = "cast error"
+	convertErrMsg           = "conversion error"
+	invalidInputErrMsg      = "invalid input"
+	structFieldErrMsg       = "invalid STRUCT field"
+	columnCountErrMsg       = "invalid column count"
+	unprojectedColumnErrMsg = "unprojected column"
+	unsupportedTypeErrMsg   = "unsupported data type"
+	invalidatedAppenderMsg  = "appended and not yet flushed data has been invalidated due to error"
+	tryOtherFuncErrMsg      = "please try this function instead"
+	indexErrMsg             = "index"
+	unknownTypeErrMsg       = "unknown type"
+	interfaceIsNilErrMsg    = "interface is nil"
+	duplicateNameErrMsg     = "duplicate name"
+	paramIndexErrMsg        = "invalid parameter index"
 )
 
 var (
@@ -282,4 +283,25 @@ func getDuckDBError(errMsg string) error {
 		Type: errType,
 		Msg:  errMsg,
 	}
+}
+
+type unprojectedColumnError struct {
+	Index int
+}
+
+func (e *unprojectedColumnError) Error() string {
+	return fmt.Sprintf("unprojected column: index %d is not projected", e.Index)
+}
+
+// sentinel value for errors.Is
+var errUnprojectedColumn = &unprojectedColumnError{Index: -1}
+
+// constructor that wraps the sentinel with context
+func newUnprojectedColumnError(index int) error {
+	if index == -1 {
+		// avoid returning the sentinel directly for real index -1
+		return &unprojectedColumnError{Index: index}
+	}
+	// wrap the sentinel so errors.Is works, but keep the index in the concrete error
+	return fmt.Errorf("%w: index %d", errUnprojectedColumn, index)
 }

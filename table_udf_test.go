@@ -98,6 +98,11 @@ type (
 	contextTableUDF struct {
 		value uint64
 	}
+
+	chunkPushdownTableUDF struct {
+		n     int64
+		count int64
+	}
 )
 
 var (
@@ -115,15 +120,15 @@ var (
 			resultCount: 10000,
 		},
 		{
-			udf:         &structTableUDF{},
-			name:        "structTableUDF",
-			query:       `SELECT * FROM %s(2048)`,
-			resultCount: 2048,
-		},
-		{
 			udf:         &pushdownTableUDF{},
 			name:        "pushdownTableUDF",
 			query:       `SELECT result2 FROM %s(2048)`,
+			resultCount: 2048,
+		},
+		{
+			udf:         &structTableUDF{},
+			name:        "structTableUDF",
+			query:       `SELECT * FROM %s(2048)`,
 			resultCount: 2048,
 		},
 		{
@@ -278,6 +283,12 @@ var (
 			udf:         &chunkIncTableUDF{},
 			name:        "chunkIncTableUDF",
 			query:       `SELECT * FROM %s(2048)`,
+			resultCount: 2048,
+		},
+		{
+			udf:         &chunkPushdownTableUDF{},
+			name:        "chunkPushdownTableUDF",
+			query:       `SELECT result2 FROM %s(2048)`,
 			resultCount: 2048,
 		},
 	}
@@ -858,6 +869,75 @@ func (udf *unionTableUDF) GetTypes() []any {
 }
 
 func (udf *unionTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *chunkPushdownTableUDF) GetFunction() ChunkTableFunction {
+	return ChunkTableFunction{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{typeBigintTableUDF},
+		},
+		BindArguments: bindChunk,
+	}
+}
+
+func bindChunk(namedArgs map[string]any, args ...any) (ChunkTableSource, error) {
+	return &chunkPushdownTableUDF{
+		count: 0,
+		n:     args[0].(int64),
+	}, nil
+}
+
+func (udf *chunkPushdownTableUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{
+		{Name: "result", T: typeBigintTableUDF},
+		{Name: "result2", T: typeBigintTableUDF},
+	}
+}
+
+func (udf *chunkPushdownTableUDF) Init() {}
+
+func (udf *chunkPushdownTableUDF) FillChunk(chunk DataChunk) error {
+	nextVal := udf.count + 1
+	chunkSize := 2048
+
+	// Determine how many rows to fill in this chunk
+	i := 0
+	for ; i < chunkSize; i++ {
+		if udf.count >= udf.n {
+			// No more data to produce
+			break
+		}
+
+		if err := chunk.SetValue(0, i, nextVal); err != nil {
+			return fmt.Errorf("failed to set value for result: %w", err)
+		}
+
+		if err := chunk.SetValue(1, i, nextVal); err != nil {
+			return fmt.Errorf("failed to set value for result2: %w", err)
+		}
+
+		udf.count++
+		nextVal = udf.count + 1
+	}
+
+	return chunk.SetSize(i)
+}
+
+func (udf *chunkPushdownTableUDF) GetValue(r, c int) any {
+	// The test queries only 'result2', which is column index 1.
+	// Its value is (r + 1) * 10
+	if c == 1 {
+		return int64((r + 1) * 10)
+	}
+	return int64(r + 1)
+}
+
+func (udf *chunkPushdownTableUDF) GetTypes() []any {
+	return []any{int64(0)}
+}
+
+func (udf *chunkPushdownTableUDF) Cardinality() *CardinalityInfo {
 	return nil
 }
 
