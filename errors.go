@@ -39,6 +39,10 @@ func paramIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [1, %d]", paramIndexErrMsg, idx, max)
 }
 
+func columnIndexError(idx int, max uint64) error {
+	return fmt.Errorf("%s: %d is out of range [0, %d)", columnIndexErrMsg, idx, max)
+}
+
 func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
 }
@@ -80,6 +84,7 @@ const (
 	invalidInputErrMsg          = "invalid input"
 	structFieldErrMsg           = "invalid STRUCT field"
 	columnCountErrMsg           = "invalid column count"
+	unprojectedColumnErrMsg = "unprojected column"
 	unsupportedTypeErrMsg       = "unsupported data type"
 	considerAppenderClearMsg    = "appended and not yet flushed data has been invalidated due to error: consider invoking Appender.Clear followed by Appender.Close in case of unexpected errors to avoid leaking memory"
 	invalidatedAppenderClearMsg = "failed to clear appender's internal data (this likely indicates a bug - please consider opening a bug report at https://github.com/duckdb/duckdb-go/issues)"
@@ -89,6 +94,7 @@ const (
 	interfaceIsNilErrMsg        = "interface is nil"
 	duplicateNameErrMsg         = "duplicate name"
 	paramIndexErrMsg            = "invalid parameter index"
+	columnIndexErrMsg       = "invalid column index"
 )
 
 var (
@@ -292,4 +298,25 @@ func getDuckDBError(errMsg string) error {
 		Type: errType,
 		Msg:  errMsg,
 	}
+}
+
+type unprojectedColumnError struct {
+	Index int
+}
+
+func (e *unprojectedColumnError) Error() string {
+	return fmt.Sprintf("unprojected column: index %d is not projected", e.Index)
+}
+
+// sentinel value for errors.Is
+var errUnprojectedColumn = &unprojectedColumnError{Index: -1}
+
+// constructor that wraps the sentinel with context
+func newUnprojectedColumnError(index int) error {
+	if index == -1 {
+		// avoid returning the sentinel directly for real index -1
+		return &unprojectedColumnError{Index: index}
+	}
+	// wrap the sentinel so errors.Is works, but keep the index in the concrete error
+	return fmt.Errorf("%w: index %d", errUnprojectedColumn, index)
 }

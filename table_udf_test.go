@@ -94,6 +94,15 @@ type (
 		start int64
 		end   int64
 	}
+
+	contextTableUDF struct {
+		value uint64
+	}
+
+	chunkPushdownTableUDF struct {
+		n     int64
+		count int64
+	}
 )
 
 var (
@@ -111,15 +120,15 @@ var (
 			resultCount: 10000,
 		},
 		{
-			udf:         &structTableUDF{},
-			name:        "structTableUDF",
-			query:       `SELECT * FROM %s(2048)`,
-			resultCount: 2048,
-		},
-		{
 			udf:         &pushdownTableUDF{},
 			name:        "pushdownTableUDF",
 			query:       `SELECT result2 FROM %s(2048)`,
+			resultCount: 2048,
+		},
+		{
+			udf:         &structTableUDF{},
+			name:        "structTableUDF",
+			query:       `SELECT * FROM %s(2048)`,
 			resultCount: 2048,
 		},
 		{
@@ -274,6 +283,12 @@ var (
 			udf:         &chunkIncTableUDF{},
 			name:        "chunkIncTableUDF",
 			query:       `SELECT * FROM %s(2048)`,
+			resultCount: 2048,
+		},
+		{
+			udf:         &chunkPushdownTableUDF{},
+			name:        "chunkPushdownTableUDF",
+			query:       `SELECT result2 FROM %s(2048)`,
 			resultCount: 2048,
 		},
 	}
@@ -680,6 +695,50 @@ func (udf *constTableUDF[T]) Cardinality() *CardinalityInfo {
 	return nil
 }
 
+func (udf *contextTableUDF) GetFunction() RowTableFunction {
+	return RowTableFunction{
+		Config: TableFunctionConfig{
+			// No arguments needed for this test, as context is passed directly.
+		},
+		BindArgumentsContext: bindContextTableUDF,
+	}
+}
+
+func bindContextTableUDF(ctx context.Context, namedArgs map[string]any, args ...any) (RowTableSource, error) {
+	v, ok := ctx.Value(testCtxKey).(uint64)
+	if !ok {
+		return nil, fmt.Errorf("context does not contain the test value")
+	}
+	return &contextTableUDF{value: v}, nil
+}
+
+func (udf *contextTableUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{{Name: "result", T: typeBigintTableUDF}}
+}
+
+func (udf *contextTableUDF) Init() {}
+
+func (udf *contextTableUDF) FillRow(row Row) (bool, error) {
+	if udf.value == 0 {
+		return false, nil
+	}
+	err := SetRowValue(row, 0, udf.value)
+	udf.value = 0 // Only return once
+	return true, err
+}
+
+func (udf *contextTableUDF) GetValue(r, c int) any {
+	return uint64(123) // Dummy value for GetValue, actual value comes from context
+}
+
+func (udf *contextTableUDF) GetTypes() []any {
+	return []any{uint64(0)}
+}
+
+func (udf *contextTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
 func (udf *chunkIncTableUDF) GetFunction() ChunkTableFunction {
 	return ChunkTableFunction{
 		Config: TableFunctionConfig{
@@ -810,6 +869,75 @@ func (udf *unionTableUDF) GetTypes() []any {
 }
 
 func (udf *unionTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *chunkPushdownTableUDF) GetFunction() ChunkTableFunction {
+	return ChunkTableFunction{
+		Config: TableFunctionConfig{
+			Arguments: []TypeInfo{typeBigintTableUDF},
+		},
+		BindArguments: bindChunk,
+	}
+}
+
+func bindChunk(namedArgs map[string]any, args ...any) (ChunkTableSource, error) {
+	return &chunkPushdownTableUDF{
+		count: 0,
+		n:     args[0].(int64),
+	}, nil
+}
+
+func (udf *chunkPushdownTableUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{
+		{Name: "result", T: typeBigintTableUDF},
+		{Name: "result2", T: typeBigintTableUDF},
+	}
+}
+
+func (udf *chunkPushdownTableUDF) Init() {}
+
+func (udf *chunkPushdownTableUDF) FillChunk(chunk DataChunk) error {
+	nextVal := udf.count + 1
+	chunkSize := 2048
+
+	// Determine how many rows to fill in this chunk
+	i := 0
+	for ; i < chunkSize; i++ {
+		if udf.count >= udf.n {
+			// No more data to produce
+			break
+		}
+
+		if err := chunk.SetValue(0, i, nextVal); err != nil {
+			return fmt.Errorf("failed to set value for result: %w", err)
+		}
+
+		if err := chunk.SetValue(1, i, nextVal); err != nil {
+			return fmt.Errorf("failed to set value for result2: %w", err)
+		}
+
+		udf.count++
+		nextVal = udf.count + 1
+	}
+
+	return chunk.SetSize(i)
+}
+
+func (udf *chunkPushdownTableUDF) GetValue(r, c int) any {
+	// The test queries only 'result2', which is column index 1.
+	// Its value is (r + 1) * 10
+	if c == 1 {
+		return int64((r + 1) * 10)
+	}
+	return int64(r + 1)
+}
+
+func (udf *chunkPushdownTableUDF) GetTypes() []any {
+	return []any{int64(0)}
+}
+
+func (udf *chunkPushdownTableUDF) Cardinality() *CardinalityInfo {
 	return nil
 }
 
@@ -947,4 +1075,56 @@ func BenchmarkChunkTableUDF(b *testing.B) {
 		require.NoError(b, errQuery)
 		closeRowsWrapper(b, res)
 	}
+}
+
+func TestContextTableUDF(t *testing.T) {
+	db := openDbWrapper(t, `?access_mode=READ_WRITE`)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var udf contextTableUDF
+	err := RegisterTableUDF(conn, "context_table_udf", udf.GetFunction())
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), testCtxKey, uint64(999))
+
+	res, err := db.QueryContext(ctx, `SELECT * FROM context_table_udf()`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var result uint64
+	require.True(t, res.Next())
+	require.NoError(t, res.Scan(&result))
+	require.Equal(t, uint64(999), result)
+	require.False(t, res.Next())
+}
+
+func TestContextTableUDFPrepared(t *testing.T) {
+	db := openDbWrapper(t, `?access_mode=READ_WRITE`)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var udf contextTableUDF
+	err := RegisterTableUDF(conn, "context_table_udf", udf.GetFunction())
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), testCtxKey, uint64(222))
+
+	stmt, err := db.PrepareContext(ctx, `SELECT * FROM context_table_udf()`)
+	require.NoError(t, err)
+	defer closePreparedWrapper(t, stmt)
+
+	res, err := stmt.QueryContext(ctx)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var result uint64
+	require.True(t, res.Next())
+	require.NoError(t, res.Scan(&result))
+	require.Equal(t, uint64(222), result)
+	require.False(t, res.Next())
 }

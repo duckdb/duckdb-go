@@ -1,3 +1,5 @@
+DUCKDB_VERSION=v1.4.3
+
 test.examples:
 	go run examples/appender/main.go
 	go run examples/json/main.go
@@ -25,13 +27,13 @@ duplicate.arrow.mapping:
 test.dynamic.lib:
 	mkdir dynamic-dir && \
 	cd dynamic-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${VERSION}/${FILENAME}.zip && \
+	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/${FILENAME}.zip && \
 	unzip ${FILENAME}.zip
 
 test.static.lib.darwin.arm64:
 	mkdir static-dir && \
 	cd static-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${VERSION}/static-libs-osx-arm64.zip && \
+	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/static-libs-osx-arm64.zip && \
 	unzip static-libs-osx-arm64.zip
 
 GOBIN ?= $$(go env GOPATH)/bin

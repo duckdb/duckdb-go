@@ -1,7 +1,10 @@
 package duckdb
 
 import "C"
+
 import (
+	"errors"
+
 	"github.com/duckdb/duckdb-go/mapping"
 )
 
@@ -15,6 +18,8 @@ type DataChunk struct {
 	columnNames []string
 	// size caches the size after initialization.
 	size int
+	// projection mapping of projected columns, when known (otherwise empty)
+	projection []int
 }
 
 // GetDataChunkCapacity returns the capacity of a data chunk.
@@ -39,35 +44,70 @@ func (chunk *DataChunk) SetSize(size int) error {
 
 // GetValue returns a single value of a column.
 func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
-	if colIdx >= len(chunk.columns) {
-		return nil, getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil {
+		return nil, getError(errAPI, err)
 	}
-	column := &chunk.columns[colIdx]
 
+	column := &chunk.columns[colIdx]
 	return column.getFn(column, mapping.IdxT(rowIdx)), nil
 }
 
 // SetValue writes a single value to a column in a data chunk.
 // Note that this requires casting the type for each invocation.
+// If the column is not projected, the value is ignored.
 // NOTE: Custom ENUM types must be passed as string.
 func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
-	if colIdx >= len(chunk.columns) {
-		return getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil && errors.Is(err, errUnprojectedColumn) {
+		return nil
+	} else if err != nil {
+		return getError(errAPI, err)
 	}
-	column := &chunk.columns[colIdx]
 
+	column := &chunk.columns[colIdx]
 	return column.setFn(column, mapping.IdxT(rowIdx), val)
 }
 
 // SetChunkValue writes a single value to a column in a data chunk.
 // The difference with `chunk.SetValue` is that `SetChunkValue` does not
 // require casting the value to `any` (implicitly).
+// If the column is not projected, the value is ignored.
 // NOTE: Custom ENUM types must be passed as string.
 func SetChunkValue[T any](chunk DataChunk, colIdx, rowIdx int, val T) error {
-	if colIdx >= len(chunk.columns) {
-		return getError(errAPI, columnCountError(colIdx, len(chunk.columns)))
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil && errors.Is(err, errUnprojectedColumn) {
+		return nil
+	} else if err != nil {
+		return getError(errAPI, err)
 	}
+
 	return setVectorVal(&chunk.columns[colIdx], mapping.IdxT(rowIdx), val)
+}
+
+func inBounds[T any](s []T, idx int) bool {
+	return idx >= 0 && idx < len(s)
+}
+
+// verifyColIdx checks whether the provided column index is valid.
+func (chunk *DataChunk) verifyAndRewriteColIdx(colIdx int) (int, error) {
+	if chunk.projection == nil && (colIdx < 0 || colIdx >= len(chunk.columns)) {
+		return colIdx, columnCountError(colIdx, len(chunk.columns))
+	}
+
+	if chunk.projection != nil && (colIdx < 0 || colIdx >= len(chunk.projection)) {
+		return colIdx, columnCountError(colIdx, len(chunk.projection))
+	}
+
+	if chunk.projection != nil {
+		origColIdx := colIdx
+		colIdx = chunk.projection[colIdx]
+		if !inBounds(chunk.columns, colIdx) {
+			return colIdx, newUnprojectedColumnError(origColIdx)
+		}
+	}
+
+	return colIdx, nil
 }
 
 func (chunk *DataChunk) initFromTypes(types []mapping.LogicalType, writable bool) error {
@@ -112,12 +152,11 @@ func (chunk *DataChunk) initFromDuckDataChunk(inputChunk mapping.DataChunk, writ
 	chunk.chunk = inputChunk
 
 	var err error
-	for i := mapping.IdxT(0); i < columnCount; i++ {
-		vec := mapping.DataChunkGetVector(inputChunk, i)
-
-		// Initialize the callback functions to read and write values.
+	for i := range len(chunk.columns) {
+		// Get the vector and initialize the callback functions to read and write values.
+		vec := mapping.DataChunkGetVector(inputChunk, mapping.IdxT(i))
 		logicalType := mapping.VectorGetColumnType(vec)
-		err = chunk.columns[i].init(logicalType, int(i))
+		err = chunk.columns[i].init(logicalType, i)
 		mapping.DestroyLogicalType(&logicalType)
 		if err != nil {
 			break

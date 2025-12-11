@@ -30,7 +30,14 @@ func (s *contextStore) load(connId uint64) context.Context {
 	return ctx
 }
 
-func (s *contextStore) store(connId uint64, ctx context.Context) func() {
+func (s *contextStore) store(connId uint64, ctx context.Context, replace bool) func() {
+	if !replace {
+		_, ok := s.m.Load(connId)
+		if ok {
+			return func() {}
+		}
+	}
+
 	s.m.Store(connId, ctx)
 
 	return func() {

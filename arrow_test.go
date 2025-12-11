@@ -38,7 +38,7 @@ func TestArrow(t *testing.T) {
 		defer rdr.Release()
 
 		for rdr.Next() {
-			rec := rdr.Record()
+			rec := rdr.RecordBatch()
 			require.Equal(t, int64(10), rec.NumRows())
 			require.NoError(t, err)
 		}
@@ -61,7 +61,7 @@ func TestArrow(t *testing.T) {
 
 		var totalRows int64
 		for rdr.Next() {
-			rec := rdr.Record()
+			rec := rdr.RecordBatch()
 			totalRows += rec.NumRows()
 		}
 		require.Equal(t, int64(10000), totalRows)
@@ -84,7 +84,7 @@ func TestArrow(t *testing.T) {
 			defer reader.Release()
 
 			for reader.Next() {
-				rec := reader.Record()
+				rec := reader.RecordBatch()
 				require.Equal(t, int64(2), rec.NumRows())
 				require.Equal(t, "lala", rec.Column(0).ValueStr(0))
 				require.Equal(t, "dada", rec.Column(0).ValueStr(1))
@@ -136,17 +136,17 @@ func TestArrow(t *testing.T) {
 			b.Field(1).(*array.Float64Builder).AppendValues([]float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, nil)
 			b.Field(2).(*array.StringBuilder).AppendValues([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}, nil)
 
-			rec1 := b.NewRecord()
+			rec1 := b.NewRecordBatch()
 			defer rec1.Release()
 
 			b.Field(0).(*array.Int32Builder).AppendValues([]int32{11, 12, 13, 14, 15, 16, 17, 18, 19, 20}, nil)
 			b.Field(1).(*array.Float64Builder).AppendValues([]float64{11, 12, 13, 14, 15, 16, 17, 18, 19, 20}, nil)
 			b.Field(2).(*array.StringBuilder).AppendValues([]string{"k", "l", "m", "n", "o", "p", "q", "r", "s", "t"}, nil)
 
-			rec2 := b.NewRecord()
+			rec2 := b.NewRecordBatch()
 			defer rec2.Release()
 
-			tbl := array.NewTableFromRecords(schema, []arrow.Record{rec1, rec2})
+			tbl := array.NewTableFromRecords(schema, []arrow.RecordBatch{rec1, rec2})
 			defer tbl.Release()
 
 			tr := array.NewTableReader(tbl, 5)
@@ -260,13 +260,13 @@ func TestArrow(t *testing.T) {
 		require.NoError(t, rdr.Err())
 
 		rdr.Retain()
-		require.Equal(t, int64(2), rdr.(*arrowStreamReader).refCount)
+		require.Equal(t, int64(2), rdr.(*recordReader).refCount)
 		rdr.Release()
-		require.Equal(t, int64(1), rdr.(*arrowStreamReader).refCount)
+		require.Equal(t, int64(1), rdr.(*recordReader).refCount)
 		rdr.Release()
-		require.Equal(t, int64(0), rdr.(*arrowStreamReader).refCount)
+		require.Equal(t, int64(0), rdr.(*recordReader).refCount)
 		rdr.Release()
-		require.Equal(t, int64(0), rdr.(*arrowStreamReader).refCount)
+		require.Equal(t, int64(0), rdr.(*recordReader).refCount)
 	})
 }
 

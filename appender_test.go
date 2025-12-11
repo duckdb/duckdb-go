@@ -1095,6 +1095,39 @@ func TestAppenderUpsert(t *testing.T) {
 	require.Equal(t, len(testCases), i)
 }
 
+// Regression test for https://github.com/duckdb/duckdb-go/issues/22
+func TestAppenderArrayOfNullInterface(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (element VARCHAR[])`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// The original issue unmarshaled `[null, null]` into []interface{}{nil, nil} and passed it to AppendRow.
+	payload := []byte(`[null, null]`)
+	rowCount := GetDataChunkCapacity()*20 + 17 // span many chunks
+
+	for i := 1; i <= rowCount; i++ {
+		var fields any
+		require.NoError(t, json.Unmarshal(payload, &fields))
+		require.NoError(t, a.AppendRow(fields))
+
+		// rare flush, like the original report
+		if i%10000 == 0 {
+			require.NoError(t, a.Flush())
+		}
+	}
+
+	require.NoError(t, a.Flush())
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM test`).Scan(&count))
+	require.Equal(t, rowCount, count)
+
+	var arr []any
+	require.NoError(t, db.QueryRow(`SELECT element FROM test LIMIT 1`).Scan(&arr))
+	require.Len(t, arr, 2)
+	require.Nil(t, arr[0])
+	require.Nil(t, arr[1])
+}
+
 func TestAppenderInterrupt(t *testing.T) {
 	for i := range 2 {
 		func() {

@@ -61,6 +61,41 @@ func TestPrepareQuery(t *testing.T) {
 		require.ErrorContains(t, innerErr, paramIndexErrMsg)
 		require.Equal(t, TYPE_INVALID, paramType)
 
+		// Test column methods for SELECT * FROM foo
+		columnCount, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 2, columnCount) // bar and baz columns
+
+		// Test column names
+		colName, innerErr := stmt.ColumnName(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, "bar", colName)
+
+		colName, innerErr = stmt.ColumnName(1)
+		require.NoError(t, innerErr)
+		require.Equal(t, "baz", colName)
+
+		// Test out of bounds - should return error
+		colName, innerErr = stmt.ColumnName(2)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Empty(t, colName)
+
+		// Test column types
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_VARCHAR, colType)
+
+		colType, innerErr = stmt.ColumnType(1)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INTEGER, colType)
+
+		// Test out of bounds - should return error
+		colType, innerErr = stmt.ColumnType(2)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Equal(t, TYPE_INVALID, colType)
+
 		r, innerErr := stmt.QueryBound(context.Background())
 		require.Nil(t, r)
 		require.ErrorIs(t, innerErr, errNotBound)
@@ -91,6 +126,16 @@ func TestPrepareQuery(t *testing.T) {
 		paramType, innerErr = stmt.ParamType(1)
 		require.ErrorIs(t, innerErr, errClosedStmt)
 		require.Equal(t, TYPE_INVALID, paramType)
+
+		// Test column methods on closed statement
+		_, innerErr = stmt.ColumnCount()
+		require.ErrorIs(t, innerErr, errClosedStmt)
+
+		_, innerErr = stmt.ColumnName(0)
+		require.ErrorIs(t, innerErr, errClosedStmt)
+
+		_, innerErr = stmt.ColumnTypeInfo(0)
+		require.ErrorIs(t, innerErr, errClosedStmt)
 
 		innerErr = stmt.Bind([]driver.NamedValue{{Ordinal: 1, Value: 0}})
 		require.ErrorIs(t, innerErr, errCouldNotBind)
@@ -127,6 +172,45 @@ func TestPrepareQueryPositional(t *testing.T) {
 	require.NoError(t, err)
 	closeRowsWrapper(t, res)
 	closePreparedWrapper(t, prepared)
+
+	// Test column methods for positional SELECT
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT $1 AS first_param, $2 AS second_param`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// Test column count
+		columnCount, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 1, columnCount)
+
+		// Test column names
+		colName, innerErr := stmt.ColumnName(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, "unknown", colName)
+
+		// Out of range - should return error
+		colName, innerErr = stmt.ColumnName(1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Empty(t, colName)
+
+		// Test column types - should be TYPE_INVALID for unresolved parameter types
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		// Out of range - should return error
+		colType, innerErr = stmt.ColumnType(1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
 
 	// Access the raw connection and statement.
 	err = conn.Raw(func(driverConn any) error {
@@ -170,6 +254,23 @@ func TestPrepareQueryPositional(t *testing.T) {
 		paramType, innerErr = stmt.ParamType(3)
 		require.ErrorContains(t, innerErr, paramIndexErrMsg)
 		require.Equal(t, TYPE_INVALID, paramType)
+
+		// Test column methods for UPDATE statement (should have a single Count column)
+		columnCount, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 1, columnCount)
+
+		colName, innerErr := stmt.ColumnName(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, "Count", colName)
+
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_BIGINT, colType)
+
+		colTypeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_BIGINT, colTypeInfo.InternalType())
 
 		r, innerErr := stmt.ExecBound(context.Background())
 		require.Nil(t, r)
@@ -328,6 +429,19 @@ func TestUninitializedStmt(t *testing.T) {
 
 	err = stmt.Bind([]driver.NamedValue{{Ordinal: 1, Value: 0}})
 	require.ErrorIs(t, err, errCouldNotBind)
+	require.ErrorIs(t, err, errUninitializedStmt)
+
+	// Test column methods on uninitialized statement
+	_, err = stmt.ColumnCount()
+	require.ErrorIs(t, err, errUninitializedStmt)
+
+	_, err = stmt.ColumnName(0)
+	require.ErrorIs(t, err, errUninitializedStmt)
+
+	_, err = stmt.ColumnType(0)
+	require.ErrorIs(t, err, errUninitializedStmt)
+
+	_, err = stmt.ColumnTypeInfo(0)
 	require.ErrorIs(t, err, errUninitializedStmt)
 
 	_, err = stmt.ExecBound(context.Background())
@@ -1028,4 +1142,397 @@ func TestInterrupt(t *testing.T) {
 	go func() {
 		cancel()
 	}()
+}
+
+func TestPreparedStatementColumnMethods(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE test_columns (id INTEGER, name VARCHAR, value DOUBLE, created_at TIMESTAMP)`)
+
+	// Prepare a SELECT statement
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	err := conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT id, name, value, created_at FROM test_columns`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// Test ColumnCount
+		count, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 4, count)
+
+		// Test ColumnName
+		name, innerErr := stmt.ColumnName(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, "id", name)
+
+		name, innerErr = stmt.ColumnName(1)
+		require.NoError(t, innerErr)
+		require.Equal(t, "name", name)
+
+		name, innerErr = stmt.ColumnName(2)
+		require.NoError(t, innerErr)
+		require.Equal(t, "value", name)
+
+		name, innerErr = stmt.ColumnName(3)
+		require.NoError(t, innerErr)
+		require.Equal(t, "created_at", name)
+
+		// Test out of bounds - should return error
+		name, innerErr = stmt.ColumnName(-1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Empty(t, name)
+
+		name, innerErr = stmt.ColumnName(4)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Empty(t, name)
+
+		// Test ColumnType
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INTEGER, colType)
+
+		colType, innerErr = stmt.ColumnType(1)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_VARCHAR, colType)
+
+		colType, innerErr = stmt.ColumnType(2)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_DOUBLE, colType)
+
+		colType, innerErr = stmt.ColumnType(3)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_TIMESTAMP, colType)
+
+		// Test out of bounds - should return error
+		colType, innerErr = stmt.ColumnType(-1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		colType, innerErr = stmt.ColumnType(4)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		// Test ColumnTypeInfo - should return TypeInfo for each column
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_INTEGER, typeInfo.InternalType())
+
+		typeInfo, innerErr = stmt.ColumnTypeInfo(1)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_VARCHAR, typeInfo.InternalType())
+
+		typeInfo, innerErr = stmt.ColumnTypeInfo(2)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_DOUBLE, typeInfo.InternalType())
+
+		typeInfo, innerErr = stmt.ColumnTypeInfo(3)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_TIMESTAMP, typeInfo.InternalType())
+
+		// Test out of bounds - should return error
+		typeInfo, innerErr = stmt.ColumnTypeInfo(4)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Nil(t, typeInfo)
+
+		typeInfo, innerErr = stmt.ColumnTypeInfo(-1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Nil(t, typeInfo)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestPreparedStatementColumnTypeInfo(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// Test with complex types
+	err := conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		// Create a query with ARRAY, LIST, and STRUCT types
+		s, innerErr := innerConn.PrepareContext(context.Background(),
+			`SELECT [1, 2, 3]::INTEGER[3] AS arr_col,
+			        [4, 5, 6] AS list_col,
+			        {'x': 10, 'y': 20} AS struct_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// Test ARRAY column
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_ARRAY, typeInfo.InternalType())
+
+		// Assert ARRAY details
+		details := typeInfo.Details()
+		require.NotNil(t, details)
+		arrayDetails, ok := details.(*ArrayDetails)
+		require.True(t, ok, "Expected ArrayDetails")
+		require.Equal(t, TYPE_INTEGER, arrayDetails.Child.InternalType())
+		require.Equal(t, uint64(3), arrayDetails.Size)
+
+		// Test LIST column
+		typeInfo, innerErr = stmt.ColumnTypeInfo(1)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_LIST, typeInfo.InternalType())
+
+		// Assert LIST details
+		details = typeInfo.Details()
+		require.NotNil(t, details)
+		listDetails, ok := details.(*ListDetails)
+		require.True(t, ok, "Expected ListDetails")
+		require.Equal(t, TYPE_INTEGER, listDetails.Child.InternalType())
+
+		// Test STRUCT column
+		typeInfo, innerErr = stmt.ColumnTypeInfo(2)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_STRUCT, typeInfo.InternalType())
+
+		// Assert STRUCT details
+		details = typeInfo.Details()
+		require.NotNil(t, details)
+		structDetails, ok := details.(*StructDetails)
+		require.True(t, ok, "Expected StructDetails")
+		require.Len(t, structDetails.Entries, 2)
+
+		// Check first field 'x'
+		require.Equal(t, "x", structDetails.Entries[0].Name())
+		require.Equal(t, TYPE_INTEGER, structDetails.Entries[0].Info().InternalType())
+
+		// Check second field 'y'
+		require.Equal(t, "y", structDetails.Entries[1].Name())
+		require.Equal(t, TYPE_INTEGER, structDetails.Entries[1].Info().InternalType())
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test with DECIMAL type
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT 123.45::DECIMAL(10,2) AS dec_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_DECIMAL, typeInfo.InternalType())
+
+		// Assert DECIMAL details
+		details := typeInfo.Details()
+		require.NotNil(t, details)
+		decimalDetails, ok := details.(*DecimalDetails)
+		require.True(t, ok, "Expected DecimalDetails")
+		require.Equal(t, uint8(10), decimalDetails.Width)
+		require.Equal(t, uint8(2), decimalDetails.Scale)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test with ENUM type
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		// Create an ENUM type first
+		_, innerErr := innerConn.ExecContext(context.Background(),
+			`CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral')`, nil)
+		require.NoError(t, innerErr)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(),
+			`SELECT 'happy'::mood AS mood_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_ENUM, typeInfo.InternalType())
+
+		// Assert ENUM details
+		details := typeInfo.Details()
+		require.NotNil(t, details)
+		enumDetails, ok := details.(*EnumDetails)
+		require.True(t, ok, "Expected EnumDetails")
+		require.Equal(t, []string{"happy", "sad", "neutral"}, enumDetails.Values)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test with MAP type
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(),
+			`SELECT MAP([1, 2], ['a', 'b']) AS map_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_MAP, typeInfo.InternalType())
+
+		// Assert MAP details
+		details := typeInfo.Details()
+		require.NotNil(t, details)
+		mapDetails, ok := details.(*MapDetails)
+		require.True(t, ok, "Expected MapDetails")
+		require.Equal(t, TYPE_INTEGER, mapDetails.Key.InternalType())
+		require.Equal(t, TYPE_VARCHAR, mapDetails.Value.InternalType())
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test with nested types: LIST of STRUCTs
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(),
+			`SELECT [{'id': 1, 'name': 'Alice'}, {'id': 2, 'name': 'Bob'}] AS list_struct_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_LIST, typeInfo.InternalType())
+
+		// Assert LIST details
+		details := typeInfo.Details()
+		require.NotNil(t, details)
+		listDetails, ok := details.(*ListDetails)
+		require.True(t, ok, "Expected ListDetails")
+		require.Equal(t, TYPE_STRUCT, listDetails.Child.InternalType())
+
+		// Assert nested STRUCT details
+		structDetails, ok := listDetails.Child.Details().(*StructDetails)
+		require.True(t, ok, "Expected StructDetails for nested type")
+		require.Len(t, structDetails.Entries, 2)
+		require.Equal(t, "id", structDetails.Entries[0].Name())
+		require.Equal(t, TYPE_INTEGER, structDetails.Entries[0].Info().InternalType())
+		require.Equal(t, "name", structDetails.Entries[1].Name())
+		require.Equal(t, TYPE_VARCHAR, structDetails.Entries[1].Info().InternalType())
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestPreparedStatementAmbiguousColumnTypes(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// Test cases where column types cannot be resolved
+	err := conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		// Test 1: VALUES clause without type casting - ambiguous types
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT * FROM (VALUES (?, ?)) t(a, b)`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// When columns have ambiguous types, count becomes 1
+		count, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 1, count)
+
+		// Column type should be INVALID
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		// Out of bounds access - should return error
+		colType, innerErr = stmt.ColumnType(1)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test 2: Direct parameter selection - all ambiguous
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT ?, ?, ? + ?`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// When columns have ambiguous types, count becomes 1
+		count, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 1, count)
+
+		// Column type should be INVALID
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Test 3: Mixed known and unknown types
+	createTable(t, db, `CREATE TABLE test_mixed (id INTEGER, value VARCHAR)`)
+
+	err = conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT id, value, ? AS param_col FROM test_mixed`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		// When any column has ambiguous type, count becomes 1
+		count, innerErr := stmt.ColumnCount()
+		require.NoError(t, innerErr)
+		require.Equal(t, 1, count)
+
+		// All column types become INVALID
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_INVALID, colType)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
 }

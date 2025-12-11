@@ -21,6 +21,7 @@ typedef void (*table_udf_delete_callback_t)(void *);
 import "C"
 
 import (
+	"context"
 	"database/sql"
 	"runtime"
 	"runtime/cgo"
@@ -81,32 +82,58 @@ type (
 	// A ParallelChunkTableFunction is a type which can be bound to return a ParallelChunkTableSource.
 	ParallelChunkTableFunction = tableFunction[ParallelChunkTableSource]
 
-	tableFunction[T any] struct {
+	tableFunction[T tableSource] struct {
 		// Config returns the table function configuration, including the function arguments.
 		Config TableFunctionConfig
 		// BindArguments binds the arguments and returns a TableSource.
 		BindArguments func(named map[string]any, args ...any) (T, error)
+		// BindArgumentsContext binds the arguments with context and returns a TableSource.
+		BindArgumentsContext func(ctx context.Context, named map[string]any, args ...any) (T, error)
 	}
 )
 
 func wrapRowTF(f RowTableFunction) ParallelRowTableFunction {
-	return ParallelRowTableFunction{
+	tf := ParallelRowTableFunction{
 		Config: f.Config,
-		BindArguments: func(named map[string]any, args ...any) (ParallelRowTableSource, error) {
+	}
+
+	if f.BindArguments != nil {
+		tf.BindArguments = func(named map[string]any, args ...any) (ParallelRowTableSource, error) {
 			rts, err := f.BindArguments(named, args...)
 			return parallelRowTSWrapper{s: rts}, err
-		},
+		}
 	}
+
+	if f.BindArgumentsContext != nil {
+		tf.BindArgumentsContext = func(ctx context.Context, named map[string]any, args ...any) (ParallelRowTableSource, error) {
+			rts, err := f.BindArgumentsContext(ctx, named, args...)
+			return parallelRowTSWrapper{s: rts}, err
+		}
+	}
+
+	return tf
 }
 
 func wrapChunkTF(f ChunkTableFunction) ParallelChunkTableFunction {
-	return ParallelChunkTableFunction{
+	tf := ParallelChunkTableFunction{
 		Config: f.Config,
-		BindArguments: func(named map[string]any, args ...any) (ParallelChunkTableSource, error) {
+	}
+
+	if f.BindArguments != nil {
+		tf.BindArguments = func(named map[string]any, args ...any) (ParallelChunkTableSource, error) {
 			rts, err := f.BindArguments(named, args...)
 			return parallelChunkTSWrapper{s: rts}, err
-		},
+		}
 	}
+
+	if f.BindArgumentsContext != nil {
+		tf.BindArgumentsContext = func(ctx context.Context, named map[string]any, args ...any) (ParallelChunkTableSource, error) {
+			rts, err := f.BindArgumentsContext(ctx, named, args...)
+			return parallelChunkTSWrapper{s: rts}, err
+		}
+	}
+
+	return tf
 }
 
 func isRowIdColumn(i mapping.IdxT) bool {
@@ -116,12 +143,12 @@ func isRowIdColumn(i mapping.IdxT) bool {
 
 func (tfd *tableFunctionData) setColumnCount(info mapping.InitInfo) {
 	count := mapping.InitGetColumnCount(info)
-	for i := mapping.IdxT(0); i < count; i++ {
-		srcPos := mapping.InitGetColumnIndex(info, i)
+	for i := range int(count) {
+		srcPos := mapping.InitGetColumnIndex(info, mapping.IdxT(i))
 		// FIXME: Special-case, should just work post duckdb v1.3.0.
 		// See: https://github.com/duckdb/duckdb/pull/16248
 		if !isRowIdColumn(srcPos) {
-			tfd.projection[int(srcPos)] = int(i)
+			tfd.projection[int(srcPos)] = i
 		}
 	}
 }
@@ -139,17 +166,18 @@ func table_udf_bind_chunk(infoPtr unsafe.Pointer) {
 func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 	info := mapping.BindInfo{Ptr: infoPtr}
 
-	f := getPinned[tableFunction[T]](mapping.BindGetExtraInfo(info))
+	fc := getPinned[*tableFuncContext[T]](mapping.BindGetExtraInfo(info))
+	f := fc.f
 	config := f.Config
 
 	argCount := len(config.Arguments)
 	args := make([]any, argCount)
 	namedArgs := make(map[string]any)
 
-	for i, t := range config.Arguments {
+	for i := range config.Arguments {
 		var err error
 		value := mapping.BindGetParameter(info, mapping.IdxT(i))
-		args[i], err = getValue(t, value)
+		args[i], err = getValue(value)
 		mapping.DestroyValue(&value)
 
 		if err != nil {
@@ -158,10 +186,10 @@ func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 		}
 	}
 
-	for name, t := range config.NamedArguments {
+	for name := range config.NamedArguments {
 		var err error
 		value := mapping.BindGetNamedParameter(info, name)
-		namedArgs[name], err = getValue(t, value)
+		namedArgs[name], err = getValue(value)
 		mapping.DestroyValue(&value)
 
 		if err != nil {
@@ -170,7 +198,24 @@ func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 		}
 	}
 
-	instance, err := f.BindArguments(namedArgs, args...)
+	var clientCtx mapping.ClientContext
+	mapping.TableFunctionGetClientContext(info, &clientCtx)
+	defer mapping.DestroyClientContext(&clientCtx)
+	connId := mapping.ClientContextGetConnectionId(clientCtx)
+
+	ctx := fc.ctxStore.load(uint64(connId))
+
+	var instance T
+	var err error
+	switch {
+	case f.BindArgumentsContext != nil:
+		instance, err = f.BindArgumentsContext(ctx, namedArgs, args...)
+	case f.BindArguments != nil:
+		instance, err = f.BindArguments(namedArgs, args...)
+	default:
+		// We should never reach here due to checks during registration.
+		panic("unreachable: no bind function defined")
+	}
 	if err != nil {
 		mapping.BindSetError(info, err.Error())
 		return
@@ -240,6 +285,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 	instance := getPinned[tableFunctionData](mapping.FunctionGetBindData(info))
 
 	var chunk DataChunk
+	chunk.projection = instance.projection
 	err := chunk.initFromDuckDataChunk(output, true)
 	if err != nil {
 		mapping.FunctionSetError(info, err.Error())
@@ -251,8 +297,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 	switch fun := instance.fun.(type) {
 	case ParallelRowTableSource:
 		row := Row{
-			chunk:      &chunk,
-			projection: instance.projection,
+			chunk: &chunk,
 		}
 		maxSize := mapping.IdxT(GetDataChunkCapacity())
 
@@ -306,16 +351,28 @@ func RegisterTableUDF[TFT TableFunction](conn *sql.Conn, name string, f TFT) err
 	}
 }
 
-func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name string, f TFT) error {
+type tableFuncContext[T tableSource] struct {
+	f        tableFunction[T]
+	ctxStore *contextStore
+}
+
+func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tableFunction[T]) error {
 	function := mapping.CreateTableFunction()
 	mapping.TableFunctionSetName(function, name)
 
 	var config TableFunctionConfig
 
+	// Get the context store for the connection.
+	ctxStore, err := contextStoreFromConn(conn)
+	if err != nil {
+		mapping.DestroyTableFunction(&function)
+		return err
+	}
+
 	// Pin the table function f.
-	value := pinnedValue[TFT]{
+	value := pinnedValue[*tableFuncContext[T]]{
 		pinner: &runtime.Pinner{},
-		value:  f,
+		value:  &tableFuncContext[T]{f: f, ctxStore: ctxStore},
 	}
 	h := cgo.NewHandle(value)
 	value.pinner.Pin(&h)
@@ -342,7 +399,7 @@ func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name st
 		mapping.TableFunctionSetBind(function, bindCallbackPtr)
 
 		config = tableFunc.Config
-		if tableFunc.BindArguments == nil {
+		if tableFunc.BindArguments == nil && tableFunc.BindArgumentsContext == nil {
 			return getError(errAPI, errTableUDFMissingBindArgs)
 		}
 
@@ -351,7 +408,7 @@ func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name st
 		mapping.TableFunctionSetBind(function, bindCallbackPtr)
 
 		config = tableFunc.Config
-		if tableFunc.BindArguments == nil {
+		if tableFunc.BindArguments == nil && tableFunc.BindArgumentsContext == nil {
 			return getError(errAPI, errTableUDFMissingBindArgs)
 		}
 
@@ -380,7 +437,7 @@ func registerParallelTableUDF[TFT parallelTableFunction](conn *sql.Conn, name st
 	}
 
 	// Register the function on the underlying driver connection exposed by c.Raw.
-	err := conn.Raw(func(driverConn any) error {
+	err = conn.Raw(func(driverConn any) error {
 		c := driverConn.(*Conn)
 		state := mapping.RegisterTableFunction(c.conn, function)
 		mapping.DestroyTableFunction(&function)

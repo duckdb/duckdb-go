@@ -33,7 +33,7 @@ jobs:
           go tool cover -html=cover.out -o=cover.html
 
       - name: Check Test Coverage
-        uses: vladopajic/go-test-coverage@v2
+        uses: vladopajic/go-test-coverage@v2.17.1
         with:
           config: ./.github/testcoverage.yml
 

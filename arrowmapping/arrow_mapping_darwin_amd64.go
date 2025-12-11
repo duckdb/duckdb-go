@@ -31,4 +31,10 @@ var (
 	DestroyArrow                = bindings.DestroyArrow
 	ExecutePreparedArrow        = bindings.ExecutePreparedArrow
 	ArrowScan                   = bindings.ArrowScan
+
+	// new arrow C API functions
+	NewArrowSchema        = bindings.NewArrowSchema
+	DataChunkToArrowArray = bindings.DataChunkToArrowArray
+	SchemaFromArrow       = bindings.SchemaFromArrow
+	DataChunkFromArrow    = bindings.DataChunkFromArrow
 )

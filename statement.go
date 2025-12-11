@@ -54,6 +54,17 @@ type Stmt struct {
 	rows             bool
 }
 
+// checkState checks if the statement is closed or uninitialized.
+func (s *Stmt) checkState() error {
+	if s.closed {
+		return errClosedStmt
+	}
+	if s.preparedStmt == nil {
+		return errUninitializedStmt
+	}
+	return nil
+}
+
 // Close the statement.
 // Implements the driver.Stmt interface.
 func (s *Stmt) Close() error {
@@ -81,11 +92,8 @@ func (s *Stmt) NumInput() int {
 
 // ParamName returns the name of the parameter at the given index (1-based).
 func (s *Stmt) ParamName(n int) (string, error) {
-	if s.closed {
-		return "", errClosedStmt
-	}
-	if s.preparedStmt == nil {
-		return "", errUninitializedStmt
+	if err := s.checkState(); err != nil {
+		return "", err
 	}
 
 	count := mapping.NParams(*s.preparedStmt)
@@ -99,11 +107,8 @@ func (s *Stmt) ParamName(n int) (string, error) {
 
 // ParamType returns the expected type of the parameter at the given index (1-based).
 func (s *Stmt) ParamType(n int) (Type, error) {
-	if s.closed {
-		return TYPE_INVALID, errClosedStmt
-	}
-	if s.preparedStmt == nil {
-		return TYPE_INVALID, errUninitializedStmt
+	if err := s.checkState(); err != nil {
+		return TYPE_INVALID, err
 	}
 
 	count := mapping.NParams(*s.preparedStmt)
@@ -117,11 +122,8 @@ func (s *Stmt) ParamType(n int) (Type, error) {
 
 func (s *Stmt) paramLogicalType(n int) (mapping.LogicalType, error) {
 	var lt mapping.LogicalType
-	if s.closed {
-		return lt, errClosedStmt
-	}
-	if s.preparedStmt == nil {
-		return lt, errUninitializedStmt
+	if err := s.checkState(); err != nil {
+		return lt, err
 	}
 
 	count := mapping.NParams(*s.preparedStmt)
@@ -134,11 +136,8 @@ func (s *Stmt) paramLogicalType(n int) (mapping.LogicalType, error) {
 
 // StatementType returns the type of the statement.
 func (s *Stmt) StatementType() (StmtType, error) {
-	if s.closed {
-		return STATEMENT_TYPE_INVALID, errClosedStmt
-	}
-	if s.preparedStmt == nil {
-		return STATEMENT_TYPE_INVALID, errUninitializedStmt
+	if err := s.checkState(); err != nil {
+		return STATEMENT_TYPE_INVALID, err
 	}
 
 	t := mapping.PreparedStatementType(*s.preparedStmt)
@@ -460,6 +459,9 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 // ExecContext executes a query that doesn't return rows, such as an INSERT or UPDATE.
 // It implements the driver.StmtExecContext interface.
 func (s *Stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driver.Result, error) {
+	cleanupCtx := s.conn.setContext(ctx)
+	defer cleanupCtx()
+
 	res, err := s.execute(ctx, nargs)
 	if err != nil {
 		return nil, err
@@ -468,6 +470,73 @@ func (s *Stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driv
 
 	ra := int64(mapping.RowsChanged(res))
 	return &result{ra}, nil
+}
+
+// ColumnCount returns the number of columns that will be returned by executing the prepared statement.
+// If any of the column types is invalid (which can happen when the type is ambiguous), the result will be 1.
+// Returns an error if the statement is closed or uninitialized.
+func (s *Stmt) ColumnCount() (int, error) {
+	if err := s.checkState(); err != nil {
+		return 0, err
+	}
+
+	count := mapping.PreparedStatementColumnCount(*s.preparedStmt)
+	return int(count), nil
+}
+
+// ColumnType returns the type of the column at the given index (0-based).
+// Returns TYPE_INVALID and a columnIndexError if the column is out of range.
+// Returns an error if the statement is closed or uninitialized.
+func (s *Stmt) ColumnType(n int) (Type, error) {
+	if err := s.checkState(); err != nil {
+		return TYPE_INVALID, err
+	}
+
+	count := mapping.PreparedStatementColumnCount(*s.preparedStmt)
+	if n < 0 || n >= int(count) {
+		return TYPE_INVALID, getError(errAPI, columnIndexError(n, uint64(count)))
+	}
+
+	t := mapping.PreparedStatementColumnType(*s.preparedStmt, mapping.IdxT(n))
+	return t, nil
+}
+
+// ColumnTypeInfo returns the TypeInfo of the column at the given index (0-based).
+// TypeInfo provides detailed type information including nested structures, DECIMAL precision,
+// ENUM values, etc.
+// Returns a TypeInfo with internalType TYPE_INVALID and a columnIndexError if the column is out of range.
+// Returns an error if the statement is closed or uninitialized.
+func (s *Stmt) ColumnTypeInfo(n int) (TypeInfo, error) {
+	if err := s.checkState(); err != nil {
+		return nil, err
+	}
+
+	count := mapping.PreparedStatementColumnCount(*s.preparedStmt)
+	if n < 0 || n >= int(count) {
+		return nil, getError(errAPI, columnIndexError(n, uint64(count)))
+	}
+
+	lt := mapping.PreparedStatementColumnLogicalType(*s.preparedStmt, mapping.IdxT(n))
+	defer mapping.DestroyLogicalType(&lt)
+
+	return newTypeInfoFromLogicalType(lt)
+}
+
+// ColumnName returns the name of the column at the given index (0-based).
+// Returns "" and a columnIndexError if the column is out of range.
+// Returns an error if the statement is closed or uninitialized.
+func (s *Stmt) ColumnName(n int) (string, error) {
+	if err := s.checkState(); err != nil {
+		return "", err
+	}
+
+	count := mapping.PreparedStatementColumnCount(*s.preparedStmt)
+	if n < 0 || n >= int(count) {
+		return "", getError(errAPI, columnIndexError(n, uint64(count)))
+	}
+
+	name := mapping.PreparedStatementColumnName(*s.preparedStmt, mapping.IdxT(n))
+	return name, nil
 }
 
 // ExecBound executes a bound query that doesn't return rows, such as an INSERT or UPDATE.
@@ -483,6 +552,9 @@ func (s *Stmt) ExecBound(ctx context.Context) (driver.Result, error) {
 	if !s.bound {
 		return nil, errNotBound
 	}
+
+	cleanupCtx := s.conn.setContext(ctx)
+	defer cleanupCtx()
 
 	res, err := s.executeBound(ctx)
 	if err != nil {
@@ -502,6 +574,9 @@ func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.StmtQueryContext interface.
 func (s *Stmt) QueryContext(ctx context.Context, nargs []driver.NamedValue) (driver.Rows, error) {
+	cleanupCtx := s.conn.setContext(ctx)
+	defer cleanupCtx()
+
 	res, err := s.execute(ctx, nargs)
 	if err != nil {
 		return nil, err
@@ -524,6 +599,9 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 		return nil, errNotBound
 	}
 
+	cleanupCtx := s.conn.setContext(ctx)
+	defer cleanupCtx()
+
 	res, err := s.executeBound(ctx)
 	if err != nil {
 		return nil, err
@@ -541,6 +619,7 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 	if s.rows {
 		panic("database/sql/driver: misuse of duckdb driver: ExecContext or QueryContext with active Rows")
 	}
+
 	if err := s.bind(args); err != nil {
 		return nil, err
 	}

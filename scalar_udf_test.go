@@ -6,12 +6,20 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 var currentInfo TypeInfo
+
+type testCtxKeyType string
+
+const (
+	testCtxKey     testCtxKeyType = "test_ctx_key"
+	testBindCtxKey testCtxKeyType = "test_bind_ctx_key"
+)
 
 type (
 	simpleSUDF        struct{}
@@ -22,6 +30,7 @@ type (
 	anyTypeSUDF       struct{}
 	unionTestSUDF     struct{}
 	getConnIdUDF      struct{}
+	easterEggUDF      struct{}
 	errExecutorSUDF   struct{}
 	errInputNilSUDF   struct{}
 	errResultNilSUDF  struct{}
@@ -70,21 +79,68 @@ func constantError([]driver.Value) (any, error) {
 	return nil, errors.New("test invalid execution")
 }
 
-type testCtxKeyType string
-
-const testCtxKey testCtxKeyType = "my_conn_id"
-
 func getConnId(ctx context.Context, values []driver.Value) (any, error) {
 	if ctx == nil {
-		return nil, errors.New("context is nil")
+		return nil, errors.New("context is nil for getConnId")
 	}
 
 	id, ok := ctx.Value(testCtxKey).(uint64)
 	if !ok {
-		return nil, errors.New("context does not contain the connection id")
+		return nil, errors.New("context does not contain the connection id for getConnId")
 	}
 
 	return id, nil
+}
+
+func getEasterEgg(ctx context.Context, values []driver.Value) (any, error) {
+	if ctx == nil {
+		return nil, errors.New("context is nil for getEasterEgg")
+	}
+
+	// Ensure we have two input arguments.
+	if len(values) != 2 {
+		return nil, errors.New("invalid argument count")
+	}
+
+	// Get the custom bind data.
+	anyCustomBindData := ctx.Value(testBindCtxKey)
+	if anyCustomBindData == nil {
+		return nil, errors.New("custom bind data is nil")
+	}
+	customBindData, ok := anyCustomBindData.(uint64)
+	if !ok {
+		return nil, errors.New("custom bind data must be uint64")
+	}
+
+	if values[0] != nil {
+		customBindData += values[0].(uint64)
+	}
+
+	if customBindData == 42 {
+		return "‧₊˚ ⋅ 𓐐𓎩 ‧₊˚ ⋅", nil
+	}
+	return strconv.Itoa(int(customBindData)), nil
+}
+
+func bindEasterEgg(ctx context.Context, args []ScalarUDFArg) (context.Context, error) {
+	if !args[1].Foldable {
+		return nil, errors.New("second argument must be foldable for bindEasterEgg")
+	}
+	if args[1].Value == nil {
+		bindCtx := context.WithValue(ctx, testBindCtxKey, uint64(0))
+		return bindCtx, nil
+	}
+
+	switch v := args[1].Value.(type) {
+	case int32:
+		bindCtx := context.WithValue(ctx, testBindCtxKey, uint64(v))
+		return bindCtx, nil
+	case uint64:
+		bindCtx := context.WithValue(ctx, testBindCtxKey, v)
+		return bindCtx, nil
+	default:
+		return nil, errors.New("cannot cast second argument to uint64")
+	}
 }
 
 func (*simpleSUDF) Config() ScalarFuncConfig {
@@ -146,6 +202,19 @@ func (*getConnIdUDF) Config() ScalarFuncConfig {
 
 func (*getConnIdUDF) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{RowContextExecutor: getConnId}
+}
+
+func (*easterEggUDF) Config() ScalarFuncConfig {
+	info, err := NewTypeInfo(TYPE_UBIGINT)
+	if err != nil {
+		panic(err)
+	}
+
+	return ScalarFuncConfig{[]TypeInfo{info, info}, currentInfo, nil, true, true}
+}
+
+func (*easterEggUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{RowContextExecutor: getEasterEgg, ScalarBinder: bindEasterEgg}
 }
 
 func (*errExecutorSUDF) Config() ScalarFuncConfig {
@@ -486,6 +555,67 @@ func TestGetConnIdScalarUDF(t *testing.T) {
 	row = conn2.QueryRowContext(ctx, fmt.Sprintf(`SELECT true AS res WHERE get_conn_id() = %d`, conn2Id))
 	require.NoError(t, row.Scan(&res))
 	require.True(t, res)
+}
+
+func TestGetConnIdScalarUDFPrepared(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+	connId, err := ConnId(conn)
+	require.NoError(t, err)
+
+	currentInfo, err = NewTypeInfo(TYPE_UBIGINT)
+	require.NoError(t, err)
+
+	var udf *getConnIdUDF
+	err = RegisterScalarUDF(conn, "get_conn_id", udf)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), testCtxKey, connId)
+
+	var connIdRes uint64
+	stmt, err := conn.PrepareContext(ctx, `SELECT get_conn_id() AS connId`)
+	require.NoError(t, err)
+	defer closePreparedWrapper(t, stmt)
+
+	row := stmt.QueryRowContext(ctx)
+	require.NoError(t, row.Scan(&connIdRes))
+	require.Equal(t, connId, connIdRes)
+}
+
+func TestBindScalarUDF(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var err error
+	currentInfo, err = NewTypeInfo(TYPE_VARCHAR)
+	require.NoError(t, err)
+
+	var udf *easterEggUDF
+	err = RegisterScalarUDF(conn, "find_easter_egg", udf)
+	require.NoError(t, err)
+
+	var egg string
+	row := conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(7, 8) AS egg`)
+	require.NoError(t, row.Scan(&egg))
+	require.Equal(t, "15", egg)
+
+	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(10, (44 - 12)::UBIGINT) AS egg`)
+	require.NoError(t, row.Scan(&egg))
+	require.Equal(t, "‧₊˚ ⋅ 𓐐𓎩 ‧₊˚ ⋅", egg)
+
+	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(NULL, NULL) AS egg`)
+	require.NoError(t, row.Scan(&egg))
+	require.Equal(t, "0", egg)
+
+	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(7, (random() * 100)::UBIGINT) AS egg`)
+	err = row.Scan(&egg)
+	require.ErrorContains(t, err, "second argument must be foldable for bindEasterEgg")
 }
 
 func TestErrScalarUDF(t *testing.T) {

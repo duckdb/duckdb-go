@@ -5,14 +5,15 @@
 
 The DuckDB driver conforms to the built-in `database/sql` interface.
 
-**Current DuckDB version: `v1.4.2`.**
+**Current DuckDB version: `v1.4.3`.**
 
-The first duckdb-go tag with that version is `v2.4.2`.
+The first duckdb-go tag with that version is `v2.5.4`.
 
 Previous DuckDB versions:
 
 | DuckDB   | duckdb-go |
 |----------|-----------|
+| `v1.4.3` | `v2.5.4`  |
 | `v1.4.2` | `v2.5.2`  |
 | `v1.4.1` | `v2.4.2`  |
 | `v1.4.0` | `v2.4.0`  |
@@ -406,9 +407,9 @@ Additionally, automatic extension loading is enabled.
 #### Update the Main Module
 
 1. Create a new branch.
-2. Update the `mapping` and `arrowmapping` dependencies in `mod.go`.
+2. Update the `mapping` and `arrowmapping` dependencies in `go.mod`.
 3. Run `go mod tidy`.
-4. Update `VERSION=` in `tests.yaml`.
+4. Update `DUCKDB_VERSION` in `Makefile`.
 5. Update the latest version in `README.md`.
 6. Commit and PR changes.
 7. Push a new tagged release, `vx.x.x`.

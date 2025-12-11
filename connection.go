@@ -53,13 +53,13 @@ func (conn *Conn) CheckNamedValue(nv *driver.NamedValue) error {
 // ExecContext executes a query that doesn't return rows, such as an INSERT or UPDATE.
 // It implements the driver.ExecerContext interface.
 func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	cleanupCtx := conn.setContext(ctx)
+	defer cleanupCtx()
+
 	prepared, err := conn.prepareStmts(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-
-	cleanupCtx := conn.setContext(ctx)
-	defer cleanupCtx()
 
 	res, err := prepared.ExecContext(ctx, args)
 	errClose := prepared.Close()
@@ -79,13 +79,13 @@ func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.N
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.QueryerContext interface.
 func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	cleanupCtx := conn.setContext(ctx)
+	defer cleanupCtx()
+
 	prepared, err := conn.prepareStmts(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-
-	cleanupCtx := conn.setContext(ctx)
-	defer cleanupCtx()
 
 	r, err := prepared.QueryContext(ctx, args)
 	if err != nil {
@@ -140,7 +140,6 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 	if conn.tx {
 		return nil, errors.Join(errBeginTx, errMultipleTx)
 	}
-
 	if opts.ReadOnly {
 		return nil, errors.Join(errBeginTx, errReadOnlyTxNotSupported)
 	}
@@ -204,9 +203,6 @@ func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error)
 	if conn.closed {
 		return nil, errClosedCon
 	}
-
-	cleanupCtx := conn.setContext(ctx)
-	defer cleanupCtx()
 
 	stmts, count, errExtract := conn.extractStmts(query)
 	if errExtract != nil {
@@ -299,7 +295,7 @@ func extractConnId(conn mapping.Connection) uint64 {
 
 // setContext sets the current context for the connection.
 func (conn *Conn) setContext(ctx context.Context) func() {
-	return conn.ctxStore.store(conn.id, ctx)
+	return conn.ctxStore.store(conn.id, ctx, false)
 }
 
 // contextStoreFromConn extracts the context store of a *sql.Conn connection.

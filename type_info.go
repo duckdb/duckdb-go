@@ -45,6 +45,70 @@ func (entry *structEntry) Name() string {
 	return entry.name
 }
 
+// TypeDetails is an interface for type-specific details.
+// Use type assertion to access specific detail types.
+type TypeDetails interface {
+	isTypeDetails()
+}
+
+// DecimalDetails provides DECIMAL type information.
+type DecimalDetails struct {
+	Width uint8
+	Scale uint8
+}
+
+func (d *DecimalDetails) isTypeDetails() {}
+
+// EnumDetails provides ENUM type information.
+type EnumDetails struct {
+	Values []string
+}
+
+func (e *EnumDetails) isTypeDetails() {}
+
+// ListDetails provides LIST type information.
+type ListDetails struct {
+	Child TypeInfo
+}
+
+func (l *ListDetails) isTypeDetails() {}
+
+// ArrayDetails provides ARRAY type information.
+type ArrayDetails struct {
+	Child TypeInfo
+	Size  uint64
+}
+
+func (a *ArrayDetails) isTypeDetails() {}
+
+// MapDetails provides MAP type information.
+type MapDetails struct {
+	Key   TypeInfo
+	Value TypeInfo
+}
+
+func (m *MapDetails) isTypeDetails() {}
+
+// StructDetails provides STRUCT type information.
+type StructDetails struct {
+	Entries []StructEntry
+}
+
+func (s *StructDetails) isTypeDetails() {}
+
+// UnionMember represents a UNION member with its name and type.
+type UnionMember struct {
+	Name string
+	Type TypeInfo
+}
+
+// UnionDetails provides UNION type information.
+type UnionDetails struct {
+	Members []UnionMember
+}
+
+func (u *UnionDetails) isTypeDetails() {}
+
 type baseTypeInfo struct {
 	Type
 
@@ -76,11 +140,69 @@ type typeInfo struct {
 type TypeInfo interface {
 	// InternalType returns the Type.
 	InternalType() Type
+	// Details returns type-specific details for complex types.
+	// Returns nil for simple/primitive types.
+	// Use type assertion to access specific detail types.
+	Details() TypeDetails
 	logicalType() mapping.LogicalType
 }
 
 func (info *typeInfo) InternalType() Type {
 	return info.Type
+}
+
+// Details returns type-specific details for complex types.
+// Returns nil for simple/primitive types.
+func (info *typeInfo) Details() TypeDetails {
+	switch info.Type {
+	case TYPE_DECIMAL:
+		return &DecimalDetails{
+			Width: info.decimalWidth,
+			Scale: info.decimalScale,
+		}
+	case TYPE_ENUM:
+		// Make a copy of the slice to avoid exposing internal state
+		values := make([]string, len(info.names))
+		copy(values, info.names)
+		return &EnumDetails{
+			Values: values,
+		}
+	case TYPE_LIST:
+		return &ListDetails{
+			Child: info.types[0],
+		}
+	case TYPE_ARRAY:
+		return &ArrayDetails{
+			Child: info.types[0],
+			Size:  uint64(info.arrayLength),
+		}
+	case TYPE_MAP:
+		return &MapDetails{
+			Key:   info.types[0],
+			Value: info.types[1],
+		}
+	case TYPE_STRUCT:
+		// Make a copy of the slice to avoid exposing internal state
+		entries := make([]StructEntry, len(info.structEntries))
+		copy(entries, info.structEntries)
+		return &StructDetails{
+			Entries: entries,
+		}
+	case TYPE_UNION:
+		// Build UnionMembers from types and names
+		members := make([]UnionMember, len(info.types))
+		for i := range info.types {
+			members[i] = UnionMember{
+				Name: info.names[i],
+				Type: info.types[i],
+			}
+		}
+		return &UnionDetails{
+			Members: members,
+		}
+	default:
+		return nil
+	}
 }
 
 // NewTypeInfo returns type information for DuckDB's primitive types.
@@ -355,6 +477,150 @@ func (info *typeInfo) logicalUnionType() mapping.LogicalType {
 		types = append(types, t.logicalType())
 	}
 	return mapping.CreateUnionType(types, info.names)
+}
+
+// newTypeInfoFromLogicalType converts a mapping.LogicalType to TypeInfo.
+// This allows inspecting types returned from prepared statements.
+// The LogicalType must remain valid for the duration of this call.
+// The returned TypeInfo does not hold a reference to the LogicalType.
+func newTypeInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	t := mapping.GetTypeId(lt)
+
+	switch t {
+	case TYPE_DECIMAL:
+		return newDecimalInfoFromLogicalType(lt)
+	case TYPE_ENUM:
+		return newEnumInfoFromLogicalType(lt)
+	case TYPE_LIST:
+		return newListInfoFromLogicalType(lt)
+	case TYPE_ARRAY:
+		return newArrayInfoFromLogicalType(lt)
+	case TYPE_MAP:
+		return newMapInfoFromLogicalType(lt)
+	case TYPE_STRUCT:
+		return newStructInfoFromLogicalType(lt)
+	case TYPE_UNION:
+		return newUnionInfoFromLogicalType(lt)
+	default:
+		// Simple/primitive type
+		return NewTypeInfo(t)
+	}
+}
+
+func newDecimalInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	width := mapping.DecimalWidth(lt)
+	scale := mapping.DecimalScale(lt)
+	return NewDecimalInfo(width, scale)
+}
+
+func newEnumInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	size := mapping.EnumDictionarySize(lt)
+	if size == 0 {
+		return nil, getError(errAPI, errors.New("ENUM type must have at least one value"))
+	}
+
+	values := make([]string, size)
+	for i := range size {
+		values[i] = mapping.EnumDictionaryValue(lt, mapping.IdxT(i))
+	}
+
+	return NewEnumInfo(values[0], values[1:]...)
+}
+
+func newListInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	childLT := mapping.ListTypeChildType(lt)
+	defer mapping.DestroyLogicalType(&childLT)
+
+	childInfo, err := newTypeInfoFromLogicalType(childLT)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewListInfo(childInfo)
+}
+
+func newArrayInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	childLT := mapping.ArrayTypeChildType(lt)
+	defer mapping.DestroyLogicalType(&childLT)
+
+	childInfo, err := newTypeInfoFromLogicalType(childLT)
+	if err != nil {
+		return nil, err
+	}
+
+	size := mapping.ArrayTypeArraySize(lt)
+	return NewArrayInfo(childInfo, uint64(size))
+}
+
+func newMapInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	keyLT := mapping.MapTypeKeyType(lt)
+	defer mapping.DestroyLogicalType(&keyLT)
+
+	valueLT := mapping.MapTypeValueType(lt)
+	defer mapping.DestroyLogicalType(&valueLT)
+
+	keyInfo, err := newTypeInfoFromLogicalType(keyLT)
+	if err != nil {
+		return nil, err
+	}
+
+	valueInfo, err := newTypeInfoFromLogicalType(valueLT)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewMapInfo(keyInfo, valueInfo)
+}
+
+func newStructInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	count := mapping.StructTypeChildCount(lt)
+	if count == 0 {
+		return nil, getError(errAPI, errors.New("STRUCT type must have at least one field"))
+	}
+
+	entries := make([]StructEntry, count)
+	for i := range int(count) {
+		name := mapping.StructTypeChildName(lt, mapping.IdxT(i))
+		childLT := mapping.StructTypeChildType(lt, mapping.IdxT(i))
+
+		childInfo, err := newTypeInfoFromLogicalType(childLT)
+		mapping.DestroyLogicalType(&childLT)
+		if err != nil {
+			return nil, err
+		}
+
+		entry, err := NewStructEntry(childInfo, name)
+		if err != nil {
+			return nil, err
+		}
+		entries[i] = entry
+	}
+
+	return NewStructInfo(entries[0], entries[1:]...)
+}
+
+func newUnionInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
+	count := mapping.UnionTypeMemberCount(lt)
+	if count == 0 {
+		return nil, getError(errAPI, errors.New("UNION type must have at least one member"))
+	}
+
+	memberTypes := make([]TypeInfo, count)
+	memberNames := make([]string, count)
+
+	for i := range int(count) {
+		memberNames[i] = mapping.UnionTypeMemberName(lt, mapping.IdxT(i))
+		memberLT := mapping.UnionTypeMemberType(lt, mapping.IdxT(i))
+
+		memberInfo, err := newTypeInfoFromLogicalType(memberLT)
+		mapping.DestroyLogicalType(&memberLT)
+		if err != nil {
+			return nil, err
+		}
+		memberTypes[i] = memberInfo
+	}
+
+	return NewUnionInfo(memberTypes, memberNames)
 }
 
 func funcName(i any) string {
