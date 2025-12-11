@@ -4,8 +4,8 @@ go 1.24.0
 
 require (
 	github.com/apache/arrow-go/v18 v18.4.1
-	github.com/duckdb/duckdb-go/arrowmapping v0.1.0-7.preview
-	github.com/duckdb/duckdb-go/mapping v0.1.0-7.preview
+	github.com/duckdb/duckdb-go/arrowmapping v0.1.0-8.preview
+	github.com/duckdb/duckdb-go/mapping v0.1.0-8.preview
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
@@ -13,12 +13,12 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/duckdb/duckdb-go-bindings v0.2.0-7.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.2.0-7.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.2.0-7.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.2.0-7.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.2.0-7.preview // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.2.0-7.preview // indirect
+	github.com/duckdb/duckdb-go-bindings v0.2.0-8.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.2.0-8.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.2.0-8.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.2.0-8.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.2.0-8.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.2.0-8.preview // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.9.23+incompatible // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
