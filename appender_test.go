@@ -1097,7 +1097,7 @@ func TestAppenderUpsert(t *testing.T) {
 
 // Regression test for https://github.com/duckdb/duckdb-go/issues/22
 func TestAppenderArrayOfNullInterface(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (element VARCHAR[])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (element VARCHAR[])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// The original issue unmarshaled `[null, null]` into []interface{}{nil, nil} and passed it to AppendRow.
