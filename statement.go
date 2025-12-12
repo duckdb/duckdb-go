@@ -418,7 +418,7 @@ func (s *Stmt) bind(args []driver.NamedValue) error {
 		return fmt.Errorf("incorrect argument count for command: have %d want %d", len(args), s.NumInput())
 	}
 
-	// relaxed length check allow for unused parameters.
+	// Relaxed length-check to allow for unused parameters.
 	for i := range s.NumInput() {
 		name := mapping.ParameterName(*s.preparedStmt, mapping.IdxT(i+1))
 
@@ -626,35 +626,34 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 	return s.executeBound(ctx)
 }
 
-func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
-	var pendingRes mapping.PendingResult
-	if mapping.PendingPrepared(*s.preparedStmt, &pendingRes) == mapping.StateError {
-		dbErr := getDuckDBError(mapping.PendingError(pendingRes))
-		mapping.DestroyPending(&pendingRes)
-		return nil, dbErr
+func interruptRoutine(mainDoneCh, bgDoneCh *chan struct{}, ctx context.Context, conn *Conn) {
+	select {
+	// Await an interrupt on the context.
+	case <-ctx.Done():
+		mapping.Interrupt(conn.conn)
+		break
+	// Await a done-signal on the main channel.
+	// Reading from a closed channel succeeds immediately.
+	case <-*mainDoneCh:
+		break
 	}
-	defer mapping.DestroyPending(&pendingRes)
+	close(*bgDoneCh)
+}
 
+func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 	mainDoneCh := make(chan struct{})
 	bgDoneCh := make(chan struct{})
+	go interruptRoutine(&mainDoneCh, &bgDoneCh, ctx, s.conn)
 
-	// go-routine waiting to receive on the context or main channel.
-	go func() {
-		select {
-		// Await an interrupt on the context.
-		case <-ctx.Done():
-			mapping.Interrupt(s.conn.conn)
-			break
-		// Await a done-signal on the main channel.
-		// Reading from a closed channel succeeds immediately.
-		case <-mainDoneCh:
-			break
-		}
-		close(bgDoneCh)
-	}()
+	var pending mapping.PendingResult
+	pendingState := mapping.PendingPrepared(*s.preparedStmt, &pending)
+	defer mapping.DestroyPending(&pending)
 
 	var res mapping.Result
-	state := mapping.ExecutePending(pendingRes, &res)
+	var resState mapping.State
+	if pendingState == mapping.StateSuccess {
+		resState = mapping.ExecutePending(pending, &res)
+	}
 
 	// We finished executing the pending query.
 	// Close the main channel.
@@ -666,8 +665,14 @@ func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 	// If we don't wait for the go-routine to finish, it can cancel that new query.
 	<-bgDoneCh
 
-	if state == mapping.StateError {
-		err := errors.Join(ctx.Err(), getDuckDBError(mapping.ResultError(&res)))
+	var err error
+	if pendingState == mapping.StateError {
+		err = getDuckDBError(mapping.PendingError(pending))
+		return nil, err
+	}
+
+	if resState == mapping.StateError {
+		err = errors.Join(ctx.Err(), getDuckDBError(mapping.ResultError(&res)))
 		mapping.DestroyResult(&res)
 		return nil, err
 	}
