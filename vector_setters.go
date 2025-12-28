@@ -405,11 +405,6 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	name, inMap := unsupportedTypeToStringMap[vec.Type]
-	if inMap {
-		return unsupportedTypeError(name)
-	}
-
 	switch vec.Type {
 	case TYPE_BOOLEAN:
 		return setBool(vec, rowIdx, val)
@@ -463,6 +458,11 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	case TYPE_UNION:
 		return setUnion(vec, rowIdx, val)
 	default:
+		name, inMap := unsupportedTypeToStringMap[vec.Type]
+		if inMap {
+			return unsupportedTypeError(name)
+		}
+
 		return unsupportedTypeError(unknownTypeErrMsg)
 	}
 }

@@ -3,27 +3,44 @@ package duckdb
 import (
 	"database/sql/driver"
 	"errors"
+	"runtime"
+	"sync"
 
 	"github.com/duckdb/duckdb-go/mapping"
 )
 
-// Appender wraps functionality around the DuckDB appender.
-// It enables efficient bulk transformations.
-type Appender struct {
-	// The raw sql.Conn's driver connection.
-	conn *Conn
-	// The DuckDB appender.
-	appender mapping.Appender
-	// True, if the appender has been closed.
-	closed bool
+type (
+	appenderSource[T any] struct {
+		Source T
+	}
 
-	// The chunk to append to.
-	chunk DataChunk
-	// The column types of the table to append to.
-	types []mapping.LogicalType
-	// The number of appended rows.
-	rowCount int
-}
+	rowAppenderSource           = appenderSource[RowTableSource]
+	parallelRowAppenderSource   = appenderSource[ParallelRowTableSource]
+	chunkAppenderSource         = appenderSource[ChunkTableSource]
+	parallelChunkAppenderSource = appenderSource[ParallelChunkTableSource]
+
+	AppenderSource interface {
+		_secret()
+	}
+
+	// Appender wraps functionality around the DuckDB appender.
+	// It enables efficient bulk transformations.
+	Appender struct {
+		// The raw sql.Conn's driver connection.
+		conn *Conn
+		// The DuckDB appender.
+		appender mapping.Appender
+		// True, if the appender has been closed.
+		closed bool
+
+		// The chunk to append to.
+		chunk DataChunk
+		// The column types of the table to append to.
+		types []mapping.LogicalType
+		// The number of appended rows.
+		rowCount int
+	}
+)
 
 // NewAppenderFromConn returns a new Appender for the default catalog.
 // The Appender batches rows via AppendRow. Upon reaching the auto-flush threshold or
@@ -207,6 +224,72 @@ func (a *Appender) initAppenderChunk() (*Appender, error) {
 	return a, nil
 }
 
+func (a *Appender) AppendTableSource(s AppenderSource) error {
+	lock := &sync.Mutex{}
+	// projection is not used in chunk, so we must keep it a 1-1 mapping
+	columnCount := mapping.AppenderColumnCount(a.appender)
+	projection := make([]int, 0, columnCount)
+	for i := mapping.IdxT(0); i < columnCount; i++ {
+		projection = append(projection, int(i))
+	}
+	var x any = s
+	switch s := x.(type) {
+	case rowAppenderSource:
+		s.Source.Init()
+		err := appenderRowThread(&parallelRowTSWrapper{s.Source}, lock, a.types, a.appender, projection)
+		if err != nil {
+			return err
+		}
+	case parallelRowAppenderSource:
+		wg := sync.WaitGroup{}
+
+		info := s.Source.Init()
+		threads := min(info.MaxThreads, runtime.GOMAXPROCS(-1))
+		var oerr error
+		for range threads {
+			wg.Add(1)
+			go func() {
+				err := appenderRowThread(s.Source, lock, a.types, a.appender, projection)
+				if err != nil {
+					oerr = err
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		if oerr != nil {
+			return oerr
+		}
+	case chunkAppenderSource:
+		s.Source.Init()
+		err := appenderChunkThread(&parallelChunkTSWrapper{s.Source}, lock, a.types, a.appender)
+		if err != nil {
+			return err
+		}
+	case parallelChunkAppenderSource:
+		wg := sync.WaitGroup{}
+
+		info := s.Source.Init()
+		threads := min(info.MaxThreads, runtime.GOMAXPROCS(-1))
+		var oerr error
+		for range threads {
+			wg.Add(1)
+			go func() {
+				err := appenderChunkThread(s.Source, lock, a.types, a.appender)
+				if err != nil {
+					oerr = err
+				}
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		if oerr != nil {
+			return oerr
+		}
+	}
+	return nil
+}
+
 func (a *Appender) appendRowSlice(args []driver.Value) error {
 	// Early-out, if the number of args does not match the column count.
 	if len(args) != len(a.types) {
@@ -248,4 +331,101 @@ func (a *Appender) appendDataChunk() error {
 	a.rowCount = 0
 
 	return nil
+}
+
+func appenderRowThread(s ParallelRowTableSource, lock *sync.Mutex, types []mapping.LogicalType, duckdbAppender mapping.Appender, projection []int) error {
+	maxSize := GetDataChunkCapacity()
+	lstate := s.NewLocalState()
+	var chunk DataChunk
+	err := chunk.initFromTypes(types, true)
+	if err != nil {
+		return err
+	}
+	chunk.projection = projection
+
+	for {
+		row := Row{
+			chunk: &chunk,
+			r:     0,
+		}
+		var next bool
+		for ; row.r < mapping.IdxT(maxSize); row.r++ {
+			next, err = s.FillRow(lstate, row)
+			if err != nil {
+				chunk.close()
+				return err
+			}
+			if !next {
+				break
+			}
+		}
+
+		mapping.DataChunkSetSize(chunk.chunk, row.r)
+
+		lock.Lock()
+		state := mapping.AppendDataChunk(duckdbAppender, chunk.chunk)
+		if state == mapping.StateError {
+			err := getDuckDBError(mapping.AppenderError(duckdbAppender))
+			lock.Unlock()
+			return err
+		}
+		lock.Unlock()
+		if !next {
+			break
+		}
+		chunk.reset(true)
+	}
+	chunk.close()
+	return nil
+}
+
+func appenderChunkThread(s ParallelChunkTableSource, lock *sync.Mutex, types []mapping.LogicalType, duckdbAppender mapping.Appender) error {
+	lstate := s.NewLocalState()
+	var chunk DataChunk
+	err := chunk.initFromTypes(types, true)
+	if err != nil {
+		return err
+	}
+
+	for {
+		err = s.FillChunk(lstate, chunk)
+		if err != nil {
+			return err
+		}
+
+		if chunk.GetSize() == 0 {
+			chunk.close()
+			break
+		}
+
+		lock.Lock()
+		state := mapping.AppendDataChunk(duckdbAppender, chunk.chunk)
+		if state == mapping.StateError {
+			err := getDuckDBError(mapping.AppenderError(duckdbAppender))
+			lock.Unlock()
+			return err
+		}
+		lock.Unlock()
+		chunk.reset(true)
+	}
+	chunk.close()
+	return nil
+}
+
+func (a appenderSource[T]) _secret() {}
+
+func NewAppenderRowSource(source RowTableSource) AppenderSource {
+	return rowAppenderSource{Source: source}
+}
+
+func NewAppenderParallelRowSource(source ParallelRowTableSource) AppenderSource {
+	return parallelRowAppenderSource{Source: source}
+}
+
+func NewAppenderChunkSource(source ChunkTableSource) AppenderSource {
+	return chunkAppenderSource{Source: source}
+}
+
+func NewAppenderParallelChunkSource(source ParallelChunkTableSource) AppenderSource {
+	return parallelChunkAppenderSource{Source: source}
 }
