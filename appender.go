@@ -42,6 +42,23 @@ func NewAppenderFromConn(driverConn driver.Conn, schema, table string) (*Appende
 // `driverConn` is the raw sql.Conn's driver connection.
 // `catalog`, `schema` and `table` specify the table (`catalog.schema.table`) to append to.
 func NewAppender(driverConn driver.Conn, catalog, schema, table string) (*Appender, error) {
+	return newTableAppender(driverConn, catalog, schema, table, nil)
+}
+
+// NewAppenderWithColumns returns a new Appender that is restricted to a subset of columns.
+// This enables more efficient appends by narrowing the appender scope to only the provided columns.
+// The Appender batches rows via AppendRow.
+// Each row must provide values for exactly the selected columns.
+// DuckDB will fill columns not selected with their DEFAULT values (or NULL).
+// Note: Changing the active column set causes a flush in DuckDB. Therefore, we cannot change them later during the
+// lifetime of the Appender.
+func NewAppenderWithColumns(driverConn driver.Conn, catalog, schema, table string, columns []string) (*Appender, error) {
+	return newTableAppender(driverConn, catalog, schema, table, columns)
+}
+
+// newTableAppender consolidates the common logic of creating an appender, optionally narrowing
+// it to a subset of columns before fetching types. NewAppender and NewAppenderWithColumns delegate this helper
+func newTableAppender(driverConn driver.Conn, catalog, schema, table string, columns []string) (*Appender, error) {
 	var a Appender
 	err := a.appenderConn(driverConn)
 	if err != nil {
@@ -55,20 +72,53 @@ func NewAppender(driverConn driver.Conn, catalog, schema, table string) (*Append
 		return nil, getError(errAppenderCreation, err)
 	}
 
-	// Get the column types.
-	columnCount := mapping.AppenderColumnCount(a.appender)
-	for i := range uint64(columnCount) {
-		colType := mapping.AppenderColumnType(a.appender, mapping.IdxT(i))
-		a.types = append(a.types, colType)
+	// If a subset of columns is provided, activate only those columns on the appender
+	// BEFORE fetching types, so the type enumeration reflects only the active columns.
+	// (In DuckDB, if columns are not added, BaseAppender::GetActiveTypes() will return all table columns)
+	if len(columns) > 0 {
+		for i, col := range columns {
+			if mapping.AppenderAddColumn(a.appender, col) == mapping.StateError {
+				duckError := getDuckDBError(mapping.AppenderError(a.appender))
+				mapping.AppenderDestroy(&a.appender)
+				return nil, getError(errAppenderCreation, duckError)
+			}
 
-		// Ensure that we only create an appender for supported column types.
-		t := mapping.GetTypeId(colType)
-		name, found := unsupportedTypeToStringMap[t]
-		if found {
-			err = addIndexToError(unsupportedTypeError(name), int(i)+1)
+			colType := mapping.AppenderColumnType(a.appender, mapping.IdxT(i))
+			a.types = append(a.types, colType)
+
+			// Ensure that we only create an appender for supported column types.
+			t := mapping.GetTypeId(colType)
+			if name, found := unsupportedTypeToStringMap[t]; found {
+				err = addIndexToError(unsupportedTypeError(name), i+1)
+				destroyLogicalTypes(a.types)
+				mapping.AppenderDestroy(&a.appender)
+				return nil, getError(errAppenderCreation, err)
+			}
+		}
+
+		// Sanity check: active column count should match provided columns
+		if mapping.AppenderColumnCount(a.appender) != mapping.IdxT(len(columns)) {
 			destroyLogicalTypes(a.types)
 			mapping.AppenderDestroy(&a.appender)
-			return nil, getError(errAppenderCreation, err)
+			return nil, getError(errAppenderCreation, errors.New("duckdb: column count mismatch after activation"))
+		}
+	} else {
+		// Get the column types for all columns when no subset is specified (already happens in C++ side when not
+		// activating columns.
+		columnCount := mapping.AppenderColumnCount(a.appender)
+		for i := range uint64(columnCount) {
+			colType := mapping.AppenderColumnType(a.appender, mapping.IdxT(i))
+			a.types = append(a.types, colType)
+
+			// Ensure that we only create an appender for supported column types.
+			t := mapping.GetTypeId(colType)
+			name, found := unsupportedTypeToStringMap[t]
+			if found {
+				err = addIndexToError(unsupportedTypeError(name), int(i)+1)
+				destroyLogicalTypes(a.types)
+				mapping.AppenderDestroy(&a.appender)
+				return nil, getError(errAppenderCreation, err)
+			}
 		}
 	}
 
