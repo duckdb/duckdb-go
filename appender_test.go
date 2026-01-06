@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -89,6 +90,8 @@ type resultRow struct {
 	mix                 any
 	mixList             []any
 }
+
+const benchmarkRowsToAppend = 2048 * 128
 
 func castList[T any](val []any) []T {
 	res := make([]T, len(val))
@@ -1198,13 +1201,257 @@ func TestAppenderArrayOfNullInterface(t *testing.T) {
 	require.Nil(t, arr[1])
 }
 
+type (
+	appStructTableUDF struct {
+		n     int64
+		count int64
+	}
+
+	appParStructTableUDF struct {
+		lock    *sync.Mutex
+		claimed int64
+		n       int64
+	}
+)
+
+func (udf *appStructTableUDF) ColumnInfos() []ColumnInfo {
+	t, _ := NewTypeInfo(TYPE_BIGINT)
+	t2, _ := NewTypeInfo(TYPE_UTINYINT)
+	return []ColumnInfo{
+		{Name: "id", T: t},
+		{Name: "uint8", T: t2},
+	}
+}
+
+func (udf *appStructTableUDF) Init() {}
+
+func (udf *appStructTableUDF) FillRow(row Row) (bool, error) {
+	if udf.count >= udf.n {
+		return false, nil
+	}
+	udf.count++
+	err := SetRowValue(row, 0, udf.count)
+	if err != nil {
+		return true, err
+	}
+	err = SetRowValue(row, 1, udf.count)
+	return true, err
+}
+
+func (udf *appStructTableUDF) GetTypes() []any {
+	return []any{int64(0), uint8(0)}
+}
+
+func (udf *appStructTableUDF) GetValue(r, c int) any {
+	if c == 0 {
+		return int64(r + 1)
+	} else {
+		return uint8(r + 1)
+	}
+}
+
+func (udf *appStructTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *appParStructTableUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{{Name: "result", T: typeBigintTableUDF}}
+}
+
+func (udf *appParStructTableUDF) Init() ParallelTableSourceInfo {
+	return ParallelTableSourceInfo{MaxThreads: 8}
+}
+
+func (udf *appParStructTableUDF) NewLocalState() any {
+	return &parallelIncTableLocalState{
+		start: 0,
+		end:   -1,
+	}
+}
+
+func (udf *appParStructTableUDF) FillRow(localState any, row Row) (bool, error) {
+	state := localState.(*parallelIncTableLocalState)
+
+	if state.start >= state.end {
+		// Claim a new work unit.
+		udf.lock.Lock()
+		remaining := udf.n - udf.claimed
+
+		if remaining <= 0 {
+			// No more work.
+			udf.lock.Unlock()
+			return false, nil
+		} else if remaining >= 2024 {
+			remaining = 2024
+		}
+
+		state.start = udf.claimed
+		udf.claimed += remaining
+		state.end = udf.claimed
+		udf.lock.Unlock()
+	}
+
+	state.start++
+	err := SetRowValue(row, 0, state.start)
+	if err != nil {
+		return true, err
+	}
+	err = SetRowValue(row, 1, state.start)
+	return true, err
+
+}
+
+func (udf *appParStructTableUDF) GetValue(r, c int) any {
+	if c == 0 {
+		return int64(r + 1)
+	} else {
+		return uint8(r + 1)
+	}
+}
+
+func (udf *appParStructTableUDF) GetTypes() []any {
+	return []any{int64(0), uint8(0)}
+}
+
+func (udf *appParStructTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func TestAppendParallelRowSource(t *testing.T) {
+	t.Parallel()
+	sc := `
+		CREATE TABLE test (
+			id BIGINT,
+			uint8 UTINYINT
+	  	)`
+
+	c, db, con, a := prepareAppender(t, sc)
+
+	f := appParStructTableUDF{
+		lock:    &sync.Mutex{},
+		claimed: 0,
+		n:       3000,
+	}
+
+	err := a.AppendTableSource(NewAppenderParallelRowSource(&f))
+	require.NoError(t, err)
+
+	err = a.Flush()
+	require.NoError(t, err)
+
+	// Verify results.
+	res, err := sql.OpenDB(c).QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+	require.NoError(t, err)
+
+	values := f.GetTypes()
+	args := make([]any, len(values))
+	for i := range values {
+		args[i] = &values[i]
+	}
+
+	count := 0
+	for r := 0; res.Next(); r++ {
+		require.NoError(t, res.Scan(args...))
+		for i, value := range values {
+			expected := f.GetValue(r, i)
+			require.Equal(t, expected, value, "incorrect value", r, i)
+		}
+		count++
+	}
+	cleanupAppender(t, c, db, con, a)
+}
+
+func TestAppendParallelRowSourceSingle(t *testing.T) {
+	t.Parallel()
+	sc := `
+		CREATE TABLE test (
+			id BIGINT,
+	  	)`
+
+	c, db, con, a := prepareAppender(t, sc)
+
+	f := parallelIncTableUDF{
+		lock: &sync.Mutex{},
+		n:    3000,
+	}
+
+	err := a.AppendTableSource(NewAppenderParallelRowSource(&f))
+	require.NoError(t, err)
+
+	err = a.Flush()
+	require.NoError(t, err)
+
+	// Verify results.
+	res, err := sql.OpenDB(c).QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+	require.NoError(t, err)
+
+	values := f.GetTypes()
+	args := make([]any, len(values))
+	for i := range values {
+		args[i] = &values[i]
+	}
+
+	count := 0
+	for r := 0; res.Next(); r++ {
+		require.NoError(t, res.Scan(args...))
+		for i, value := range values {
+			expected := f.GetValue(r, i)
+			//fmt.Println(args)
+			//fmt.Println(expected, value)
+			require.Equal(t, expected, value, "incorrect value", r, i)
+		}
+		count++
+	}
+	cleanupAppender(t, c, db, con, a)
+}
+
+func TestAppendRowSource(t *testing.T) {
+	t.Parallel()
+	sc := `
+		CREATE TABLE test (
+			id BIGINT,
+			uint8 UTINYINT
+	  	)`
+	c, db, con, a := prepareAppender(t, sc)
+
+	f := appStructTableUDF{
+		n: 3000,
+	}
+
+	err := a.AppendTableSource(NewAppenderRowSource(&f))
+	require.NoError(t, err)
+
+	err = a.Flush()
+	require.NoError(t, err)
+
+	// Verify results.
+	res, err := sql.OpenDB(c).QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+	require.NoError(t, err)
+
+	values := f.GetTypes()
+	args := make([]any, len(values))
+	for i := range values {
+		args[i] = &values[i]
+	}
+
+	count := 0
+	for r := 0; res.Next(); r++ {
+		require.NoError(t, res.Scan(args...))
+		for i, value := range values {
+			expected := f.GetValue(r, i)
+			require.Equal(t, expected, value, "incorrect value", r, i)
+		}
+		count++
+	}
+	cleanupAppender(t, c, db, con, a)
+}
+
 func BenchmarkAppenderNested(b *testing.B) {
 	c, db, conn, a := prepareAppender(b, createNestedDataTableSQL)
 	defer cleanupAppender(b, c, db, conn, a)
 
 	const rowCount = 600
 	rowsToAppend := prepareNestedData(rowCount)
-
 	b.ResetTimer()
 	for b.Loop() {
 		appendNestedData(b, a, rowsToAppend)
@@ -1309,3 +1556,145 @@ func appendNestedData[T require.TestingT](t T, a *Appender, rowsToAppend []neste
 	}
 	require.NoError(t, a.Flush())
 }
+
+var types = map[reflect.Type]string{
+	reflect.TypeFor[int8](): "TINYINT",
+}
+
+func benchmarkAppenderSingle[T any](v T) func(*testing.B) {
+	return func(b *testing.B) {
+		if _, ok := types[reflect.TypeFor[T]()]; !ok {
+			b.Fatal("Type not defined in table:", reflect.TypeFor[T]())
+		}
+		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
+		c, db, con, a := prepareAppender(b, tableSQL)
+
+		var vec [benchmarkRowsToAppend]T = [benchmarkRowsToAppend]T{}
+		for i := range benchmarkRowsToAppend {
+			vec[i] = v
+		}
+
+		for b.Loop() {
+			for range benchmarkRowsToAppend {
+				// require took up the majority of the time
+				err := a.AppendRow(v)
+				if err != nil {
+					b.Error(err)
+				}
+			}
+		}
+		cleanupAppender(b, c, db, con, a)
+	}
+}
+
+func benchmarkAppenderRowSingle[T any](_ T) func(*testing.B) {
+	return func(b *testing.B) {
+		if _, ok := types[reflect.TypeFor[T]()]; !ok {
+			b.Fatal("Type not defined in table:", reflect.TypeFor[T]())
+		}
+		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
+		c, db, con, a := prepareAppender(b, tableSQL)
+
+		for b.Loop() {
+			f := incTableUDF{
+				n: benchmarkRowsToAppend,
+			}
+			err := a.AppendTableSource(NewAppenderRowSource(&f))
+			if err != nil {
+				b.Error(err)
+			}
+		}
+		cleanupAppender(b, c, db, con, a)
+	}
+}
+
+func benchmarkAppenderParallelRowSingle[T any](_ T) func(*testing.B) {
+	return func(b *testing.B) {
+		if _, ok := types[reflect.TypeFor[T]()]; !ok {
+			b.Fatal("Type not defined in table:", reflect.TypeFor[T]())
+		}
+		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
+		c, db, con, a := prepareAppender(b, tableSQL)
+
+		for b.Loop() {
+			f := parallelIncTableUDF{
+				lock: &sync.Mutex{},
+				n:    benchmarkRowsToAppend,
+			}
+			err := a.AppendTableSource(NewAppenderParallelRowSource(&f))
+			if err != nil {
+				b.Error(err)
+			}
+		}
+		cleanupAppender(b, c, db, con, a)
+	}
+}
+
+func benchmarkAppenderChunkSingle[T any](_ T) func(*testing.B) {
+	return func(b *testing.B) {
+		if _, ok := types[reflect.TypeFor[T]()]; !ok {
+			b.Fatal("Type not defined in table:", reflect.TypeFor[T]())
+		}
+		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
+		c, db, con, a := prepareAppender(b, tableSQL)
+
+		for b.Loop() {
+			f := chunkIncTableUDF{
+				n: benchmarkRowsToAppend,
+			}
+			err := a.AppendTableSource(NewAppenderChunkSource(&f))
+			if err != nil {
+				b.Error(err)
+			}
+		}
+		cleanupAppender(b, c, db, con, a)
+	}
+}
+
+func benchmarkAppenderParallelChunkSingle[T any](_ T) func(*testing.B) {
+	return func(b *testing.B) {
+		if _, ok := types[reflect.TypeFor[T]()]; !ok {
+			b.Fatal("Type not defined in table:", reflect.TypeFor[T]())
+		}
+		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
+		c, db, con, a := prepareAppender(b, tableSQL)
+
+		for b.Loop() {
+			f := parallelChunkIncTableUDF{
+				lock: &sync.Mutex{},
+				n:    benchmarkRowsToAppend,
+			}
+			err := a.AppendTableSource(NewAppenderParallelChunkSource(&f))
+			if err != nil {
+				b.Error(err)
+			}
+		}
+		cleanupAppender(b, c, db, con, a)
+	}
+}
+
+func BenchmarkAppenderSingle(b *testing.B) {
+	b.Run("int8", benchmarkAppenderSingle[int8](0))
+}
+
+func BenchmarkAppenderRowSingle(b *testing.B) {
+	b.Run("int8", benchmarkAppenderRowSingle[int8](0))
+}
+
+func BenchmarkAppenderParallelRowSingle(b *testing.B) {
+	b.Run("int8", benchmarkAppenderParallelRowSingle[int8](0))
+}
+
+func BenchmarkAppenderChunkSingle(b *testing.B) {
+	b.Run("int8", benchmarkAppenderChunkSingle[int8](0))
+}
+
+func BenchmarkAppenderParallelChunkSingle(b *testing.B) {
+	b.Run("int8", benchmarkAppenderParallelChunkSingle[int8](0))
+}
+
+const createSingleTableSQL = `
+	CREATE TABLE test (
+		nested_int_list %s,
+	)
+`
