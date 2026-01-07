@@ -130,11 +130,28 @@ func prepareAppender[T require.TestingT](t T, query string) (*Connector, *sql.DB
 	return c, db, conn, a
 }
 
-func cleanupAppender[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn, a *Appender) {
-	closeAppenderWrapper(t, a)
+func prepareAppenderWithColumns[T require.TestingT](t T, query string, columns []string) (*Connector, *sql.DB, driver.Conn, *Appender) {
+	c := newConnectorWrapper(t, ``, nil)
+
+	db := sql.OpenDB(c)
+	_, err := db.Exec(query)
+	require.NoError(t, err)
+
+	conn := openDriverConnWrapper(t, c)
+	a, err := NewAppenderWithColumns(conn, "", "", "test", columns)
+	require.NoError(t, err)
+	return c, db, conn, a
+}
+
+func cleanupDb[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn) {
 	closeDriverConnWrapper(t, &conn)
 	closeDbWrapper(t, db)
 	closeConnectorWrapper(t, c)
+}
+
+func cleanupAppender[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn, a *Appender) {
+	closeAppenderWrapper(t, a)
+	cleanupDb(t, c, db, conn)
 }
 
 func TestAppenderClose(t *testing.T) {
@@ -1196,6 +1213,110 @@ func TestAppenderArrayOfNullInterface(t *testing.T) {
 	require.Len(t, arr, 2)
 	require.Nil(t, arr[0])
 	require.Nil(t, arr[1])
+}
+
+func TestAppenderWithColumnsBasic(t *testing.T) {
+	c, db, conn, a := prepareAppenderWithColumns(t, `
+        CREATE TABLE test (
+            id INTEGER,
+            col_a INTEGER,
+            col_b VARCHAR,
+            col_c DOUBLE
+        );`, []string{"col_b", "id"})
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append rows according to columns slice: (col_b, id)
+	require.NoError(t, a.AppendRow("hello", 123))
+	require.NoError(t, a.AppendRow(nil, 456))
+	require.NoError(t, a.AppendRow("only-b", nil))
+	require.NoError(t, a.Flush())
+
+	// Verify: non-selected columns (col_a, col_c) should be NULL
+	rows, err := db.Query("SELECT id, col_a, col_b, col_c FROM test ORDER BY id NULLS LAST, col_b NULLS LAST")
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	type Result struct {
+		id sql.NullInt64
+		a  sql.NullInt64
+		b  sql.NullString
+		c  sql.NullFloat64
+	}
+	var got []Result
+	for rows.Next() {
+		var r Result
+		require.NoError(t, rows.Scan(&r.id, &r.a, &r.b, &r.c))
+		got = append(got, r)
+	}
+	require.Len(t, got, 3)
+
+	// Row with id=123, col_b="hello"
+	require.Equal(t, int64(123), got[0].id.Int64)
+	require.Equal(t, "hello", got[0].b.String)
+	require.False(t, got[0].a.Valid)
+	require.False(t, got[0].c.Valid)
+
+	// Row with id=456, col_b=NULL
+	require.Equal(t, int64(456), got[1].id.Int64)
+	require.False(t, got[1].b.Valid)
+	require.False(t, got[1].a.Valid)
+	require.False(t, got[1].c.Valid)
+
+	// Row with id=NULL, col_b="only-b"
+	require.False(t, got[2].id.Valid)
+	require.Equal(t, "only-b", got[2].b.String)
+	require.False(t, got[2].a.Valid)
+	require.False(t, got[2].c.Valid)
+}
+
+func TestAppenderWithColumnsArgCountMismatch(t *testing.T) {
+	c, db, conn, a := prepareAppenderWithColumns(t, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`, []string{"col_b", "id"})
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow("only-one-arg")
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsInvalidColumn(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"does_not_exist"})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsEmptyColumns(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsDuplicateColumns(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"col_b", "col_b"})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsSubsetGreaterThanTable(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"col_b", "id", "does_not_exist"})
+	require.Error(t, err)
 }
 
 func BenchmarkAppenderNested(b *testing.B) {
