@@ -70,7 +70,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/cdata"
 
-	"github.com/duckdb/duckdb-go/arrowmapping"
+	"github.com/duckdb/duckdb-go/v2/arrowmapping"
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
