@@ -278,8 +278,8 @@ func getDuckDBError(errMsg string) error {
 	errType := ErrorTypeInvalid
 
 	// Find the end of the prefix ("<error-type> Error: ").
-	if idx := strings.Index(errMsg, ": "); idx != -1 {
-		if typ, ok := errorPrefixMap[errMsg[:idx]]; ok {
+	if prefix, _, ok := strings.Cut(errMsg, ": "); ok {
+		if typ, ok := errorPrefixMap[prefix]; ok {
 			errType = typ
 		}
 	}
