@@ -1,7 +1,7 @@
 package duckdb
 
 import (
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // Type wraps the corresponding DuckDB type enumapping.

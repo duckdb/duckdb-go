@@ -3,7 +3,7 @@ package duckdb
 import (
 	"unsafe"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // vector storage of a DuckDB column.

@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // rows is a helper struct for scanning a duckdb result.

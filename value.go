@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func getValue(v mapping.Value) (any, error) {
