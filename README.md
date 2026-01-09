@@ -12,7 +12,7 @@ The first duckdb-go tag with that version is `v2.5.4`.
 Previous DuckDB versions:
 
 | DuckDB   | duckdb-go |
-|----------|-----------|
+| -------- | --------- |
 | `v1.4.3` | `v2.5.4`  |
 | `v1.4.2` | `v2.5.2`  |
 | `v1.4.1` | `v2.4.2`  |
@@ -39,10 +39,6 @@ go get github.com/duckdb/duckdb-go/v2@v2.5.0
 
 # Rewrite import paths
 gofmt -w -r '"github.com/marcboeker/go-duckdb/v2" -> "github.com/duckdb/duckdb-go/v2"' .
-
-# If you use the mapping or arrowmapping submodules, also run
-gofmt -w -r '"github.com/marcboeker/go-duckdb/mapping" -> "github.com/duckdb/duckdb-go/mapping"' .
-gofmt -w -r '"github.com/marcboeker/go-duckdb/arrowmapping" -> "github.com/duckdb/duckdb-go/arrowmapping"' .
 
 # Clean up
 go mod tidy
@@ -396,18 +392,8 @@ Additionally, automatic extension loading is enabled.
 
 ## Releasing a New DuckDB Version
 
-#### Update the Mappings
-
 1. Create a new branch.
-2. Update the `duckdb-go-bindings` dependencies in `mapping/mod.go` and `arrowmapping/mod.go`.
-3. Run `go mod tidy` inside `mapping` and inside `arrowmapping`.
-4. Commit and PR changes.
-5. Push two new tagged releases, `mapping/vx.x.x` and `arrowmapping/vx.x.x`.
-
-#### Update the Main Module
-
-1. Create a new branch.
-2. Update the `mapping` and `arrowmapping` dependencies in `go.mod`.
+2. Update `duckdb-go-bindings` in `go.mod`.
 3. Run `go mod tidy`.
 4. Update `DUCKDB_VERSION` in `Makefile`.
 5. Update the latest version in `README.md`.
@@ -418,8 +404,3 @@ Additionally, automatic extension loading is enabled.
 git tag <tagname>
 git push origin <tagname>
 ```
-
-Example PRs:
-
-- Update the Mappings: https://github.com/marcboeker/go-duckdb/pull/473
-- Update the Main Module: https://github.com/marcboeker/go-duckdb/pull/474

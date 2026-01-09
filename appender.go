@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"errors"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // Appender wraps functionality around the DuckDB appender.
