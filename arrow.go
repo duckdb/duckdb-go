@@ -301,3 +301,15 @@ func (r *recordReader) Err() error {
 	defer r.mu.Unlock()
 	return r.err
 }
+
+// DataChunkFromArrow moves a record batch into an existing DuckDB DataChunk.
+// Useful for implementing table functions that read from Arrow sources.
+func (a *Arrow) DataChunkFromArrow(rec arrow.RecordBatch, chunk DataChunk) error {
+	s, ed := arrowmapping.SchemaFromArrow(a.conn.conn, rec.Schema())
+	if err := errorDataError(ed); err != nil {
+		return fmt.Errorf("failed to convert arrow schema to duckdb schema: %w", err)
+	}
+	defer arrowmapping.DestroyArrowConvertedSchema(&s)
+	ed = arrowmapping.DataChunkFromArrow(a.conn.conn, rec, s, chunk.chunk)
+	return errorDataError(ed)
+}
