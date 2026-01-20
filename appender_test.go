@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -1103,6 +1104,7 @@ type (
 	appStructTableUDF struct {
 		n     int64
 		count int64
+		err   error // return this when done. Could be nil
 	}
 
 	appParStructTableUDF struct {
@@ -1113,11 +1115,9 @@ type (
 )
 
 func (udf *appStructTableUDF) ColumnInfos() []ColumnInfo {
-	t, _ := NewTypeInfo(TYPE_BIGINT)
-	t2, _ := NewTypeInfo(TYPE_UTINYINT)
 	return []ColumnInfo{
-		{Name: "id", T: t},
-		{Name: "uint8", T: t2},
+		{Name: "id", T: typeBigintTableUDF},
+		{Name: "uint8", T: typeUTinyintTableUDF},
 	}
 }
 
@@ -1125,7 +1125,7 @@ func (udf *appStructTableUDF) Init() {}
 
 func (udf *appStructTableUDF) FillRow(row Row) (bool, error) {
 	if udf.count >= udf.n {
-		return false, nil
+		return false, udf.err
 	}
 	udf.count++
 	err := SetRowValue(row, 0, udf.count)
@@ -1153,7 +1153,10 @@ func (udf *appStructTableUDF) Cardinality() *CardinalityInfo {
 }
 
 func (udf *appParStructTableUDF) ColumnInfos() []ColumnInfo {
-	return []ColumnInfo{{Name: "result", T: typeBigintTableUDF}}
+	return []ColumnInfo{
+		{Name: "result", T: typeBigintTableUDF},
+		{Name: "result2", T: typeBigintTableUDF},
+	}
 }
 
 func (udf *appParStructTableUDF) Init() ParallelTableSourceInfo {
@@ -1196,7 +1199,6 @@ func (udf *appParStructTableUDF) FillRow(localState any, row Row) (bool, error) 
 	}
 	err = SetRowValue(row, 1, state.start)
 	return true, err
-
 }
 
 func (udf *appParStructTableUDF) GetValue(r, c int) any {
@@ -1247,16 +1249,17 @@ func TestAppendParallelRowSource(t *testing.T) {
 		args[i] = &values[i]
 	}
 
-	count := 0
+	count := int64(0)
 	for r := 0; res.Next(); r++ {
 		require.NoError(t, res.Scan(args...))
 		for i, value := range values {
 			expected := f.GetValue(r, i)
-			require.Equal(t, expected, value, "incorrect value", r, i)
+			require.Equal(t, expected, value, "incorrect value at row %v column %v", r, i)
 		}
 		count++
 	}
 	cleanupAppender(t, c, db, con, a)
+	require.Equal(t, f.n, count, "number of rows should be equal")
 }
 
 func TestAppendParallelRowSourceSingle(t *testing.T) {
@@ -1289,18 +1292,17 @@ func TestAppendParallelRowSourceSingle(t *testing.T) {
 		args[i] = &values[i]
 	}
 
-	count := 0
+	count := int64(0)
 	for r := 0; res.Next(); r++ {
 		require.NoError(t, res.Scan(args...))
 		for i, value := range values {
 			expected := f.GetValue(r, i)
-			//fmt.Println(args)
-			//fmt.Println(expected, value)
 			require.Equal(t, expected, value, "incorrect value", r, i)
 		}
 		count++
 	}
 	cleanupAppender(t, c, db, con, a)
+	require.Equal(t, f.n, count, "number of rows should be correct")
 }
 
 func TestAppendRowSource(t *testing.T) {
@@ -1332,7 +1334,7 @@ func TestAppendRowSource(t *testing.T) {
 		args[i] = &values[i]
 	}
 
-	count := 0
+	count := int64(0)
 	for r := 0; res.Next(); r++ {
 		require.NoError(t, res.Scan(args...))
 		for i, value := range values {
@@ -1342,6 +1344,95 @@ func TestAppendRowSource(t *testing.T) {
 		count++
 	}
 	cleanupAppender(t, c, db, con, a)
+	require.Equal(t, f.n, count, "number of rows should be equal")
+}
+
+func TestAppendRowSourceError(t *testing.T) {
+	t.Parallel()
+	sc := `
+		CREATE TABLE test (
+			id BIGINT,
+			uint8 UTINYINT
+	  	)`
+	c, db, con, a := prepareAppender(t, sc)
+
+	f := appStructTableUDF{
+		n:   3000,
+		err: errors.New("Test test"),
+	}
+
+	err := a.AppendTableSource(NewAppenderRowSource(&f))
+	require.Equal(t, err, f.err)
+
+	err = a.Flush()
+	require.NoError(t, err)
+
+	// Verify results.
+	res, err := sql.OpenDB(c).QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+	require.NoError(t, err)
+
+	values := f.GetTypes()
+	args := make([]any, len(values))
+	for i := range values {
+		args[i] = &values[i]
+	}
+
+	count := int64(0)
+	for r := 0; res.Next(); r++ {
+		require.NoError(t, res.Scan(args...))
+		for i, value := range values {
+			expected := f.GetValue(r, i)
+			require.Equal(t, expected, value, "incorrect value", r, i)
+		}
+		count++
+	}
+	cleanupAppender(t, c, db, con, a)
+	require.Equal(t, f.n, count, "number of rows should be equal")
+}
+
+func roundDownChunk[T int64 | int](x T) T {
+	return (x / 2048) * 2048
+}
+
+func TestAppendChunkSourceError(t *testing.T) {
+	t.Parallel()
+	sc := `
+		CREATE TABLE test (
+			id BIGINT,
+	  	)`
+	c, db, con, a := prepareAppender(t, sc)
+
+	f := chunkIncTableUDF{
+		n:   3000,
+		err: errors.New("Test test"),
+	}
+	err := a.AppendTableSource(NewAppenderChunkSource(&f))
+	require.Equal(t, err, f.err)
+
+	err = a.Flush()
+	require.NoError(t, err)
+
+	// Verify results.
+	res, err := sql.OpenDB(c).QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+	require.NoError(t, err)
+
+	values := f.GetTypes()
+	args := make([]any, len(values))
+	for i := range values {
+		args[i] = &values[i]
+	}
+
+	count := int64(0)
+	for r := 0; res.Next(); r++ {
+		require.NoError(t, res.Scan(args...))
+		for i, value := range values {
+			expected := f.GetValue(r, i)
+			require.Equal(t, expected, value, "incorrect value", r, i)
+		}
+		count++
+	}
+	cleanupAppender(t, c, db, con, a)
+	require.Equal(t, roundDownChunk(f.n), count, "number of rows should be equal")
 }
 
 func BenchmarkAppenderNested(b *testing.B) {
@@ -1467,7 +1558,7 @@ func benchmarkAppenderSingle[T any](v T) func(*testing.B) {
 		tableSQL := fmt.Sprintf(createSingleTableSQL, types[reflect.TypeFor[T]()])
 		c, db, con, a := prepareAppender(b, tableSQL)
 
-		var vec [benchmarkRowsToAppend]T = [benchmarkRowsToAppend]T{}
+		vec := [benchmarkRowsToAppend]T{}
 		for i := range benchmarkRowsToAppend {
 			vec[i] = v
 		}

@@ -75,6 +75,7 @@ type (
 	chunkIncTableUDF struct {
 		n     int64
 		count int64
+		err   error // return this when done. Could be nil
 	}
 
 	unionTableUDF struct {
@@ -303,8 +304,10 @@ var (
 )
 
 var (
-	typeBigintTableUDF, _ = NewTypeInfo(TYPE_BIGINT)
-	typeStructTableUDF    = makeStructTableUDF()
+	typeBigintTableUDF, _   = NewTypeInfo(TYPE_BIGINT)
+	typeUTinyintTableUDF, _ = NewTypeInfo(TYPE_UTINYINT)
+
+	typeStructTableUDF = makeStructTableUDF()
 )
 
 func makeStructTableUDF() TypeInfo {
@@ -767,7 +770,10 @@ func (udf *chunkIncTableUDF) FillChunk(chunk DataChunk) error {
 	for ; i < size; i++ {
 		if udf.count >= udf.n {
 			err := chunk.SetSize(i)
-			return err
+			if err != nil {
+				return err
+			}
+			return udf.err
 		}
 		udf.count++
 		err := SetChunkValue(chunk, 0, i, udf.count)
