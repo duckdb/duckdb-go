@@ -229,6 +229,16 @@ func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
+func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	switch v := any(val).(type) {
+	case Bit:
+		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, v.Data)
+	default:
+		return castError(reflect.TypeOf(val).String(), reflectTypeBit.String())
+	}
+	return nil
+}
+
 func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	bytes, err := json.Marshal(val)
 	if err != nil {
@@ -463,6 +473,7 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	}
 }
 
+//nolint:gocyclo
 func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	name, inMap := unsupportedTypeToStringMap[vec.Type]
 	if inMap {
@@ -510,6 +521,8 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setBytes(vec, rowIdx, val)
 	case TYPE_BLOB:
 		return setBytes(vec, rowIdx, val)
+	case TYPE_BIT:
+		return setBit(vec, rowIdx, val)
 	case TYPE_DECIMAL:
 		return setDecimal(vec, rowIdx, val)
 	case TYPE_ENUM:
