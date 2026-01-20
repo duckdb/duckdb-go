@@ -148,7 +148,7 @@ type Bit struct {
 // NewBitFromString creates a Bit from a string of '0' and '1' characters.
 func NewBitFromString(s string) (Bit, error) {
 	if len(s) == 0 {
-		return Bit{}, nil
+		return Bit{}, fmt.Errorf("empty bit string")
 	}
 
 	numBytes := (len(s) + 7) / 8
@@ -182,7 +182,7 @@ func NewBitFromString(s string) (Bit, error) {
 // all be set to 1.
 func (b Bit) Validate() error {
 	if len(b.Data) <= 1 {
-		return nil
+		return fmt.Errorf("empty bit string")
 	}
 	padding := int(b.Data[0])
 	if padding > 7 {

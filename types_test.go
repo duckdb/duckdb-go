@@ -675,7 +675,8 @@ func TestBit(t *testing.T) {
 	})
 
 	t.Run("Validate", func(t *testing.T) {
-		require.NoError(t, Bit{}.Validate())
+		require.ErrorContains(t, Bit{}.Validate(), "empty bit string")
+		require.ErrorContains(t, (Bit{Data: []byte{0}}).Validate(), "empty bit string")
 		require.NoError(t, (Bit{Data: []byte{0, 0xAA}}).Validate())
 		require.NoError(t, (Bit{Data: []byte{6, 0xFE, 0xAB}}).Validate())
 
@@ -687,10 +688,9 @@ func TestBit(t *testing.T) {
 	})
 
 	t.Run("NewBitFromString", func(t *testing.T) {
-		// Empty string returns empty Bit.
-		b, err := NewBitFromString("")
-		require.NoError(t, err)
-		require.Equal(t, Bit{}, b)
+		// Empty string returns an error.
+		_, err := NewBitFromString("")
+		require.ErrorContains(t, err, "empty bit string")
 
 		// Invalid characters
 		_, err = NewBitFromString("10102")
@@ -713,11 +713,25 @@ func TestBit(t *testing.T) {
 			_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", bitVal)
 			require.NoError(t, err)
 
+			// Also test binding *Bit.
+			_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", &bitVal)
+			require.NoError(t, err)
+
 			var res Bit
 			err = db.QueryRow("SELECT bits FROM bit_bind_test WHERE bits = ?", bitVal).Scan(&res)
 			require.NoError(t, err)
 			require.Equal(t, bits, res.String())
 		}
+
+		// Test binding nil *Bit.
+		var nilBit *Bit
+		_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", nilBit)
+		require.NoError(t, err)
+
+		var res *Bit
+		err = db.QueryRow("SELECT bits FROM bit_bind_test WHERE bits IS NULL").Scan(&res)
+		require.NoError(t, err)
+		require.Nil(t, res)
 	})
 }
 

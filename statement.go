@@ -294,6 +294,9 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 }
 
 func (s *Stmt) bindBit(val *Bit, n int) (mapping.State, error) {
+	if err := val.Validate(); err != nil {
+		return mapping.StateError, err
+	}
 	bit := mapping.NewBit(val.Data)
 	defer mapping.DestroyBit(&bit)
 	v := mapping.CreateBit(bit)
@@ -446,6 +449,11 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.BindInterval(*s.preparedStmt, mapping.IdxT(n+1), i), nil
 	case Bit:
 		return s.bindBit(&v, n)
+	case *Bit:
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindBit(v, n)
 	case nil:
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}

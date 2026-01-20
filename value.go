@@ -214,6 +214,11 @@ func createPrimitiveValue(t mapping.Type, v any) (mapping.Value, error) {
 		lower, upper := mapping.HugeIntMembers(&vv)
 		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper))
 		return mapping.CreateUUID(uHugeInt), nil
+	case TYPE_BIT:
+		vv := v.(Bit)
+		bit := mapping.NewBit(vv.Data)
+		defer mapping.DestroyBit(&bit)
+		return mapping.CreateBit(bit), nil
 	}
 	return mapping.Value{}, unsupportedTypeError(typeToStringMap[t])
 }
@@ -363,6 +368,8 @@ func inferPrimitiveType(v any) (Type, any) {
 		t = TYPE_DECIMAL
 	case UUID:
 		t = TYPE_UUID
+	case Bit:
+		t = TYPE_BIT
 	case Map, OrderedMap:
 		// We special-case TYPE_MAP to disambiguate with structs passed as map[string]any.
 		t = TYPE_MAP

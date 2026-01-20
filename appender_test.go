@@ -868,12 +868,24 @@ func TestAppenderBit(t *testing.T) {
 
 	i := 0
 	for res.Next() {
-		var b Bit
+		var b *Bit
 		require.NoError(t, res.Scan(&b))
+		require.NotNil(t, b)
 		require.Equal(t, expected[i], b.String())
 		i++
 	}
 	require.Equal(t, len(expected), i)
+}
+
+func TestAppenderEmptyBit(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (b BIT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	require.ErrorContains(t, a.AppendRow(Bit{}), "empty bit string")
+
+	// Also test the bind path.
+	_, err := db.Exec(`INSERT INTO test VALUES (?)`, Bit{})
+	require.ErrorContains(t, err, "empty bit string")
 }
 
 func TestAppenderNullBit(t *testing.T) {
