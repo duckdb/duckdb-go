@@ -61,6 +61,10 @@ func getValue(v mapping.Value) (any, error) {
 	case TYPE_INTERVAL:
 		interval := mapping.GetInterval(v)
 		return getInterval(&interval), nil
+	case TYPE_BIT:
+		bit := mapping.GetBit(v)
+		defer mapping.DestroyBit(&bit)
+		return Bit{Data: mapping.BitMembers(&bit)}, nil
 	case TYPE_HUGEINT:
 		hugeInt := mapping.GetHugeInt(v)
 		return hugeIntToNative(&hugeInt), nil
@@ -372,7 +376,7 @@ func isPrimitiveType(t Type) bool {
 	case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION:
 		// Complex type.
 		return false
-	case TYPE_INVALID, TYPE_BIT, TYPE_ANY:
+	case TYPE_INVALID, TYPE_ANY:
 		// Invalid or unsupported.
 		return false
 	}
