@@ -12,11 +12,11 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.3.2 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.3.2 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.3.2 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.3.2 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.3.2 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.2.0-10.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.2.0-10.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.2.0-10.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.2.0-10.preview // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.2.0-10.preview // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.9.23+incompatible // indirect
 	github.com/klauspost/compress v1.18.2 // indirect
