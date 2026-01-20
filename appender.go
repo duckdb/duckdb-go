@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
+	"golang.org/x/sync/errgroup"
 )
 
 type (
@@ -428,70 +430,46 @@ func (a *Appender) initAppenderChunk() (*Appender, error) {
 	return a, nil
 }
 
+// AppendTableSource appends an AppenderSource to the appender. Repeatedly calls `FillRow` or
+// `FillChunk` depending on the AppenderSource type. If an error is returned, any data
+// inserted by that call to `FillRow` or `FillChunk` is ignored. Any previous calls to either
+// of these functions will be processed and appended.
 func (a *Appender) AppendTableSource(s AppenderSource) error {
+	var runParallel = func(maxThreads int, worker func() error) error {
+		g := errgroup.Group{}
+		for range min(maxThreads, runtime.GOMAXPROCS(-1)) {
+			g.Go(worker)
+		}
+		return g.Wait()
+	}
+
 	lock := &sync.Mutex{}
 	// projection is not used in chunk, so we must keep it a 1-1 mapping
 	columnCount := mapping.AppenderColumnCount(a.appender)
 	projection := make([]int, 0, columnCount)
-	for i := mapping.IdxT(0); i < columnCount; i++ {
+	for i := range columnCount {
 		projection = append(projection, int(i))
 	}
-	var x any = s
-	switch s := x.(type) {
+	switch s := s.(type) {
 	case rowAppenderSource:
 		s.Source.Init()
-		err := appenderRowThread(&parallelRowTSWrapper{s.Source}, lock, a.types, a.appender, projection)
-		if err != nil {
-			return err
-		}
+		return appenderRowThread(&parallelRowTSWrapper{s.Source}, lock, a.types, a.appender, projection)
 	case parallelRowAppenderSource:
-		wg := sync.WaitGroup{}
-
 		info := s.Source.Init()
-		threads := min(info.MaxThreads, runtime.GOMAXPROCS(-1))
-		var oerr error
-		for range threads {
-			wg.Add(1)
-			go func() {
-				err := appenderRowThread(s.Source, lock, a.types, a.appender, projection)
-				if err != nil {
-					oerr = err
-				}
-				wg.Done()
-			}()
-		}
-		wg.Wait()
-		if oerr != nil {
-			return oerr
-		}
+		return runParallel(info.MaxThreads, func() error {
+			return appenderRowThread(s.Source, lock, a.types, a.appender, projection)
+		})
 	case chunkAppenderSource:
 		s.Source.Init()
-		err := appenderChunkThread(&parallelChunkTSWrapper{s.Source}, lock, a.types, a.appender)
-		if err != nil {
-			return err
-		}
+		return appenderChunkThread(&parallelChunkTSWrapper{s.Source}, lock, a.types, a.appender)
 	case parallelChunkAppenderSource:
-		wg := sync.WaitGroup{}
-
 		info := s.Source.Init()
-		threads := min(info.MaxThreads, runtime.GOMAXPROCS(-1))
-		var oerr error
-		for range threads {
-			wg.Add(1)
-			go func() {
-				err := appenderChunkThread(s.Source, lock, a.types, a.appender)
-				if err != nil {
-					oerr = err
-				}
-				wg.Done()
-			}()
-		}
-		wg.Wait()
-		if oerr != nil {
-			return oerr
-		}
+		return runParallel(info.MaxThreads, func() error {
+			return appenderChunkThread(s.Source, lock, a.types, a.appender)
+		})
+	default:
+		return fmt.Errorf("unknown AppenderSource type: %T. Must be created with NewAppenderRowSource, NewAppenderParallelRowSource, NewAppenderChunkSource, or NewAppenderParallelChunkSource", s)
 	}
-	return nil
 }
 
 func (a *Appender) appendRowSlice(args []driver.Value) error {
@@ -579,6 +557,7 @@ func appenderRowThread(s ParallelRowTableSource, lock *sync.Mutex, types []mappi
 	if err != nil {
 		return err
 	}
+	defer chunk.close()
 	chunk.projection = projection
 
 	for {
@@ -587,13 +566,10 @@ func appenderRowThread(s ParallelRowTableSource, lock *sync.Mutex, types []mappi
 			rowIdx: 0,
 		}
 		var next bool
+		var err error
 		for ; row.rowIdx < mapping.IdxT(maxSize); row.rowIdx++ {
 			next, err = s.FillRow(lstate, row)
-			if err != nil {
-				chunk.close()
-				return err
-			}
-			if !next {
+			if err != nil || !next {
 				break
 			}
 		}
@@ -608,12 +584,14 @@ func appenderRowThread(s ParallelRowTableSource, lock *sync.Mutex, types []mappi
 			return err
 		}
 		lock.Unlock()
+		if err != nil {
+			return err
+		}
 		if !next {
 			break
 		}
 		chunk.reset(true)
 	}
-	chunk.close()
 	return nil
 }
 
@@ -624,15 +602,13 @@ func appenderChunkThread(s ParallelChunkTableSource, lock *sync.Mutex, types []m
 	if err != nil {
 		return err
 	}
-
+	defer chunk.close()
 	for {
 		err = s.FillChunk(lstate, chunk)
 		if err != nil {
 			return err
 		}
-
 		if chunk.GetSize() == 0 {
-			chunk.close()
 			break
 		}
 
@@ -646,7 +622,7 @@ func appenderChunkThread(s ParallelChunkTableSource, lock *sync.Mutex, types []m
 		lock.Unlock()
 		chunk.reset(true)
 	}
-	chunk.close()
+
 	return nil
 }
 
