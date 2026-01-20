@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"unsafe"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // secondsPerDay to calculate the days since 1970-01-01.
@@ -161,6 +161,15 @@ func setHugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return err
 	}
 	setPrimitive(vec, rowIdx, hi)
+	return nil
+}
+
+func setUhugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	uhi, err := inferUHugeInt(val)
+	if err != nil {
+		return err
+	}
+	setPrimitive(vec, rowIdx, uhi)
 	return nil
 }
 
@@ -443,6 +452,8 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setInterval(vec, rowIdx, val)
 	case TYPE_HUGEINT:
 		return setHugeint(vec, rowIdx, val)
+	case TYPE_UHUGEINT:
+		return setUhugeint(vec, rowIdx, val)
 	case TYPE_VARCHAR:
 		return setBytes(vec, rowIdx, val)
 	case TYPE_BLOB:

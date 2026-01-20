@@ -536,19 +536,18 @@ func TestBindWithoutResolvedParams(t *testing.T) {
 
 	d := time.Date(2022, 0o2, 0o7, 0, 0, 0, 0, time.UTC)
 
-	r := db.QueryRow(`SELECT a::VARCHAR, b::VARCHAR FROM (VALUES (?, ?)) t(a, b)`, d, d)
-	require.NoError(t, r.Err())
-
-	var a, b string
-	require.NoError(t, r.Scan(&a, &b))
-	require.Equal(t, "2022-02-07 00:00:00", a)
-	require.Equal(t, "2022-02-07 00:00:00", b)
+	r := db.QueryRow(`SELECT a, b FROM (VALUES (?::TIMESTAMPTZ, ?::TIMESTAMPTZ)) t(a, b)`, d, d)
+	var ta, tb time.Time
+	require.NoError(t, r.Scan(&ta, &tb))
+	require.True(t, ta.Equal(d))
+	require.True(t, tb.Equal(d))
 
 	s := []int32{1}
 	r = db.QueryRow(`SELECT a::VARCHAR, b::VARCHAR FROM (VALUES (?, ?)) t(a, b)`, s, s)
-	require.NoError(t, r.Scan(&a, &b))
-	require.Equal(t, "[1]", a)
-	require.Equal(t, "[1]", b)
+	var sa, sb string
+	require.NoError(t, r.Scan(&sa, &sb))
+	require.Equal(t, "[1]", sa)
+	require.Equal(t, "[1]", sb)
 
 	// Type without a fallback.
 	r = db.QueryRow(`SELECT a.strA FROM (VALUES (?),(?)) t(a)`, Union{Tag: "strA", Value: "a"}, Union{Tag: "strB", Value: "b"})
@@ -1130,18 +1129,29 @@ func TestInterrupt(t *testing.T) {
 	defer closeDbWrapper(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
 
 	// Long-running query.
 	go func() {
 		_, err := db.ExecContext(ctx, "CREATE TABLE t AS SELECT range::VARCHAR, random() AS k FROM range(1_000_000_000) ORDER BY k")
-		require.ErrorContains(t, err, "INTERRUPT Error: Interrupted!")
+		done <- err
 	}()
 
 	// Interrupt it.
 	time.Sleep(1 * time.Millisecond)
-	go func() {
-		cancel()
-	}()
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		require.ErrorContains(t, err, "INTERRUPT Error: Interrupted!")
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "TestInterrupt timed out waiting for query to finish after cancel")
+	}
 }
 
 func TestPreparedStatementColumnMethods(t *testing.T) {
@@ -1535,4 +1545,50 @@ func TestPreparedStatementAmbiguousColumnTypes(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestTimestampBinding(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	startTime := time.Date(2026, 1, 8, 12, 0, 0, 0, time.UTC)
+	endTime := time.Date(2026, 1, 8, 13, 0, 0, 0, time.UTC)
+
+	loc, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+
+	startTimeNY := time.Date(2026, 1, 8, 7, 0, 0, 0, loc)
+	endTimeNY := time.Date(2026, 1, 8, 8, 0, 0, 0, loc)
+
+	// Interpolated query returns 13 rows
+	interpolatedQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM generate_series(
+			time_bucket(INTERVAL '5 minutes', '%s'::timestamptz),
+			'%s'::timestamptz,
+			INTERVAL '5 minutes'
+		) AS t(epoch_ts)
+	`, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+
+	var expectedCount int
+
+	err = db.QueryRow(interpolatedQuery).Scan(&expectedCount)
+	require.NoError(t, err)
+	require.Equal(t, 13, expectedCount)
+
+	// Bound query returns 73 rows with parameters without the fix.
+	boundedQuery := `
+		SELECT COUNT(*) FROM generate_series(
+			time_bucket(INTERVAL '5 minutes', ?::timestamptz),
+			?::timestamptz,
+			INTERVAL '5 minutes'
+		) AS t(epoch_ts)
+	`
+
+	err = db.QueryRow(boundedQuery, startTime, endTime).Scan(&expectedCount)
+	require.NoError(t, err)
+	require.Equal(t, 13, expectedCount)
+
+	err = db.QueryRow(boundedQuery, startTimeNY, endTimeNY).Scan(&expectedCount)
+	require.NoError(t, err)
+	require.Equal(t, 13, expectedCount)
 }

@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"reflect"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // Conn holds a connection to a DuckDB database.
@@ -82,23 +82,30 @@ func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
-	prepared, err := conn.prepareStmts(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := prepared.QueryContext(ctx, args)
-	if err != nil {
-		errClose := prepared.Close()
-		if errClose != nil {
-			return nil, errors.Join(err, errClose)
+	var rows driver.Rows
+	err := runWithCtxInterrupt(ctx, conn.conn, func(wctx context.Context) error {
+		prepared, err := conn.prepareStmts(wctx, query)
+		if err != nil {
+			return err
 		}
+
+		r, err := prepared.QueryContext(wctx, args)
+		if err != nil {
+			errClose := prepared.Close()
+			if errClose != nil {
+				return errors.Join(err, errClose)
+			}
+			return err
+		}
+		// We must close the prepared statement after closing the rows r.
+		prepared.closeOnRowsClose = true
+		rows = r
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	// We must close the prepared statement after closing the rows r.
-	prepared.closeOnRowsClose = true
-
-	return r, nil
+	return rows, nil
 }
 
 // PrepareContext returns a prepared statement, bound to this connection.
@@ -117,7 +124,7 @@ func (conn *Conn) Prepare(query string) (driver.Stmt, error) {
 		return nil, errors.Join(errPrepare, errClosedCon)
 	}
 
-	stmts, count, err := conn.extractStmts(query)
+	stmts, count, err := conn.extractStmts(context.Background(), query)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +133,7 @@ func (conn *Conn) Prepare(query string) (driver.Stmt, error) {
 		return nil, errors.Join(errPrepare, errMissingPrepareContext)
 	}
 
-	return conn.prepareExtractedStmt(*stmts, 0)
+	return conn.prepareExtractedStmt(context.Background(), *stmts, 0)
 }
 
 // Begin is deprecated: Use BeginTx instead.
@@ -171,9 +178,12 @@ func (conn *Conn) Close() error {
 	return nil
 }
 
-func (conn *Conn) extractStmts(query string) (*mapping.ExtractedStatements, mapping.IdxT, error) {
-	var stmts mapping.ExtractedStatements
+func (conn *Conn) extractStmts(ctx context.Context, query string) (*mapping.ExtractedStatements, mapping.IdxT, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 
+	var stmts mapping.ExtractedStatements
 	count := mapping.ExtractStatements(conn.conn, query, &stmts)
 	if count == 0 {
 		errMsg := mapping.ExtractStatementsError(stmts)
@@ -187,7 +197,11 @@ func (conn *Conn) extractStmts(query string) (*mapping.ExtractedStatements, mapp
 	return &stmts, count, nil
 }
 
-func (conn *Conn) prepareExtractedStmt(extractedStmts mapping.ExtractedStatements, i mapping.IdxT) (*Stmt, error) {
+func (conn *Conn) prepareExtractedStmt(ctx context.Context, extractedStmts mapping.ExtractedStatements, i mapping.IdxT) (*Stmt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var stmt mapping.PreparedStatement
 	state := mapping.PrepareExtractedStatement(conn.conn, extractedStmts, i, &stmt)
 	if state == mapping.StateError {
@@ -195,7 +209,6 @@ func (conn *Conn) prepareExtractedStmt(extractedStmts mapping.ExtractedStatement
 		mapping.DestroyPrepare(&stmt)
 		return nil, err
 	}
-
 	return &Stmt{conn: conn, preparedStmt: &stmt}, nil
 }
 
@@ -204,15 +217,27 @@ func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error)
 		return nil, errClosedCon
 	}
 
-	stmts, count, errExtract := conn.extractStmts(query)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	stmts, count, errExtract := conn.extractStmts(ctx, query)
 	if errExtract != nil {
 		return nil, errExtract
 	}
 	defer mapping.DestroyExtracted(stmts)
 
 	for i := mapping.IdxT(0); i < count-1; i++ {
-		preparedStmt, err := conn.prepareExtractedStmt(*stmts, i)
+		preparedStmt, err := conn.prepareExtractedStmt(ctx, *stmts, i)
 		if err != nil {
+			return nil, err
+		}
+
+		// Check for cancellation between prepare and execute
+		if err := ctx.Err(); err != nil {
+			if closeErr := preparedStmt.Close(); closeErr != nil {
+				return nil, errors.Join(err, closeErr)
+			}
 			return nil, err
 		}
 
@@ -227,7 +252,7 @@ func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error)
 		}
 	}
 
-	return conn.prepareExtractedStmt(*stmts, count-1)
+	return conn.prepareExtractedStmt(ctx, *stmts, count-1)
 }
 
 // GetTableNames returns the tables names of a query.
@@ -240,7 +265,7 @@ func GetTableNames(c *sql.Conn, query string, qualified bool) ([]string, error) 
 		conn := driverConn.(*Conn)
 
 		// Validate query syntax first
-		stmts, _, errExtract := conn.extractStmts(query)
+		stmts, _, errExtract := conn.extractStmts(context.Background(), query)
 		if errExtract != nil {
 			return errExtract
 		}

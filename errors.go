@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func getError(errDriver, err error) error {
@@ -33,6 +33,10 @@ func structFieldError(actual, expected string) error {
 
 func columnCountError(actual, expected int) error {
 	return fmt.Errorf("%s: expected %d, got %d", columnCountErrMsg, expected, actual)
+}
+
+func setValueError(colIdx, rowIdx int, val any, err error) error {
+	return fmt.Errorf("%s: at row %d, col %d, val: %v: %w", setValueErrMsg, rowIdx, colIdx, val, err)
 }
 
 func paramIndexError(idx int, max uint64) error {
@@ -78,23 +82,24 @@ func duplicateNameError(name string) error {
 }
 
 const (
-	driverErrMsg                = "database/sql/driver"
-	castErrMsg                  = "cast error"
-	convertErrMsg               = "conversion error"
-	invalidInputErrMsg          = "invalid input"
-	structFieldErrMsg           = "invalid STRUCT field"
-	columnCountErrMsg           = "invalid column count"
-	unprojectedColumnErrMsg     = "unprojected column"
-	unsupportedTypeErrMsg       = "unsupported data type"
+	driverErrMsg            = "database/sql/driver"
+	castErrMsg              = "cast error"
+	convertErrMsg           = "conversion error"
+	invalidInputErrMsg      = "invalid input"
+	structFieldErrMsg       = "invalid STRUCT field"
+	columnCountErrMsg       = "invalid column count"
+	setValueErrMsg          = "failed to set value"
+	unprojectedColumnErrMsg = "unprojected column"
+	unsupportedTypeErrMsg   = "unsupported data type"
 	considerAppenderClearMsg    = "appended and not yet flushed data has been invalidated due to error: consider invoking Appender.Clear followed by Appender.Close in case of unexpected errors to avoid leaking memory"
 	invalidatedAppenderClearMsg = "failed to clear appender's internal data (this likely indicates a bug - please consider opening a bug report at https://github.com/duckdb/duckdb-go/issues)"
-	tryOtherFuncErrMsg          = "please try this function instead"
-	indexErrMsg                 = "index"
-	unknownTypeErrMsg           = "unknown type"
-	interfaceIsNilErrMsg        = "interface is nil"
-	duplicateNameErrMsg         = "duplicate name"
-	paramIndexErrMsg            = "invalid parameter index"
-	columnIndexErrMsg           = "invalid column index"
+	tryOtherFuncErrMsg      = "please try this function instead"
+	indexErrMsg             = "index"
+	unknownTypeErrMsg       = "unknown type"
+	interfaceIsNilErrMsg    = "interface is nil"
+	duplicateNameErrMsg     = "duplicate name"
+	paramIndexErrMsg        = "invalid parameter index"
+	columnIndexErrMsg       = "invalid column index"
 )
 
 var (
@@ -288,8 +293,8 @@ func getDuckDBError(errMsg string) error {
 	errType := ErrorTypeInvalid
 
 	// Find the end of the prefix ("<error-type> Error: ").
-	if idx := strings.Index(errMsg, ": "); idx != -1 {
-		if typ, ok := errorPrefixMap[errMsg[:idx]]; ok {
+	if prefix, _, ok := strings.Cut(errMsg, ": "); ok {
+		if typ, ok := errorPrefixMap[prefix]; ok {
 			errType = typ
 		}
 	}

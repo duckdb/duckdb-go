@@ -43,6 +43,7 @@ type testTypesRow struct {
 	Time_col         time.Time
 	Interval_col     Interval
 	Hugeint_col      *big.Int
+	Uhugeint_col     *big.Int
 	Varchar_col      string
 	Blob_col         []byte
 	Timestamp_s_col  time.Time
@@ -79,6 +80,7 @@ const testTypesTableSQL = `CREATE TABLE test (
 	Time_col TIME,
 	Interval_col INTERVAL,
 	Hugeint_col HUGEINT,
+	Uhugeint_col UHUGEINT,
 	Varchar_col VARCHAR,
 	Blob_col BLOB,
 	Timestamp_s_col TIMESTAMP_S,
@@ -166,6 +168,7 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 		timeUTC,
 		Interval{Days: 0, Months: int32(i), Micros: 0},
 		big.NewInt(int64(i)),
+		big.NewInt(int64(i)),
 		varcharCol,
 		[]byte{'A', 'B'},
 		ts,
@@ -221,6 +224,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			r.Time_col,
 			r.Interval_col,
 			r.Hugeint_col,
+			r.Uhugeint_col,
 			r.Varchar_col,
 			r.Blob_col,
 			r.Timestamp_s_col,
@@ -267,6 +271,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			&r.Time_col,
 			&r.Interval_col,
 			&r.Hugeint_col,
+			&r.Uhugeint_col,
 			&r.Varchar_col,
 			&r.Blob_col,
 			&r.Timestamp_s_col,
@@ -795,6 +800,58 @@ func TestHugeInt(t *testing.T) {
 		_, err = db.Exec("INSERT INTO hugeint_test VALUES(?)", tooHuge)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "too big for HUGEINT")
+	})
+}
+
+func TestUHugeInt(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("SELECT different UHUGEINT values", func(t *testing.T) {
+		tests := []string{
+			"0",
+			"1",
+			"9223372036854775807",
+			"18446744073709551615",
+			"340282366920938463463374607431768211455",
+		}
+		for _, test := range tests {
+			var res *big.Int
+			err := db.QueryRow(fmt.Sprintf("SELECT %s::UHUGEINT", test)).Scan(&res)
+			require.NoError(t, err)
+			require.Equal(t, test, res.String())
+		}
+	})
+
+	t.Run("UHUGEINT binding", func(t *testing.T) {
+		_, err := db.Exec("CREATE TABLE uhugeint_test (number UHUGEINT)")
+		require.NoError(t, err)
+
+		val := big.NewInt(1)
+		val.SetBit(val, 101, 1)
+		_, err = db.Exec("INSERT INTO uhugeint_test VALUES(?)", val)
+		require.NoError(t, err)
+
+		var res *big.Int
+		err = db.QueryRow("SELECT number FROM uhugeint_test WHERE number = ?", val).Scan(&res)
+		require.NoError(t, err)
+		require.Equal(t, val.String(), res.String())
+
+		tooHuge := big.NewInt(1)
+		tooHuge.SetBit(tooHuge, 129, 1)
+		_, err = db.Exec("INSERT INTO uhugeint_test VALUES(?)", tooHuge)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "too big for UHUGEINT")
+	})
+
+	t.Run("negative value rejected", func(t *testing.T) {
+		_, err := db.Exec("CREATE TABLE uhugeint_neg_test (number UHUGEINT)")
+		require.NoError(t, err)
+
+		negVal := big.NewInt(-1)
+		_, err = db.Exec("INSERT INTO uhugeint_neg_test VALUES(?)", negVal)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "negative")
 	})
 }
 

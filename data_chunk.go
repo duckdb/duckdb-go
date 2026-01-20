@@ -5,7 +5,7 @@ import "C"
 import (
 	"errors"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // DataChunk storage of a DuckDB table.
@@ -66,7 +66,13 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 	}
 
 	column := &chunk.columns[colIdx]
-	return column.setFn(column, mapping.IdxT(rowIdx), val)
+
+	err = column.setFn(column, mapping.IdxT(rowIdx), val)
+	if err != nil {
+		return setValueError(colIdx, rowIdx, val, err)
+	}
+
+	return nil
 }
 
 // SetChunkValue writes a single value to a column in a data chunk.

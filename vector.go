@@ -1,9 +1,11 @@
 package duckdb
 
 import (
+	"math/big"
+	"time"
 	"unsafe"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // vector storage of a DuckDB column.
@@ -71,6 +73,8 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 		vec.initInterval()
 	case TYPE_HUGEINT:
 		vec.initHugeint()
+	case TYPE_UHUGEINT:
+		vec.initUhugeint()
 	case TYPE_VARCHAR, TYPE_BLOB:
 		vec.initBytes(t)
 	case TYPE_DECIMAL:
@@ -179,7 +183,7 @@ func (vec *vector) initTS(t Type) {
 		return vec.getTS(t, rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
-		if val == nil {
+		if val == nil || val == (*time.Time)(nil) {
 			vec.setNull(rowIdx)
 			return nil
 		}
@@ -196,7 +200,7 @@ func (vec *vector) initDate() {
 		return vec.getDate(rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
-		if val == nil {
+		if val == nil || val == (*time.Time)(nil) {
 			vec.setNull(rowIdx)
 			return nil
 		}
@@ -213,7 +217,7 @@ func (vec *vector) initTime(t Type) {
 		return vec.getTime(rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
-		if val == nil {
+		if val == nil || val == (*time.Time)(nil) {
 			vec.setNull(rowIdx)
 			return nil
 		}
@@ -230,7 +234,7 @@ func (vec *vector) initInterval() {
 		return vec.getInterval(rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
-		if val == nil {
+		if val == nil || val == (*Interval)(nil) {
 			vec.setNull(rowIdx)
 			return nil
 		}
@@ -247,13 +251,30 @@ func (vec *vector) initHugeint() {
 		return vec.getHugeint(rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
-		if val == nil {
+		if val == nil || val == (*big.Int)(nil) {
 			vec.setNull(rowIdx)
 			return nil
 		}
 		return setHugeint(vec, rowIdx, val)
 	}
 	vec.Type = TYPE_HUGEINT
+}
+
+func (vec *vector) initUhugeint() {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+		if vec.getNull(rowIdx) {
+			return nil
+		}
+		return vec.getUhugeint(rowIdx)
+	}
+	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
+		if val == nil || val == (*big.Int)(nil) {
+			vec.setNull(rowIdx)
+			return nil
+		}
+		return setUhugeint(vec, rowIdx, val)
+	}
+	vec.Type = TYPE_UHUGEINT
 }
 
 func (vec *vector) initBytes(t Type) {

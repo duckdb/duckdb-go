@@ -6,7 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // fnGetVectorValue is the getter callback function for any (nested) vector.
@@ -123,6 +123,11 @@ func getInterval(interval *mapping.Interval) Interval {
 func (vec *vector) getHugeint(rowIdx mapping.IdxT) *big.Int {
 	hugeInt := getPrimitive[mapping.HugeInt](vec, rowIdx)
 	return hugeIntToNative(&hugeInt)
+}
+
+func (vec *vector) getUhugeint(rowIdx mapping.IdxT) *big.Int {
+	uhugeInt := getPrimitive[mapping.UHugeInt](vec, rowIdx)
+	return uhugeIntToNative(&uhugeInt)
 }
 
 func (vec *vector) getBytes(rowIdx mapping.IdxT) any {

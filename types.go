@@ -13,7 +13,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/google/uuid"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // duckdb-go exports the following type wrappers:
@@ -167,37 +167,33 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 	case uint8:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int8:
-		hi = mapping.NewHugeInt(uint64(v), 0)
+		hi = mapping.NewHugeInt(uint64(v), int64(v)>>63)
 	case uint16:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int16:
-		hi = mapping.NewHugeInt(uint64(v), 0)
+		hi = mapping.NewHugeInt(uint64(v), int64(v)>>63)
 	case uint32:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int32:
-		hi = mapping.NewHugeInt(uint64(v), 0)
+		hi = mapping.NewHugeInt(uint64(v), int64(v)>>63)
 	case uint64:
 		hi = mapping.NewHugeInt(v, 0)
 	case int64:
-		hi, err = hugeIntFromNative(big.NewInt(v))
-		if err != nil {
-			return mapping.HugeInt{}, err
-		}
+		hi = mapping.NewHugeInt(uint64(v), v>>63)
 	case uint:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int:
-		hi, err = hugeIntFromNative(big.NewInt(int64(v)))
-		if err != nil {
-			return mapping.HugeInt{}, err
-		}
+		hi = mapping.NewHugeInt(uint64(v), int64(v)>>63)
 	case float32:
-		hi, err = hugeIntFromNative(big.NewInt(int64(v)))
-		if err != nil {
+		bigFloat := new(big.Float).SetFloat64(float64(v))
+		bigInt, _ := bigFloat.Int(nil)
+		if hi, err = hugeIntFromNative(bigInt); err != nil {
 			return mapping.HugeInt{}, err
 		}
 	case float64:
-		hi, err = hugeIntFromNative(big.NewInt(int64(v)))
-		if err != nil {
+		bigFloat := new(big.Float).SetFloat64(v)
+		bigInt, _ := bigFloat.Int(nil)
+		if hi, err = hugeIntFromNative(bigInt); err != nil {
 			return mapping.HugeInt{}, err
 		}
 	case *big.Int:
@@ -218,7 +214,106 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 		return mapping.HugeInt{}, castError(reflect.TypeOf(val).String(), reflectTypeHugeInt.String())
 	}
 
-	return hi, nil
+	return hi, err
+}
+
+func uhugeIntToNative(uhi *mapping.UHugeInt) *big.Int {
+	lower, upper := mapping.UHugeIntMembers(uhi)
+	i := new(big.Int).SetUint64(upper)
+	i.Lsh(i, 64)
+	i.Add(i, new(big.Int).SetUint64(lower))
+	return i
+}
+
+func uhugeIntFromNative(i *big.Int) (mapping.UHugeInt, error) {
+	if i.Sign() < 0 {
+		return mapping.UHugeInt{}, fmt.Errorf("big.Int(%s) is negative, cannot convert to UHUGEINT", i.String())
+	}
+
+	d := big.NewInt(1)
+	d.Lsh(d, 64)
+
+	q := new(big.Int)
+	r := new(big.Int)
+	q.DivMod(i, d, r)
+
+	if !q.IsUint64() {
+		return mapping.UHugeInt{}, fmt.Errorf("big.Int(%s) is too big for UHUGEINT", i.String())
+	}
+
+	return mapping.NewUHugeInt(r.Uint64(), q.Uint64()), nil
+}
+
+func inferUHugeInt(val any) (mapping.UHugeInt, error) {
+	var err error
+	var uhi mapping.UHugeInt
+	switch v := val.(type) {
+	case uint8:
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case int8:
+		if v < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
+		}
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case uint16:
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case int16:
+		if v < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
+		}
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case uint32:
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case int32:
+		if v < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
+		}
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case uint64:
+		uhi = mapping.NewUHugeInt(v, 0)
+	case int64:
+		if v < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
+		}
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case uint:
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case int:
+		if v < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
+		}
+		uhi = mapping.NewUHugeInt(uint64(v), 0)
+	case float32:
+		bigFloat := new(big.Float).SetFloat64(float64(v))
+		bigInt, _ := bigFloat.Int(nil)
+		if uhi, err = uhugeIntFromNative(bigInt); err != nil {
+			return mapping.UHugeInt{}, err
+		}
+	case float64:
+		bigFloat := new(big.Float).SetFloat64(v)
+		bigInt, _ := bigFloat.Int(nil)
+		if uhi, err = uhugeIntFromNative(bigInt); err != nil {
+			return mapping.UHugeInt{}, err
+		}
+	case *big.Int:
+		if v == nil {
+			return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
+		}
+		if uhi, err = uhugeIntFromNative(v); err != nil {
+			return mapping.UHugeInt{}, err
+		}
+	case Decimal:
+		if v.Value == nil {
+			return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
+		}
+		if uhi, err = uhugeIntFromNative(v.Value); err != nil {
+			return mapping.UHugeInt{}, err
+		}
+	default:
+		return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
+	}
+
+	return uhi, nil
 }
 
 type Map map[any]any

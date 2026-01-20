@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // rows is a helper struct for scanning a duckdb result.
@@ -126,7 +126,7 @@ func (r *rows) getScanType(logicalType mapping.LogicalType, index mapping.IdxT) 
 		return reflectTypeTime
 	case TYPE_INTERVAL:
 		return reflectTypeInterval
-	case TYPE_HUGEINT:
+	case TYPE_HUGEINT, TYPE_UHUGEINT:
 		return reflectTypeBigInt
 	case TYPE_VARCHAR, TYPE_ENUM:
 		return reflectTypeString

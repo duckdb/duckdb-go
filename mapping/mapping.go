@@ -1,5 +1,3 @@
-//go:build duckdb_use_lib || duckdb_use_static_lib
-
 package mapping
 
 import (
@@ -345,13 +343,13 @@ var (
 
 var (
 	ResultGetChunk   = bindings.ResultGetChunk
-	ResultChunkCount = bindings.ResultChunkCount
 	ResultReturnType = bindings.ResultReturnType
+	// Deprecated: See C API documentation.
+	ResultChunkCount = bindings.ResultChunkCount //nolint:staticcheck
 )
 
-// Safe fetch functions.
-
-var ValueInt64 = bindings.ValueInt64
+// Deprecated: See C API documentation.
+var ValueInt64 = bindings.ValueInt64 //nolint:staticcheck
 
 // Helpers.
 

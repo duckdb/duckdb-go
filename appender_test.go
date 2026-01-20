@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
 	"os"
@@ -146,11 +147,28 @@ func prepareAppender[T require.TestingT](t T, appenderType, createQuery string) 
 	return c, db, conn, a
 }
 
-func cleanupAppender[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn, a *Appender) {
-	closeAppenderWrapper(t, a)
+func prepareAppenderWithColumns[T require.TestingT](t T, query string, columns []string) (*Connector, *sql.DB, driver.Conn, *Appender) {
+	c := newConnectorWrapper(t, ``, nil)
+
+	db := sql.OpenDB(c)
+	_, err := db.Exec(query)
+	require.NoError(t, err)
+
+	conn := openDriverConnWrapper(t, c)
+	a, err := NewAppenderWithColumns(conn, "", "", "test", columns)
+	require.NoError(t, err)
+	return c, db, conn, a
+}
+
+func cleanupDb[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn) {
 	closeDriverConnWrapper(t, &conn)
 	closeDbWrapper(t, db)
 	closeConnectorWrapper(t, c)
+}
+
+func cleanupAppender[T require.TestingT](t T, c *Connector, db *sql.DB, conn driver.Conn, a *Appender) {
+	closeAppenderWrapper(t, a)
+	cleanupDb(t, c, db, conn)
 }
 
 func TestAppenderClose(t *testing.T) {
@@ -517,18 +535,30 @@ func TestAppenderUUID(t *testing.T) {
 	}
 }
 
-func newAppenderHugeIntTest[T numericType](val T, db *sql.DB, a *Appender) func(t *testing.T) {
+func newAppenderHugeIntTest[T numericType](val T, expected *big.Int, db *sql.DB, a *Appender) func(t *testing.T) {
 	return func(t *testing.T) {
-		typeName := reflect.TypeOf(val).String()
-		require.NoError(t, a.AppendRow(val, typeName))
+		require.NoError(t, a.AppendRow(val, t.Name()))
 		require.NoError(t, a.Flush())
 
-		// Verify results.
-		res := db.QueryRowContext(context.Background(), `SELECT val FROM test WHERE id == ?`, typeName)
+		res := db.QueryRowContext(context.Background(), `SELECT val FROM test WHERE id == ?`, t.Name())
 
 		var r *big.Int
 		require.NoError(t, res.Scan(&r))
-		require.Equal(t, big.NewInt(int64(val)), r)
+		require.Equal(t, expected, r)
+	}
+}
+
+func newAppenderHugeIntFloatTest[T float32 | float64](val T, lower, upper *big.Int, db *sql.DB, a *Appender) func(t *testing.T) {
+	return func(t *testing.T) {
+		require.NoError(t, a.AppendRow(val, t.Name()))
+		require.NoError(t, a.Flush())
+
+		res := db.QueryRowContext(context.Background(), `SELECT val FROM test WHERE id == ?`, t.Name())
+
+		var r *big.Int
+		require.NoError(t, res.Scan(&r))
+		require.GreaterOrEqual(t, r.Cmp(lower), 0, "result %v should be >= lower bound %v", r, lower)
+		require.LessOrEqual(t, r.Cmp(upper), 0, "result %v should be <= upper bound %v", r, upper)
 	}
 }
 
@@ -537,16 +567,42 @@ func TestAppenderHugeInt(t *testing.T) {
 	defer cleanupAppender(t, c, db, conn, a)
 
 	tests := map[string]func(t *testing.T){
-		"int8":    newAppenderHugeIntTest[int8](1, db, a),
-		"int16":   newAppenderHugeIntTest[int16](2, db, a),
-		"int32":   newAppenderHugeIntTest[int32](3, db, a),
-		"int64":   newAppenderHugeIntTest[int64](4, db, a),
-		"uint8":   newAppenderHugeIntTest[uint8](5, db, a),
-		"uint16":  newAppenderHugeIntTest[uint16](6, db, a),
-		"uint32":  newAppenderHugeIntTest[uint32](7, db, a),
-		"uint64":  newAppenderHugeIntTest[uint64](8, db, a),
-		"float32": newAppenderHugeIntTest[float32](9, db, a),
-		"float64": newAppenderHugeIntTest[float64](10, db, a),
+		"max_int8":   newAppenderHugeIntTest[int8](math.MaxInt8, big.NewInt(math.MaxInt8), db, a),
+		"max_int16":  newAppenderHugeIntTest[int16](math.MaxInt16, big.NewInt(math.MaxInt16), db, a),
+		"max_int32":  newAppenderHugeIntTest[int32](math.MaxInt32, big.NewInt(math.MaxInt32), db, a),
+		"max_int64":  newAppenderHugeIntTest[int64](math.MaxInt64, big.NewInt(math.MaxInt64), db, a),
+		"max_uint8":  newAppenderHugeIntTest[uint8](math.MaxUint8, big.NewInt(math.MaxUint8), db, a),
+		"max_uint16": newAppenderHugeIntTest[uint16](math.MaxUint16, big.NewInt(math.MaxUint16), db, a),
+		"max_uint32": newAppenderHugeIntTest[uint32](math.MaxUint32, big.NewInt(math.MaxUint32), db, a),
+		"max_uint64": newAppenderHugeIntTest[uint64](math.MaxUint64, new(big.Int).SetUint64(math.MaxUint64), db, a),
+		"min_int8":   newAppenderHugeIntTest[int8](math.MinInt8, big.NewInt(math.MinInt8), db, a),
+		"min_int16":  newAppenderHugeIntTest[int16](math.MinInt16, big.NewInt(math.MinInt16), db, a),
+		"min_int32":  newAppenderHugeIntTest[int32](math.MinInt32, big.NewInt(math.MinInt32), db, a),
+		"min_int64":  newAppenderHugeIntTest[int64](math.MinInt64, big.NewInt(math.MinInt64), db, a),
+		// Use values > int64 max (~9.2e18) to test the overflow fix
+		"float32": newAppenderHugeIntFloatTest[float32](1e19, big.NewInt(9e18), new(big.Int).Mul(big.NewInt(11), big.NewInt(1e18)), db, a),
+		"float64": newAppenderHugeIntFloatTest[float64](1e20, new(big.Int).Mul(big.NewInt(99), big.NewInt(1e18)), new(big.Int).Mul(big.NewInt(101), big.NewInt(1e18)), db, a),
+	}
+	for name, test := range tests {
+		t.Run(name, test)
+	}
+}
+
+func TestAppenderUHugeInt(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (val UHUGEINT, id VARCHAR)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	tests := map[string]func(t *testing.T){
+		"max_uint8":  newAppenderHugeIntTest[uint8](math.MaxUint8, big.NewInt(math.MaxUint8), db, a),
+		"max_uint16": newAppenderHugeIntTest[uint16](math.MaxUint16, big.NewInt(math.MaxUint16), db, a),
+		"max_uint32": newAppenderHugeIntTest[uint32](math.MaxUint32, big.NewInt(math.MaxUint32), db, a),
+		"max_uint64": newAppenderHugeIntTest[uint64](math.MaxUint64, new(big.Int).SetUint64(math.MaxUint64), db, a),
+		"max_int8":   newAppenderHugeIntTest[int8](math.MaxInt8, big.NewInt(math.MaxInt8), db, a),
+		"max_int16":  newAppenderHugeIntTest[int16](math.MaxInt16, big.NewInt(math.MaxInt16), db, a),
+		"max_int32":  newAppenderHugeIntTest[int32](math.MaxInt32, big.NewInt(math.MaxInt32), db, a),
+		"max_int64":  newAppenderHugeIntTest[int64](math.MaxInt64, big.NewInt(math.MaxInt64), db, a),
+		"float32":    newAppenderHugeIntFloatTest[float32](1e19, big.NewInt(9e18), new(big.Int).Mul(big.NewInt(11), big.NewInt(1e18)), db, a),
+		"float64":    newAppenderHugeIntFloatTest[float64](1e20, new(big.Int).Mul(big.NewInt(99), big.NewInt(1e18)), new(big.Int).Mul(big.NewInt(101), big.NewInt(1e18)), db, a),
 	}
 	for name, test := range tests {
 		t.Run(name, test)
@@ -602,6 +658,125 @@ func TestAppenderTime(t *testing.T) {
 	require.NoError(t, res.Scan(&r))
 	base := time.Date(1, time.January, 1, 11, 42, 23, 123000, time.UTC)
 	require.Equal(t, base.UnixMicro(), r.UnixMicro())
+}
+
+func TestAppenderNullTimestampTZ(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (ts TIMESTAMPTZ)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *time.Time.
+	var nilTime *time.Time
+	require.NoError(t, a.AppendRow(nilTime))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT ts FROM test`)
+
+	var r *time.Time
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullDate(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (d DATE)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *time.Time.
+	var nilTime *time.Time
+	require.NoError(t, a.AppendRow(nilTime))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT d FROM test`)
+
+	var r *time.Time
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullTime(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t TIME)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *time.Time.
+	var nilTime *time.Time
+	require.NoError(t, a.AppendRow(nilTime))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT t FROM test`)
+
+	var r *time.Time
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullTimeTZ(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t TIMETZ)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *time.Time.
+	var nilTime *time.Time
+	require.NoError(t, a.AppendRow(nilTime))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT t FROM test`)
+
+	var r *time.Time
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullInterval(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (i INTERVAL)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *Interval.
+	var nilInterval *Interval
+	require.NoError(t, a.AppendRow(nilInterval))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT i FROM test`)
+
+	var r *Interval
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullHugeInt(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (h HUGEINT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *big.Int.
+	var nilBigInt *big.Int
+	require.NoError(t, a.AppendRow(nilBigInt))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT h FROM test`)
+
+	var r *big.Int
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullUHugeInt(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (h UHUGEINT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *big.Int.
+	var nilBigInt *big.Int
+	require.NoError(t, a.AppendRow(nilBigInt))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT h FROM test`)
+
+	var r *big.Int
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
 }
 
 func TestAppenderTimeTZ(t *testing.T) {
@@ -1208,6 +1383,110 @@ func TestAppenderInterrupt(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func TestAppenderWithColumnsBasic(t *testing.T) {
+	c, db, conn, a := prepareAppenderWithColumns(t, `
+        CREATE TABLE test (
+            id INTEGER,
+            col_a INTEGER,
+            col_b VARCHAR,
+            col_c DOUBLE
+        );`, []string{"col_b", "id"})
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append rows according to columns slice: (col_b, id)
+	require.NoError(t, a.AppendRow("hello", 123))
+	require.NoError(t, a.AppendRow(nil, 456))
+	require.NoError(t, a.AppendRow("only-b", nil))
+	require.NoError(t, a.Flush())
+
+	// Verify: non-selected columns (col_a, col_c) should be NULL
+	rows, err := db.Query("SELECT id, col_a, col_b, col_c FROM test ORDER BY id NULLS LAST, col_b NULLS LAST")
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	type Result struct {
+		id sql.NullInt64
+		a  sql.NullInt64
+		b  sql.NullString
+		c  sql.NullFloat64
+	}
+	var got []Result
+	for rows.Next() {
+		var r Result
+		require.NoError(t, rows.Scan(&r.id, &r.a, &r.b, &r.c))
+		got = append(got, r)
+	}
+	require.Len(t, got, 3)
+
+	// Row with id=123, col_b="hello"
+	require.Equal(t, int64(123), got[0].id.Int64)
+	require.Equal(t, "hello", got[0].b.String)
+	require.False(t, got[0].a.Valid)
+	require.False(t, got[0].c.Valid)
+
+	// Row with id=456, col_b=NULL
+	require.Equal(t, int64(456), got[1].id.Int64)
+	require.False(t, got[1].b.Valid)
+	require.False(t, got[1].a.Valid)
+	require.False(t, got[1].c.Valid)
+
+	// Row with id=NULL, col_b="only-b"
+	require.False(t, got[2].id.Valid)
+	require.Equal(t, "only-b", got[2].b.String)
+	require.False(t, got[2].a.Valid)
+	require.False(t, got[2].c.Valid)
+}
+
+func TestAppenderWithColumnsArgCountMismatch(t *testing.T) {
+	c, db, conn, a := prepareAppenderWithColumns(t, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`, []string{"col_b", "id"})
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow("only-one-arg")
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsInvalidColumn(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"does_not_exist"})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsEmptyColumns(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsDuplicateColumns(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"col_b", "col_b"})
+	require.Error(t, err)
+}
+
+func TestNewAppenderWithColumnsSubsetGreaterThanTable(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	db := sql.OpenDB(c)
+	createTable(t, db, `CREATE TABLE test (id INTEGER, col_b VARCHAR)`)
+	conn := openDriverConnWrapper(t, c)
+	defer func() { cleanupDb(t, c, db, conn) }()
+	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{"col_b", "id", "does_not_exist"})
+	require.Error(t, err)
 }
 
 func BenchmarkAppenderNested(b *testing.B) {

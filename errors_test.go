@@ -236,6 +236,13 @@ func TestErrAppender(t *testing.T) {
 		err := a.AppendRow([]int32{1, 2})
 		testError(t, err, errAppenderAppendRow.Error(), invalidInputErrMsg)
 	})
+
+	t.Run(setValueErrMsg, func(t *testing.T) {
+		c, db, conn, a := prepareAppender(t, `CREATE TABLE test (col float)`)
+		defer cleanupAppender(t, c, db, conn, a)
+		err := a.AppendRow("test")
+		testError(t, err, errAppenderAppendRow.Error(), setValueErrMsg)
+	})
 }
 
 func TestErrAppend(t *testing.T) {

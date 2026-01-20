@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/duckdb/duckdb-go/mapping"
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 type testTypeValues struct {
@@ -35,6 +35,7 @@ var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_TIME:         {input: `TIME '1992-09-20 11:30:00.123456'`, output: `0001-01-01 11:30:00.123456 +0000 UTC`},
 	TYPE_INTERVAL:     {input: `INTERVAL 1 YEAR`, output: `{0 12 0}`},
 	TYPE_HUGEINT:      {input: `44::HUGEINT`, output: `44`},
+	TYPE_UHUGEINT:     {input: `45::UHUGEINT`, output: `45`},
 	TYPE_VARCHAR:      {input: `'hello world'::VARCHAR`, output: `hello world`},
 	TYPE_BLOB:         {input: `'\xAA'::BLOB`, output: `[170]`},
 	TYPE_TIMESTAMP_S:  {input: `TIMESTAMP_S '1992-09-20 11:30:00'`, output: `1992-09-20 11:30:00 +0000 UTC`},

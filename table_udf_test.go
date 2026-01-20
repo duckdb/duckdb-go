@@ -229,8 +229,14 @@ var (
 		},
 		{
 			udf:         &constTableUDF[*big.Int]{value: big.NewInt(10000000000000000), t: TYPE_HUGEINT},
-			name:        "constTableUDF_bigint",
+			name:        "constTableUDF_hugeint",
 			query:       `SELECT * FROM %s(10000000000000000)`,
+			resultCount: 1,
+		},
+		{
+			udf:         &constTableUDF[*big.Int]{value: big.NewInt(10000000000000000), t: TYPE_UHUGEINT},
+			name:        "constTableUDF_uhugeint",
+			query:       `SELECT * FROM %s(10000000000000000::UHUGEINT)`,
 			resultCount: 1,
 		},
 		{
