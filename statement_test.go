@@ -1592,3 +1592,53 @@ func TestTimestampBinding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 13, expectedCount)
 }
+
+func TestBindStringWithNullBytes(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE null_byte_test (id INTEGER PRIMARY KEY, text_value VARCHAR)`)
+
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{"multiple nulls", "a\x00b\x00c\x00"},
+		{"null in middle", "Hello\x00World"},
+		{"null after first char", "A\x00BCDEFG"},
+		{"only null", "\x00"},
+		{"null at start", "\x00Hello"},
+		{"null at end", "Hello\x00"},
+	}
+
+	for i, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := db.Exec("INSERT INTO null_byte_test (id, text_value) VALUES (?, ?)", i, tc.input)
+			require.NoError(t, err)
+
+			var got string
+			err = db.QueryRow("SELECT text_value FROM null_byte_test WHERE id = ?", i).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, tc.input, got)
+			require.Len(t, got, len(tc.input))
+		})
+	}
+}
+
+func TestBindBlobWithNullBytes(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE blob_null_test (id INTEGER, data BLOB)`)
+
+	// []byte binds via BindBlob which handles binary data correctly
+	input := []byte("Hello\x00World\x00!")
+
+	_, err := db.Exec("INSERT INTO blob_null_test VALUES (1, ?)", input)
+	require.NoError(t, err)
+
+	var got []byte
+	err = db.QueryRow("SELECT data FROM blob_null_test WHERE id = 1").Scan(&got)
+	require.NoError(t, err)
+	require.Equal(t, input, got)
+}

@@ -259,9 +259,9 @@ func (s *Stmt) bindTime(val driver.NamedValue, t Type, n int) (mapping.State, er
 func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
 	switch v := val.Value.(type) {
 	case []byte:
-		return mapping.BindVarchar(*s.preparedStmt, mapping.IdxT(n+1), string(v)), nil
+		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), string(v), mapping.IdxT(len(v))), nil
 	case string:
-		return mapping.BindVarchar(*s.preparedStmt, mapping.IdxT(n+1), v), nil
+		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), v, mapping.IdxT(len(v))), nil
 	case nil:
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}
@@ -276,7 +276,8 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	}
 
 	if ss, ok := val.Value.(fmt.Stringer); ok {
-		return mapping.BindVarchar(*s.preparedStmt, mapping.IdxT(n+1), ss.String()), nil
+		str := ss.String()
+		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), str, mapping.IdxT(len(str))), nil
 	}
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
@@ -410,7 +411,7 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 	case float64:
 		return mapping.BindDouble(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case string:
-		return mapping.BindVarchar(*s.preparedStmt, mapping.IdxT(n+1), v), nil
+		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), v, mapping.IdxT(len(v))), nil
 	case []byte:
 		return mapping.BindBlob(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case Interval:
