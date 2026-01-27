@@ -53,7 +53,6 @@ var unsupportedTypeToStringMap = map[Type]string{
 	TYPE_INVALID: "INVALID",
 	TYPE_BIT:     "BIT",
 	TYPE_ANY:     "ANY",
-	TYPE_BIGNUM:  "BIGNUM",
 }
 
 var typeToStringMap = map[Type]string{

@@ -44,6 +44,7 @@ type testTypesRow struct {
 	Interval_col     Interval
 	Hugeint_col      *big.Int
 	Uhugeint_col     *big.Int
+	Bignum_col       *big.Int
 	Varchar_col      string
 	Blob_col         []byte
 	Timestamp_s_col  time.Time
@@ -81,6 +82,7 @@ const testTypesTableSQL = `CREATE TABLE test (
 	Interval_col INTERVAL,
 	Hugeint_col HUGEINT,
 	Uhugeint_col UHUGEINT,
+	Bignum_col BIGNUM,
 	Varchar_col VARCHAR,
 	Blob_col BLOB,
 	Timestamp_s_col TIMESTAMP_S,
@@ -107,6 +109,14 @@ func (r *testTypesRow) toUTC() {
 	r.Timestamp_ns_col = r.Timestamp_ns_col.UTC()
 	// Time_tz_col preserves timezone, no UTC conversion.
 	r.Timestamp_tz_col = r.Timestamp_tz_col.UTC()
+}
+
+func (r *testTypesRow) normalizeBigInt() {
+	// Normalize big.Int zero values to have consistent internal representation.
+	// SetBytes on empty/zero data creates abs: [] while NewInt(0) creates abs: nil.
+	if r.Bignum_col != nil && r.Bignum_col.Sign() == 0 {
+		r.Bignum_col = big.NewInt(0)
+	}
 }
 
 func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
@@ -169,6 +179,7 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 		Interval{Days: 0, Months: int32(i), Micros: 0},
 		big.NewInt(int64(i)),
 		big.NewInt(int64(i)),
+		big.NewInt(int64(i)),
 		varcharCol,
 		[]byte{'A', 'B'},
 		ts,
@@ -225,6 +236,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			r.Interval_col,
 			r.Hugeint_col,
 			r.Uhugeint_col,
+			r.Bignum_col,
 			r.Varchar_col,
 			r.Blob_col,
 			r.Timestamp_s_col,
@@ -272,6 +284,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			&r.Interval_col,
 			&r.Hugeint_col,
 			&r.Uhugeint_col,
+			&r.Bignum_col,
 			&r.Varchar_col,
 			&r.Blob_col,
 			&r.Timestamp_s_col,
@@ -311,6 +324,7 @@ func TestTypes(t *testing.T) {
 			"Time_tz_col mismatch: expected %v, got %v", expectedRows[i].Time_tz_col, actualRows[i].Time_tz_col)
 		// Set to same value for struct comparison.
 		actualRows[i].Time_tz_col = expectedRows[i].Time_tz_col
+		actualRows[i].normalizeBigInt()
 		require.Equal(t, expectedRows[i], actualRows[i])
 	}
 	require.Len(t, actualRows, len(expectedRows))
@@ -1206,4 +1220,43 @@ func TestInferPrimitiveType(t *testing.T) {
 		_, err := db.Exec(`SELECT a FROM (VALUES (?)) t(a)`, tc.input)
 		require.ErrorContains(t, err, unsupportedTypeErrMsg)
 	}
+}
+
+func TestBigNum(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("SELECT different BIGNUM values", func(t *testing.T) {
+		tests := []string{
+			"0",
+			"1",
+			"-1",
+			"9223372036854775807",
+			"-9223372036854775808",
+			"170141183460469231731687303715884105727",
+			"-170141183460469231731687303715884105727",
+			"340282366920938463463374607431768211455",
+		}
+		for _, test := range tests {
+			var res *big.Int
+			err := db.QueryRow(fmt.Sprintf("SELECT %s::BIGNUM", test)).Scan(&res)
+			require.NoError(t, err)
+			require.Equal(t, test, res.String())
+		}
+	})
+
+	t.Run("BIGNUM binding", func(t *testing.T) {
+		_, err := db.Exec("CREATE TABLE bignum_test (number BIGNUM)")
+		require.NoError(t, err)
+
+		val := big.NewInt(1)
+		val.SetBit(val, 101, 1)
+		_, err = db.Exec("INSERT INTO bignum_test VALUES(?)", val)
+		require.NoError(t, err)
+
+		var res *big.Int
+		err = db.QueryRow("SELECT number FROM bignum_test WHERE number = ?", val).Scan(&res)
+		require.NoError(t, err)
+		require.Equal(t, val.String(), res.String())
+	})
 }

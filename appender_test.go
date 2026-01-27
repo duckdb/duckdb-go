@@ -537,8 +537,8 @@ func newAppenderHugeIntFloatTest[T float32 | float64](val T, lower, upper *big.I
 	}
 }
 
-func TestAppenderHugeInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (val HUGEINT, id VARCHAR)`)
+func testAppenderSignedHugeInt(t *testing.T, sqlType string) {
+	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (val `+sqlType+`, id VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	tests := map[string]func(t *testing.T){
@@ -563,6 +563,10 @@ func TestAppenderHugeInt(t *testing.T) {
 	}
 }
 
+func TestAppenderHugeInt(t *testing.T) {
+	testAppenderSignedHugeInt(t, "HUGEINT")
+}
+
 func TestAppenderUHugeInt(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (val UHUGEINT, id VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
@@ -582,6 +586,10 @@ func TestAppenderUHugeInt(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, test)
 	}
+}
+
+func TestAppenderBigNum(t *testing.T) {
+	testAppenderSignedHugeInt(t, "BIGNUM")
 }
 
 func TestAppenderTsNs(t *testing.T) {
@@ -748,6 +756,23 @@ func TestAppenderNullUHugeInt(t *testing.T) {
 
 	// Verify results.
 	res := db.QueryRowContext(context.Background(), `SELECT h FROM test`)
+
+	var r *big.Int
+	require.NoError(t, res.Scan(&r))
+	require.Nil(t, r)
+}
+
+func TestAppenderNullBigNum(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (b BIGNUM)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *big.Int.
+	var nilBigInt *big.Int
+	require.NoError(t, a.AppendRow(nilBigInt))
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res := db.QueryRowContext(context.Background(), `SELECT b FROM test`)
 
 	var r *big.Int
 	require.NoError(t, res.Scan(&r))

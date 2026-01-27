@@ -233,6 +233,8 @@ var (
 	QueryProgressTypeMembers = bindings.QueryProgressTypeMembers
 	NewListEntry             = bindings.NewListEntry
 	ListEntryMembers         = bindings.ListEntryMembers
+	NewBigNum                = bindings.NewBigNum
+	BigNumMembers            = bindings.BigNumMembers
 )
 
 // Helper functions for types with internal fields that need freeing.

@@ -27,6 +27,7 @@ type vector struct {
 	childVectors []vector
 }
 
+//nolint:gocyclo
 func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	t := mapping.GetTypeId(logicalType)
 	name, inMap := unsupportedTypeToStringMap[t]
@@ -75,6 +76,8 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 		vec.initHugeint()
 	case TYPE_UHUGEINT:
 		vec.initUhugeint()
+	case TYPE_BIGNUM:
+		vec.initBignum()
 	case TYPE_VARCHAR, TYPE_BLOB:
 		vec.initBytes(t)
 	case TYPE_DECIMAL:
@@ -275,6 +278,23 @@ func (vec *vector) initUhugeint() {
 		return setUhugeint(vec, rowIdx, val)
 	}
 	vec.Type = TYPE_UHUGEINT
+}
+
+func (vec *vector) initBignum() {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+		if vec.getNull(rowIdx) {
+			return nil
+		}
+		return vec.getBigNum(rowIdx)
+	}
+	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
+		if val == nil || val == (*big.Int)(nil) {
+			vec.setNull(rowIdx)
+			return nil
+		}
+		return setBignum(vec, rowIdx, val)
+	}
+	vec.Type = TYPE_BIGNUM
 }
 
 func (vec *vector) initBytes(t Type) {

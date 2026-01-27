@@ -126,7 +126,7 @@ func (r *rows) getScanType(logicalType mapping.LogicalType, index mapping.IdxT) 
 		return reflectTypeTime
 	case TYPE_INTERVAL:
 		return reflectTypeInterval
-	case TYPE_HUGEINT, TYPE_UHUGEINT:
+	case TYPE_HUGEINT, TYPE_UHUGEINT, TYPE_BIGNUM:
 		return reflectTypeBigInt
 	case TYPE_VARCHAR, TYPE_ENUM:
 		return reflectTypeString

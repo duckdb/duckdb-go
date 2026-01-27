@@ -184,6 +184,15 @@ func (s *Stmt) bindUhugeint(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
+func (s *Stmt) bindBigNum(val *big.Int, n int) (mapping.State, error) {
+	bignum := bigNumFromNative(val)
+	defer mapping.DestroyBigNum(&bignum)
+	v := mapping.CreateBigNum(bignum)
+	defer mapping.DestroyValue(&v)
+	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), v)
+	return state, nil
+}
+
 func (s *Stmt) bindTimestamp(val driver.NamedValue, t Type, n int) (mapping.State, error) {
 	var state mapping.State
 	switch t {
@@ -339,6 +348,7 @@ func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name strin
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
 
+//nolint:gocyclo
 func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 	// For some queries, we cannot resolve the parameter type when preparing the query.
 	// E.g., for "SELECT * FROM (VALUES (?, ?)) t(a, b)", we cannot know the parameter types from the SQL statement alone.
@@ -392,10 +402,13 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		// int is at least 32 bits.
 		return mapping.BindInt64(*s.preparedStmt, mapping.IdxT(n+1), int64(v)), nil
 	case *big.Int:
+		if t == TYPE_HUGEINT {
+			return s.bindHugeint(v, n)
+		}
 		if t == TYPE_UHUGEINT {
 			return s.bindUhugeint(v, n)
 		}
-		return s.bindHugeint(v, n)
+		return s.bindBigNum(v, n)
 	case Decimal:
 		// FIXME: use NamedValueChecker to support this type.
 		name := typeToStringMap[TYPE_DECIMAL]

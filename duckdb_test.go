@@ -537,6 +537,12 @@ func TestTypeNamesAndScanTypes(t *testing.T) {
 			value:    big.NewInt(31),
 			typeName: "UHUGEINT",
 		},
+		// DUCKDB_TYPE_BIGNUM
+		{
+			sql:      `SELECT 31::BIGNUM AS col`,
+			value:    big.NewInt(31),
+			typeName: "BIGNUM",
+		},
 		// DUCKDB_TYPE_VARCHAR
 		{
 			sql:      `SELECT 'foo'::VARCHAR AS col`,
