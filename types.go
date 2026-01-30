@@ -44,7 +44,6 @@ var (
 	reflectTypeUnion     = reflect.TypeFor[Union]()
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
-	reflectTypeHugeInt   = reflect.TypeFor[mapping.HugeInt]()
 )
 
 type numericType interface {
@@ -145,6 +144,51 @@ func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {
 	return i
 }
 
+func numToBigInt(val any) (*big.Int, error) {
+	switch v := val.(type) {
+	case uint8:
+		return big.NewInt(int64(v)), nil
+	case int8:
+		return big.NewInt(int64(v)), nil
+	case uint16:
+		return big.NewInt(int64(v)), nil
+	case int16:
+		return big.NewInt(int64(v)), nil
+	case uint32:
+		return big.NewInt(int64(v)), nil
+	case int32:
+		return big.NewInt(int64(v)), nil
+	case uint64:
+		return new(big.Int).SetUint64(v), nil
+	case int64:
+		return big.NewInt(v), nil
+	case uint:
+		return new(big.Int).SetUint64(uint64(v)), nil
+	case int:
+		return big.NewInt(int64(v)), nil
+	case float32:
+		bigFloat := new(big.Float).SetFloat64(float64(v))
+		bigInt, _ := bigFloat.Int(nil)
+		return bigInt, nil
+	case float64:
+		bigFloat := new(big.Float).SetFloat64(v)
+		bigInt, _ := bigFloat.Int(nil)
+		return bigInt, nil
+	case *big.Int:
+		if v == nil {
+			return nil, castError("nil *big.Int", "*big.Int")
+		}
+		return v, nil
+	case Decimal:
+		if v.Value == nil {
+			return nil, castError("nil Decimal.Value", "*big.Int")
+		}
+		return v.Value, nil
+	default:
+		return nil, castError(reflect.TypeOf(val).String(), "*big.Int")
+	}
+}
+
 func hugeIntFromNative(i *big.Int) (mapping.HugeInt, error) {
 	d := big.NewInt(1)
 	d.Lsh(d, 64)
@@ -184,36 +228,13 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int:
 		hi = mapping.NewHugeInt(uint64(v), int64(v)>>63)
-	case float32:
-		bigFloat := new(big.Float).SetFloat64(float64(v))
-		bigInt, _ := bigFloat.Int(nil)
-		if hi, err = hugeIntFromNative(bigInt); err != nil {
-			return mapping.HugeInt{}, err
-		}
-	case float64:
-		bigFloat := new(big.Float).SetFloat64(v)
-		bigInt, _ := bigFloat.Int(nil)
-		if hi, err = hugeIntFromNative(bigInt); err != nil {
-			return mapping.HugeInt{}, err
-		}
-	case *big.Int:
-		if v == nil {
-			return mapping.HugeInt{}, castError(reflect.TypeOf(val).String(), reflectTypeHugeInt.String())
-		}
-		if hi, err = hugeIntFromNative(v); err != nil {
-			return mapping.HugeInt{}, err
-		}
-	case Decimal:
-		if v.Value == nil {
-			return mapping.HugeInt{}, castError(reflect.TypeOf(val).String(), reflectTypeHugeInt.String())
-		}
-		if hi, err = hugeIntFromNative(v.Value); err != nil {
-			return mapping.HugeInt{}, err
-		}
 	default:
-		return mapping.HugeInt{}, castError(reflect.TypeOf(val).String(), reflectTypeHugeInt.String())
+		var i *big.Int
+		if i, err = numToBigInt(val); err != nil {
+			return mapping.HugeInt{}, err
+		}
+		hi, err = hugeIntFromNative(i)
 	}
-
 	return hi, err
 }
 
@@ -242,6 +263,40 @@ func uhugeIntFromNative(i *big.Int) (mapping.UHugeInt, error) {
 	}
 
 	return mapping.NewUHugeInt(r.Uint64(), q.Uint64()), nil
+}
+
+func bigNumToNative(bn *mapping.BigNum) *big.Int {
+	data, isNegative := mapping.BigNumMembers(bn)
+
+	// Data is in big-endian format, which is what big.Int.SetBytes expects.
+	i := new(big.Int).SetBytes(data)
+	if isNegative {
+		i.Neg(i)
+	}
+	return i
+}
+
+func bigNumFromNative(i *big.Int) mapping.BigNum {
+	isNegative := i.Sign() < 0
+
+	// Get absolute value bytes in big-endian format (which is what NewBigNum expects).
+	absVal := new(big.Int).Abs(i)
+	bigEndian := absVal.Bytes()
+
+	// Handle zero case - ensure at least one byte
+	if len(bigEndian) == 0 {
+		bigEndian = []byte{0}
+	}
+
+	return mapping.NewBigNum(bigEndian, isNegative)
+}
+
+func inferBigNum(val any) (mapping.BigNum, error) {
+	i, err := numToBigInt(val)
+	if err != nil {
+		return mapping.BigNum{}, err
+	}
+	return bigNumFromNative(i), nil
 }
 
 func inferUHugeInt(val any) (mapping.UHugeInt, error) {
@@ -283,37 +338,14 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 			return mapping.UHugeInt{}, fmt.Errorf("negative value %d cannot be converted to UHUGEINT", v)
 		}
 		uhi = mapping.NewUHugeInt(uint64(v), 0)
-	case float32:
-		bigFloat := new(big.Float).SetFloat64(float64(v))
-		bigInt, _ := bigFloat.Int(nil)
-		if uhi, err = uhugeIntFromNative(bigInt); err != nil {
-			return mapping.UHugeInt{}, err
-		}
-	case float64:
-		bigFloat := new(big.Float).SetFloat64(v)
-		bigInt, _ := bigFloat.Int(nil)
-		if uhi, err = uhugeIntFromNative(bigInt); err != nil {
-			return mapping.UHugeInt{}, err
-		}
-	case *big.Int:
-		if v == nil {
-			return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
-		}
-		if uhi, err = uhugeIntFromNative(v); err != nil {
-			return mapping.UHugeInt{}, err
-		}
-	case Decimal:
-		if v.Value == nil {
-			return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
-		}
-		if uhi, err = uhugeIntFromNative(v.Value); err != nil {
-			return mapping.UHugeInt{}, err
-		}
 	default:
-		return mapping.UHugeInt{}, castError(reflect.TypeOf(val).String(), "mapping.UHugeInt")
+		var i *big.Int
+		if i, err = numToBigInt(val); err != nil {
+			return mapping.UHugeInt{}, err
+		}
+		uhi, err = uhugeIntFromNative(i)
 	}
-
-	return uhi, nil
+	return uhi, err
 }
 
 type Map map[any]any

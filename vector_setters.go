@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"encoding/json"
+	"math/big"
 	"reflect"
 	"strconv"
 	"unsafe"
@@ -169,6 +170,50 @@ func setUhugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return err
 	}
 	setPrimitive(vec, rowIdx, uhi)
+	return nil
+}
+
+func setBignum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	i, err := numToBigInt(val)
+	if err != nil {
+		return err
+	}
+
+	// DuckDB BIGNUM format:
+	// - 3-byte header: (length | 0x800000), complemented for negative
+	// - Big-endian magnitude, complemented for negative
+	isNegative := i.Sign() < 0
+	absVal := new(big.Int).Abs(i)
+	magnitude := absVal.Bytes()
+
+	// Ensure at least 1 byte of magnitude (for zero)
+	if len(magnitude) == 0 {
+		magnitude = []byte{0}
+	}
+
+	// Build header: length | 0x800000
+	length := uint32(len(magnitude))
+	header := length | 0x00800000
+	if isNegative {
+		header = ^header
+	}
+
+	// Build output: 3 header bytes + magnitude
+	data := make([]byte, 3+len(magnitude))
+	data[0] = byte(header >> 16)
+	data[1] = byte(header >> 8)
+	data[2] = byte(header)
+
+	if isNegative {
+		// Complement magnitude bytes
+		for j, b := range magnitude {
+			data[3+j] = ^b
+		}
+	} else {
+		copy(data[3:], magnitude)
+	}
+
+	mapping.VectorAssignStringElementLen(vec.vec, rowIdx, data)
 	return nil
 }
 
@@ -453,6 +498,8 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setHugeint(vec, rowIdx, val)
 	case TYPE_UHUGEINT:
 		return setUhugeint(vec, rowIdx, val)
+	case TYPE_BIGNUM:
+		return setBignum(vec, rowIdx, val)
 	case TYPE_VARCHAR:
 		return setBytes(vec, rowIdx, val)
 	case TYPE_BLOB:

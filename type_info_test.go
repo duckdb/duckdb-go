@@ -36,6 +36,7 @@ var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_INTERVAL:     {input: `INTERVAL 1 YEAR`, output: `{0 12 0}`},
 	TYPE_HUGEINT:      {input: `44::HUGEINT`, output: `44`},
 	TYPE_UHUGEINT:     {input: `45::UHUGEINT`, output: `45`},
+	TYPE_BIGNUM:       {input: `46::BIGNUM`, output: `46`},
 	TYPE_VARCHAR:      {input: `'hello world'::VARCHAR`, output: `hello world`},
 	TYPE_BLOB:         {input: `'\xAA'::BLOB`, output: `[170]`},
 	TYPE_TIMESTAMP_S:  {input: `TIMESTAMP_S '1992-09-20 11:30:00'`, output: `1992-09-20 11:30:00 +0000 UTC`},
@@ -57,7 +58,7 @@ func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
 			continue
 		}
 		switch k {
-		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL:
+		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL, TYPE_BIGNUM:
 			continue
 		}
 		primitiveTypes = append(primitiveTypes, k)

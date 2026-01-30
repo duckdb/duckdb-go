@@ -133,6 +133,39 @@ func (vec *vector) getUhugeint(rowIdx mapping.IdxT) *big.Int {
 	return uhugeIntToNative(&uhugeInt)
 }
 
+func (vec *vector) getBigNum(rowIdx mapping.IdxT) *big.Int {
+	// BIGNUM is stored as StringT containing DuckDB's encoding:
+	// - Bytes 0-2: 3-byte header (length | 0x800000 for positive, complemented for negative)
+	// - Bytes 3+: Big-endian magnitude (complemented for negative)
+	// Sign is determined by whether MSB of byte 0 is set (0x80)
+	strT := getPrimitive[mapping.StringT](vec, rowIdx)
+	data := []byte(mapping.StringTData(&strT))
+
+	if len(data) < 4 {
+		return big.NewInt(0)
+	}
+
+	// Check sign: MSB set means positive
+	isPositive := (data[0] & 0x80) != 0
+
+	// Data starts at byte 3, magnitude is already big-endian
+	magnitude := data[3:]
+
+	if isPositive {
+		return new(big.Int).SetBytes(magnitude)
+	}
+
+	// Negative: complement all magnitude bytes
+	complemented := make([]byte, len(magnitude))
+	for i := range magnitude {
+		complemented[i] = ^magnitude[i]
+	}
+
+	result := new(big.Int).SetBytes(complemented)
+	result.Neg(result)
+	return result
+}
+
 func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 	strT := getPrimitive[mapping.StringT](vec, rowIdx)
 	str := mapping.StringTData(&strT)
