@@ -319,13 +319,68 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 type Map map[any]any
 
 func (m *Map) Scan(v any) error {
-	data, ok := v.(Map)
+	data, ok := v.(OrderedMap)
 	if !ok {
-		return fmt.Errorf("invalid type `%T` for scanning `Map`, expected `Map`", data)
+		return fmt.Errorf("invalid type `%T` for scanning `Map`, expected `OrderedMap`", data)
 	}
 
-	*m = data
+	nm := make(map[any]any, data.Len())
+	for i, key := range data.Keys() {
+		nm[key] = data.Values()[i]
+	}
+
+	*m = nm
 	return nil
+}
+
+// OrderedMap is used to represent DuckDB maps while preserving key order.
+// Key order is significant in DuckDB maps for direct comparison operations.
+type OrderedMap struct {
+	keys   []any
+	values []any
+}
+
+func (om *OrderedMap) Keys() []any {
+	return om.keys
+}
+
+func (om *OrderedMap) Values() []any {
+	return om.values
+}
+
+func (om *OrderedMap) Len() int {
+	return len(om.keys)
+}
+
+func (om *OrderedMap) Set(k any, v any) {
+	for i, key := range om.keys {
+		if key == k {
+			om.values[i] = v
+			return
+		}
+	}
+
+	om.keys = append(om.keys, k)
+	om.values = append(om.values, v)
+}
+
+func (om *OrderedMap) Get(k any) (any, bool) {
+	for i, key := range om.keys {
+		if key == k {
+			return om.values[i], true
+		}
+	}
+	return nil, false
+}
+
+func (om *OrderedMap) Delete(k any) {
+	for i, key := range om.keys {
+		if key == k {
+			om.keys = append(om.keys[:i], om.keys[i+1:]...)
+			om.values = append(om.values[:i], om.values[i+1:]...)
+			return
+		}
+	}
 }
 
 func mapKeysField() string {

@@ -297,20 +297,25 @@ func setStruct[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	var m Map
+	var m OrderedMap
+
 	switch v := any(val).(type) {
-	case Map:
+	case OrderedMap:
 		m = v
+	case Map:
+		m = OrderedMap{}
+		for key, value := range v {
+			m.Set(key, value)
+		}
 	default:
 		return castError(reflect.TypeOf(val).String(), reflectTypeMap.String())
 	}
 
 	// Create a LIST of STRUCT values.
-	i := 0
-	list := make([]any, len(m))
-	for key, value := range m {
+	list := make([]any, m.Len())
+	for i, key := range m.Keys() {
+		value, _ := m.Get(key)
 		list[i] = map[string]any{mapKeysField(): key, mapValuesField(): value}
-		i++
 	}
 
 	return setList(vec, rowIdx, list)
