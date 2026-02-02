@@ -316,6 +316,10 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 	return uhi, nil
 }
 
+// Map is used to represent DuckDB maps as Go maps.
+// Note that Go maps do not preserve key order, so direct comparison operations
+// on DuckDB maps may not behave as expected when using this type. Use OrderedMap as an alternative.
+// [Deprecated: Use OrderedMap instead to preserve key order.]
 type Map map[any]any
 
 func (m *Map) Scan(v any) error {
@@ -335,17 +339,20 @@ func (m *Map) Scan(v any) error {
 
 // OrderedMap is used to represent DuckDB maps while preserving key order.
 // Key order is significant in DuckDB maps for direct comparison operations.
+//
+// NOTE: only supports keys of comparable types (no slices, maps, or functions).
+// NOTE: Set and Get use linear search, so performance may degrade with large maps.
 type OrderedMap struct {
 	keys   []any
 	values []any
 }
 
 func (om *OrderedMap) Keys() []any {
-	return om.keys
+	return append([]any(nil), om.keys...)
 }
 
 func (om *OrderedMap) Values() []any {
-	return om.values
+	return append([]any(nil), om.values...)
 }
 
 func (om *OrderedMap) Len() int {
@@ -394,6 +401,20 @@ func (om *OrderedMap) Delete(k any) {
 			return
 		}
 	}
+}
+
+func (om *OrderedMap) Scan(v any) error {
+	data, ok := v.(OrderedMap)
+	if !ok {
+		return fmt.Errorf("invalid type `%T` for scanning `OrderedMap`, expected `OrderedMap`", data)
+	}
+
+	om.keys = make([]any, data.Len())
+	om.values = make([]any, data.Len())
+	copy(om.keys, data.Keys())
+	copy(om.values, data.Values())
+
+	return nil
 }
 
 func mapKeysField() string {

@@ -1235,6 +1235,6 @@ func TestOrderedMap(t *testing.T) {
 	err = db.QueryRow(`SELECT data FROM ordered_map_test`).Scan(&result)
 	require.NoError(t, err)
 
-	require.Equal(t, orderedMap.keys, result.keys)
-	require.Equal(t, orderedMap.values, result.values)
+	require.Equal(t, orderedMap.Keys(), result.Keys())
+	require.Equal(t, orderedMap.Values(), result.Values())
 }

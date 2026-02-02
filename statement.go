@@ -284,7 +284,7 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
 
-// Used for binding Array, List, Struct. In the future, also Map and Union
+// Used for binding Array, List, Struct, Map. In the future, Union.
 func (s *Stmt) bindCompositeValue(val driver.NamedValue, n int) (mapping.State, error) {
 	lt, err := s.paramLogicalType(n + 1)
 	defer mapping.DestroyLogicalType(&lt)

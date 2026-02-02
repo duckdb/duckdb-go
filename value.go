@@ -509,7 +509,7 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 			m.Set(key, value)
 		}
 	default:
-		return mapping.Value{}, castError(reflect.TypeOf(val).Name(), reflectTypeMapString.Name())
+		return mapping.Value{}, castError(reflect.TypeOf(val).Name(), reflectTypeMap.Name())
 	}
 
 	keys := make([]mapping.Value, m.Len())
