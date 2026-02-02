@@ -40,7 +40,7 @@ var (
 	reflectTypeDecimal   = reflect.TypeFor[Decimal]()
 	reflectTypeSliceAny  = reflect.TypeFor[[]any]()
 	reflectTypeMapString = reflect.TypeFor[map[string]any]()
-	reflectTypeMap       = reflect.TypeFor[Map]()
+	reflectTypeMap       = reflect.TypeFor[OrderedMap]()
 	reflectTypeUnion     = reflect.TypeFor[Union]()
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
@@ -350,6 +350,19 @@ func (om *OrderedMap) Values() []any {
 
 func (om *OrderedMap) Len() int {
 	return len(om.keys)
+}
+
+func (om OrderedMap) String() string {
+	var sb strings.Builder
+	sb.WriteString("OrderedMap{")
+	for i, key := range om.keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("%v: %v", key, om.values[i]))
+	}
+	sb.WriteString("}")
+	return sb.String()
 }
 
 func (om *OrderedMap) Set(k any, v any) {

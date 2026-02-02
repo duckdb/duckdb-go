@@ -56,7 +56,7 @@ type mixedStruct struct {
 		L []int32
 	}
 	C struct {
-		L Map
+		L OrderedMap
 	}
 }
 
@@ -1435,8 +1435,8 @@ func prepareNestedData(rowCount int) []nestedDataRow {
 			{[]int32{1, 2, 3}},
 		},
 		C: struct {
-			L Map
-		}{L: Map{"foo": int32(1), "bar": int32(2)}},
+			L OrderedMap
+		}{L: OrderedMap{[]any{"foo", "bar"}, []any{int32(1), int32(2)}}},
 	}
 
 	rowsToAppend := make([]nestedDataRow, rowCount)

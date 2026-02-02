@@ -159,7 +159,7 @@ func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
 						'world': [4::DECIMAL(3, 2)]
 					}
 					}`,
-			output: `map[4:map[hello:map[hello:hello world:[[4]]] world:[4]]]`,
+			output: `OrderedMap{4: map[hello:map[hello:hello world:[[4]]] world:[4]]}`,
 		},
 	}
 
