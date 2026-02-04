@@ -284,7 +284,7 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
 
-// Used for binding Array, List, Struct. In the future, also Map and Union
+// Used for binding Array, List, Struct, Map. In the future, Union.
 func (s *Stmt) bindCompositeValue(val driver.NamedValue, n int) (mapping.State, error) {
 	lt, err := s.paramLogicalType(n + 1)
 	defer mapping.DestroyLogicalType(&lt)
@@ -329,9 +329,9 @@ func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name strin
 		return s.bindDate(val, n)
 	case TYPE_TIME, TYPE_TIME_TZ:
 		return s.bindTime(val, t, n)
-	case TYPE_ARRAY, TYPE_LIST, TYPE_STRUCT:
+	case TYPE_ARRAY, TYPE_LIST, TYPE_STRUCT, TYPE_MAP:
 		return s.bindCompositeValue(val, n)
-	case TYPE_MAP, TYPE_ENUM, TYPE_UNION:
+	case TYPE_ENUM, TYPE_UNION:
 		// FIXME: for other types: duckdb_param_logical_type once available, then create duckdb_value + duckdb_bind_value
 		// FIXME: for other types: use NamedValueChecker to support.
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)

@@ -202,15 +202,15 @@ func (vec *vector) getStruct(rowIdx mapping.IdxT) map[string]any {
 	return m
 }
 
-func (vec *vector) getMap(rowIdx mapping.IdxT) Map {
+func (vec *vector) getMap(rowIdx mapping.IdxT) OrderedMap {
 	list := vec.getList(rowIdx)
 
-	m := Map{}
+	m := OrderedMap{}
 	for i := range list {
 		mapItem := list[i].(map[string]any)
 		key := mapItem[mapKeysField()]
 		val := mapItem[mapValuesField()]
-		m[key] = val
+		m.Set(key, val)
 	}
 	return m
 }

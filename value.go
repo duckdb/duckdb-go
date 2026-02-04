@@ -89,6 +89,8 @@ func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 		return createSliceValue(lt, t, val)
 	case TYPE_STRUCT:
 		return createStructValue(lt, val)
+	case TYPE_MAP:
+		return createMapValue(lt, val)
 	default:
 		return mapping.Value{}, unsupportedTypeError(reflect.TypeOf(val).Name())
 	}
@@ -346,7 +348,7 @@ func inferPrimitiveType(v any) (Type, any) {
 		t = TYPE_DECIMAL
 	case UUID:
 		t = TYPE_UUID
-	case Map:
+	case Map, OrderedMap:
 		// We special-case TYPE_MAP to disambiguate with structs passed as map[string]any.
 		t = TYPE_MAP
 	case Union:
@@ -494,6 +496,43 @@ func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	}
 
 	return mapping.CreateStructValue(lt, values), nil
+}
+
+func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
+	var m OrderedMap
+	switch v := val.(type) {
+	case OrderedMap:
+		m = v
+	case Map:
+		m = OrderedMap{}
+		for key, value := range v {
+			m.Set(key, value)
+		}
+	default:
+		return mapping.Value{}, castError(reflect.TypeOf(val).Name(), reflectTypeMap.Name())
+	}
+
+	keys := make([]mapping.Value, m.Len())
+	defer destroyValueSlice(keys)
+	for i, k := range m.Keys() {
+		kv, err := createValue(mapping.MapTypeKeyType(lt), k)
+		if err != nil {
+			return mapping.Value{}, err
+		}
+		keys[i] = kv
+	}
+
+	values := make([]mapping.Value, m.Len())
+	defer destroyValueSlice(values)
+	for i, v := range m.Values() {
+		vv, err := createValue(mapping.MapTypeValueType(lt), v)
+		if err != nil {
+			return mapping.Value{}, err
+		}
+		values[i] = vv
+	}
+
+	return mapping.CreateMapValue(lt, keys, values), nil
 }
 
 func destroyValueSlice(values []mapping.Value) {

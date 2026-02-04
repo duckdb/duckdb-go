@@ -593,7 +593,7 @@ func TestTypeNamesAndScanTypes(t *testing.T) {
 		// DUCKDB_TYPE_MAP
 		{
 			sql:      `SELECT map([1, 5], ['a', 'e']) AS col`,
-			value:    Map{int32(1): "a", int32(5): "e"},
+			value:    OrderedMap{[]any{int32(1), int32(5)}, []any{"a", "e"}},
 			typeName: "MAP(INTEGER, VARCHAR)",
 		},
 		// DUCKDB_TYPE_ARRAY
