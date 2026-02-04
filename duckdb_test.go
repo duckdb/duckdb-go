@@ -617,7 +617,7 @@ func TestTypeNamesAndScanTypes(t *testing.T) {
 		// DUCKDB_TYPE_TIME_TZ
 		{
 			sql:      `SELECT '11:30:00+03'::TIMETZ AS col`,
-			value:    time.Date(1, time.January, 1, 8, 30, 0, 0, time.UTC),
+			value:    time.Date(1, time.January, 1, 11, 30, 0, 0, time.FixedZone("", 3*3600)),
 			typeName: "TIMETZ",
 		},
 		// DUCKDB_TYPE_TIMESTAMP_TZ

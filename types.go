@@ -426,7 +426,7 @@ func castToTime(val any) (time.Time, error) {
 	default:
 		return ti, castError(reflect.TypeOf(val).String(), reflectTypeTime.String())
 	}
-	return ti.UTC(), nil
+	return ti, nil
 }
 
 func getTSTicks(t Type, val any) (int64, error) {
@@ -496,12 +496,18 @@ func inferTime(val any) (mapping.Time, error) {
 }
 
 func inferTimeTZ(val any) (mapping.TimeTZ, error) {
-	ticks, err := getTimeTicks(val)
+	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.TimeTZ{}, err
 	}
-	// The UTC offset is 0.
-	return mapping.CreateTimeTZ(ticks, 0), nil
+
+	// DuckDB stores time as microseconds since 00:00:00.
+	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
+	ticks := base.UnixMicro()
+
+	// Preserve the UTC offset from the input time.
+	_, offset := ti.Zone()
+	return mapping.CreateTimeTZ(ticks, int32(offset)), nil
 }
 
 func getTimeTicks[T any](val T) (int64, error) {

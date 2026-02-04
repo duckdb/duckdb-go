@@ -248,8 +248,10 @@ func (s *Stmt) bindTime(val driver.NamedValue, t Type, n int) (mapping.State, er
 		return state, nil
 	}
 
-	// TYPE_TIME_TZ: The UTC offset is 0.
-	ti := mapping.CreateTimeTZ(ticks, 0)
+	// TYPE_TIME_TZ: Preserve the UTC offset from the input time.
+	goTime, _ := castToTime(val.Value)
+	_, offset := goTime.Zone()
+	ti := mapping.CreateTimeTZ(ticks, int32(offset))
 	v := mapping.CreateTimeTZValue(ti)
 	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), v)
 	mapping.DestroyValue(&v)

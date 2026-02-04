@@ -102,8 +102,11 @@ func getTimeTZ(ti *mapping.TimeTZ) time.Time {
 	// TIMETZ has microsecond precision.
 	hour, minute, sec, micro := mapping.TimeStructMembers(&timeStruct)
 	nanos := int(micro) * 1000
-	loc := time.FixedZone("", int(offset))
-	return time.Date(1, time.January, 1, int(hour), int(minute), int(sec), nanos, loc).UTC()
+	loc := time.UTC
+	if offset != 0 {
+		loc = time.FixedZone("", int(offset))
+	}
+	return time.Date(1, time.January, 1, int(hour), int(minute), int(sec), nanos, loc)
 }
 
 func (vec *vector) getInterval(rowIdx mapping.IdxT) Interval {

@@ -136,7 +136,6 @@ func setTime[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		}
 		setPrimitive(vec, rowIdx, ti)
 	case TYPE_TIME_TZ:
-		// The UTC offset is 0.
 		ti, err := inferTimeTZ(val)
 		if err != nil {
 			return err

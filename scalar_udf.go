@@ -52,6 +52,8 @@ type ScalarFuncConfig struct {
 // bindData holds bind data accessible during execution.
 type bindData struct {
 	connId uint64
+	// We ignore the linter because we need to pass the context through C memory.
+	ctx context.Context //nolint:containedctx
 }
 
 // ScalarUDFArg contains scalar UDF argument metadata and the optional argument.
@@ -69,9 +71,11 @@ type (
 	// RowContextExecutorFn accepts a row-based execution function using a context.
 	// It takes a context and the row values, and returns the row execution result, or error.
 	RowContextExecutorFn func(ctx context.Context, values []driver.Value) (any, error)
-	// ScalarBinderFn takes a context and the scalar function's arguments.
-	// It returns the updated context, which can now contain arbitrary data available during execution.
-	ScalarBinderFn func(ctx context.Context, args []ScalarUDFArg) (context.Context, error)
+	// ScalarBinderFn takes a (parent) context and the scalar function's arguments.
+	// It returns the possibly updated child context (can be the same as the parent).
+	// The child context can contain additional arbitrary data available during execution.
+	// Please ensure correct context inheritance.
+	ScalarBinderFn func(parentCtx context.Context, args []ScalarUDFArg) (context.Context, error)
 )
 
 // ScalarFuncExecutor contains the functions to execute a user-defined scalar function.
@@ -107,16 +111,27 @@ func (s *scalarFuncContext) Config() ScalarFuncConfig {
 
 // RowExecutor returns a RowExecutorFn executing the scalar function.
 // It uses the bindInfo to get the execution context.
-func (s *scalarFuncContext) RowExecutor(info *bindData) RowExecutorFn {
+func (s *scalarFuncContext) RowExecutor(info *bindData) (RowExecutorFn, error) {
 	e := s.f.Executor()
 	if e.RowExecutor != nil {
-		return e.RowExecutor
+		return e.RowExecutor, nil
 	}
-	ctx := s.ctxStore.load(info.connId)
+
+	// Parent context cancellation propagates to children,
+	// therefore, it is enough to check the child context here.
+	if info.ctx != nil {
+		if err := info.ctx.Err(); err != nil {
+			return nil, err
+		}
+	} else {
+		// No child context means that there is no custom bind function.
+		// Retrieve the parent context from the connection context store.
+		info.ctx = s.ctxStore.load(info.connId)
+	}
 
 	return func(values []driver.Value) (any, error) {
-		return e.RowContextExecutor(ctx, values)
-	}
+		return e.RowContextExecutor(info.ctx, values)
+	}, nil
 }
 
 // RegisterScalarUDF registers a user-defined scalar function.
@@ -212,10 +227,14 @@ func scalar_udf_callback(functionInfoPtr, inputPtr, outputPtr unsafe.Pointer) {
 	values := make([]driver.Value, length)
 
 	// Execute the user-defined scalar function for each row.
-	f := funcCtx.RowExecutor(pinnedBindData)
+	f, err := funcCtx.RowExecutor(pinnedBindData)
+	if err != nil {
+		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
+		return
+	}
+
 	for rowIdx := range inputChunk.GetSize() {
 		// Get each column value.
-		var err error
 		nullRow := false
 		for colIdx := range length {
 			if values[colIdx], err = inputChunk.GetValue(colIdx, rowIdx); err != nil {
@@ -283,6 +302,8 @@ func scalar_udf_bind_callback(bindInfoPtr unsafe.Pointer) {
 	mapping.ScalarFunctionGetClientContext(bindInfo, &clientCtx)
 	defer mapping.DestroyClientContext(&clientCtx)
 
+	// We need the connId to retrieve the correct parent context.
+	// Then, we store the child context in data.
 	connId := mapping.ClientContextGetConnectionId(clientCtx)
 	data := bindData{connId: uint64(connId)}
 
@@ -291,11 +312,12 @@ func scalar_udf_bind_callback(bindInfoPtr unsafe.Pointer) {
 
 	// Get any custom bind data by invoking the custom bind function.
 	if funcCtx.f.Executor().ScalarBinder != nil {
-		err := funcCtx.bind(clientCtx, bindInfo, uint64(connId))
+		bindCtx, err := funcCtx.bind(clientCtx, bindInfo, uint64(connId))
 		if err != nil {
 			mapping.ScalarFunctionBindSetError(bindInfo, err.Error())
 			return
 		}
+		data.ctx = bindCtx
 	}
 
 	// Set the copy callback of the bind info.
@@ -343,7 +365,7 @@ func getScalarUDFArg(clientCtx mapping.ClientContext, bindInfo mapping.BindInfo,
 	return arg, nil
 }
 
-func (s *scalarFuncContext) bind(clientCtx mapping.ClientContext, bindInfo mapping.BindInfo, connId uint64) error {
+func (s *scalarFuncContext) bind(clientCtx mapping.ClientContext, bindInfo mapping.BindInfo, connId uint64) (context.Context, error) {
 	ctx := s.ctxStore.load(connId)
 	argCount := mapping.ScalarFunctionBindGetArgumentCount(bindInfo)
 
@@ -351,18 +373,22 @@ func (s *scalarFuncContext) bind(clientCtx mapping.ClientContext, bindInfo mappi
 	for i := range int(argCount) {
 		arg, err := getScalarUDFArg(clientCtx, bindInfo, i)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		args = append(args, arg)
 	}
 
 	bindCtx, err := s.f.Executor().ScalarBinder(ctx, args)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	s.ctxStore.store(connId, bindCtx, true)
-	return nil
+	// Propagate the parent context, if the child context is nil.
+	if ctx != nil && bindCtx == nil {
+		bindCtx = ctx
+	}
+
+	return bindCtx, nil
 }
 
 func registerInputParams(config ScalarFuncConfig, f mapping.ScalarFunction) error {

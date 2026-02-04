@@ -782,7 +782,7 @@ func TestAppenderTimeTZ(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (time TIMETZ)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
-	// Test a location east of GMT.
+	// Test a location east of GMT (Asia/Shanghai is UTC+8).
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 
@@ -790,15 +790,15 @@ func TestAppenderTimeTZ(t *testing.T) {
 	require.NoError(t, a.AppendRow(ts))
 	require.NoError(t, a.Flush())
 
-	// Verify results.
+	// Verify results: TIMETZ preserves the time and timezone offset.
 	res := db.QueryRowContext(context.Background(), `SELECT time FROM test`)
 
 	var r time.Time
 	require.NoError(t, res.Scan(&r))
-	base := time.Date(1, time.January, 1, 3, 42, 23, 123000, time.UTC)
-	require.Equal(t, base.UnixMicro(), r.UnixMicro())
+	expected := time.Date(1, time.January, 1, 11, 42, 23, 123000, time.FixedZone("", 8*3600))
+	require.Equal(t, expected, r)
 
-	// Reset and test a location west of GMT.
+	// Reset and test a location west of GMT (America/Los_Angeles is UTC-7 in July).
 	_, err = db.Exec(`DELETE FROM test`)
 	require.NoError(t, err)
 
@@ -809,12 +809,12 @@ func TestAppenderTimeTZ(t *testing.T) {
 	require.NoError(t, a.AppendRow(ts))
 	require.NoError(t, a.Flush())
 
-	// Verify results.
+	// Verify results: TIMETZ preserves the time and timezone offset.
 	res = db.QueryRowContext(context.Background(), `SELECT time FROM test`)
 
 	require.NoError(t, res.Scan(&r))
-	base = time.Date(1, time.January, 1, 18, 42, 23, 123000, time.UTC)
-	require.Equal(t, base.UnixMicro(), r.UnixMicro())
+	expected = time.Date(1, time.January, 1, 11, 42, 23, 123000, time.FixedZone("", -7*3600))
+	require.Equal(t, expected, r)
 }
 
 func TestAppenderBlob(t *testing.T) {

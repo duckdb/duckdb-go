@@ -16,6 +16,8 @@ var currentInfo TypeInfo
 
 type testCtxKeyType string
 
+type counterKeyType struct{}
+
 const (
 	testCtxKey     testCtxKeyType = "test_ctx_key"
 	testBindCtxKey testCtxKeyType = "test_bind_ctx_key"
@@ -31,6 +33,7 @@ type (
 	unionTestSUDF     struct{}
 	getConnIdUDF      struct{}
 	easterEggUDF      struct{}
+	siblingUDF        struct{}
 	errExecutorSUDF   struct{}
 	errInputNilSUDF   struct{}
 	errResultNilSUDF  struct{}
@@ -122,21 +125,21 @@ func getEasterEgg(ctx context.Context, values []driver.Value) (any, error) {
 	return strconv.Itoa(int(customBindData)), nil
 }
 
-func bindEasterEgg(ctx context.Context, args []ScalarUDFArg) (context.Context, error) {
+func bindEasterEgg(parentCtx context.Context, args []ScalarUDFArg) (context.Context, error) {
 	if !args[1].Foldable {
 		return nil, errors.New("second argument must be foldable for bindEasterEgg")
 	}
 	if args[1].Value == nil {
-		bindCtx := context.WithValue(ctx, testBindCtxKey, uint64(0))
+		bindCtx := context.WithValue(parentCtx, testBindCtxKey, uint64(0))
 		return bindCtx, nil
 	}
 
 	switch v := args[1].Value.(type) {
 	case int32:
-		bindCtx := context.WithValue(ctx, testBindCtxKey, uint64(v))
+		bindCtx := context.WithValue(parentCtx, testBindCtxKey, uint64(v))
 		return bindCtx, nil
 	case uint64:
-		bindCtx := context.WithValue(ctx, testBindCtxKey, v)
+		bindCtx := context.WithValue(parentCtx, testBindCtxKey, v)
 		return bindCtx, nil
 	default:
 		return nil, errors.New("cannot cast second argument to uint64")
@@ -275,6 +278,38 @@ func (*unionTestSUDF) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{
 		RowExecutor: func(values []driver.Value) (any, error) {
 			return values[0], nil
+		},
+	}
+}
+
+func (u *siblingUDF) Config() ScalarFuncConfig {
+	inputType, _ := NewTypeInfo(TYPE_BIGINT)
+	resultType, _ := NewTypeInfo(TYPE_BIGINT)
+	return ScalarFuncConfig{
+		InputTypeInfos: []TypeInfo{inputType},
+		ResultTypeInfo: resultType,
+	}
+}
+
+func (u *siblingUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{
+		// ScalarBinder is called once per expression during query planning.
+		// The context is stored per-connection, but we need to ensure that the second call does not see the first call's state.
+		ScalarBinder: func(parentCtx context.Context, args []ScalarUDFArg) (context.Context, error) {
+			// Get the current counter from the context (default is 0).
+			counter, _ := parentCtx.Value(counterKeyType{}).(int)
+			counter++
+			// Return an updated context with the new counter.
+			return context.WithValue(parentCtx, counterKeyType{}, counter), nil
+		},
+
+		// RowContextExecutor is called for each row during query execution.
+		// It receives the context stored through its specific binder.
+		RowContextExecutor: func(ctx context.Context, values []driver.Value) (any, error) {
+			counter := ctx.Value(counterKeyType{}).(int)
+			arg := values[0].(int64)
+			res := arg * int64(counter)
+			return res, nil
 		},
 	}
 }
@@ -616,6 +651,26 @@ func TestBindScalarUDF(t *testing.T) {
 	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(7, (random() * 100)::UBIGINT) AS egg`)
 	err = row.Scan(&egg)
 	require.ErrorContains(t, err, "second argument must be foldable for bindEasterEgg")
+}
+
+func TestSiblingUDFs(t *testing.T) {
+	// SiblingUDF is used to test non-shared state behavior across multiple UDF calls in one query.
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var udf *siblingUDF
+	err := RegisterScalarUDF(conn, "sibling_udf", udf)
+	require.NoError(t, err)
+
+	query := `SELECT sibling_udf(1) + sibling_udf(2) AS res`
+
+	var res int64
+	err = conn.QueryRowContext(context.Background(), query).Scan(&res)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), res)
 }
 
 func TestErrScalarUDF(t *testing.T) {
