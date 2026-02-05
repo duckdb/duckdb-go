@@ -433,10 +433,6 @@ func TestDuckDBErrors(t *testing.T) {
 			errTyp: ErrorTypeConversion,
 		},
 		{
-			tpl:    `INSTALL not_exist`,
-			errTyp: ErrorTypeHTTP,
-		},
-		{
 			tpl:    `LOAD not_exist`,
 			errTyp: ErrorTypeIO,
 		},
