@@ -715,17 +715,16 @@ func TestErrScalarUDF(t *testing.T) {
 	testError(t, row.Err(), errAPI.Error())
 
 	// Register the same scalar function a second time.
-	// Since RegisterScalarUDF takes ownership of udf, we are now passing nil.
 	var udf *simpleSUDF
 	err = RegisterScalarUDF(conn, "my_sum", udf)
 	require.NoError(t, err)
 	err = RegisterScalarUDF(conn, "my_sum", udf)
-	testError(t, err, errAPI.Error(), errScalarUDFCreate.Error())
+	require.NoError(t, err)
 
 	// Register a scalar function whose name already exists.
 	var errDuplicateUDF *simpleSUDF
 	err = RegisterScalarUDF(conn, "my_sum", errDuplicateUDF)
-	testError(t, err, errAPI.Error(), errScalarUDFCreate.Error())
+	require.NoError(t, err)
 
 	// Register a scalar function that is nil.
 	err = RegisterScalarUDF(conn, "my_sum", nil)

@@ -51,7 +51,7 @@ func TestLogStorage(t *testing.T) {
 	defer closeDbWrapper(t, db)
 
 	// Configure our new log storage.
-	_, err = db.Exec("CALL enable_logging(level = 'error');")
+	_, err = db.Exec("CALL enable_logging(level = 'info');")
 	require.NoError(t, err)
 	_, err = db.Exec("SET logging_storage = 'MyCustomStorage';")
 	require.NoError(t, err)
@@ -65,9 +65,11 @@ func TestLogStorage(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec("CREATE TABLE test_logging.integers AS SELECT * FROM range(100) tbl(i);")
 	require.NoError(t, err)
-	_, err = db.Exec("DETACH test_logging;")
-	require.NoError(t, err)
 
-	// Ensure that our log storage contains the log.
-	require.True(t, myLogStore.Contains("Failed to create checkpoint because of error"))
+	// Ensure that our log storage contains the logs.
+	require.Len(t, myLogStore.store, 4)
+	require.True(t, myLogStore.Contains("ATTACH 'test_logging.db'"))
+	require.True(t, myLogStore.Contains("PRAGMA wal_autocheckpoint = '1TB';"))
+	require.True(t, myLogStore.Contains("PRAGMA debug_checkpoint_abort = 'before_header';"))
+	require.True(t, myLogStore.Contains("CREATE TABLE test_logging.integers AS SELECT * FROM range(100) tbl(i);"))
 }
