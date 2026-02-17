@@ -54,6 +54,7 @@ type testTypesRow struct {
 	List_col         Composite[[]int32]
 	Struct_col       Composite[testTypesStruct]
 	Map_col          Map
+	OrderedMap_col   OrderedMap
 	Array_col        Composite[[3]int32]
 	Time_tz_col      time.Time
 	Timestamp_tz_col time.Time
@@ -92,6 +93,7 @@ const testTypesTableSQL = `CREATE TABLE test (
 	List_col INTEGER[],
 	Struct_col STRUCT(A INTEGER, B VARCHAR),
 	Map_col MAP(INTEGER, VARCHAR),
+	OrderedMap_col MAP(INTEGER, VARCHAR),
 	Array_col INTEGER[3],
 	Time_tz_col TIMETZ,
 	Timestamp_tz_col TIMESTAMPTZ,
@@ -148,6 +150,9 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 	mapCol := Map{
 		int32(i): "other_longer_val",
 	}
+	orderedMapCol := OrderedMap{}
+	orderedMapCol.Set(int32(i), "other_longer_val")
+	orderedMapCol.Set(int32(i+2), "even_longer_val")
 	arrayCol := Composite[[3]int32]{
 		[3]int32{int32(i), int32(i), int32(i)},
 	}
@@ -189,6 +194,7 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 		listCol,
 		structCol,
 		mapCol,
+		orderedMapCol,
 		arrayCol,
 		timeTZ,
 		ts,
@@ -246,6 +252,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			r.List_col.Get(),
 			r.Struct_col.Get(),
 			r.Map_col,
+			r.OrderedMap_col,
 			r.Array_col.Get(),
 			r.Time_tz_col,
 			r.Timestamp_tz_col,
@@ -294,6 +301,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			&r.List_col,
 			&r.Struct_col,
 			&r.Map_col,
+			&r.OrderedMap_col,
 			&r.Array_col,
 			&r.Time_tz_col,
 			&r.Timestamp_tz_col,
@@ -1259,4 +1267,50 @@ func TestBigNum(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, val.String(), res.String())
 	})
+}
+
+func TestOrderedMap(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE ordered_map_test (data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	orderedMap := OrderedMap{
+		keys:   []any{"first", "second", "third"},
+		values: []any{int32(1), int32(2), int32(3)},
+	}
+
+	_, err = db.Exec(`INSERT INTO ordered_map_test (data) VALUES (?)`, orderedMap)
+	require.NoError(t, err)
+
+	var result OrderedMap
+	err = db.QueryRow(`SELECT data FROM ordered_map_test`).Scan(&result)
+	require.NoError(t, err)
+
+	require.Equal(t, orderedMap.Keys(), result.Keys())
+	require.Equal(t, orderedMap.Values(), result.Values())
+}
+
+func TestMap(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE map_test (data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	testMap := Map{
+		"first":  int32(1),
+		"second": int32(2),
+		"third":  int32(3),
+	}
+
+	_, err = db.Exec(`INSERT INTO map_test (data) VALUES (?)`, testMap)
+	require.NoError(t, err)
+
+	var result Map
+	err = db.QueryRow(`SELECT data FROM map_test`).Scan(&result)
+	require.NoError(t, err)
+
+	require.Equal(t, testMap, result)
 }

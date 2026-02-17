@@ -8,6 +8,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/duckdb/duckdb-go-bindings v0.3.3 h1:lXogtCY8hiGLQvTfK55HcgvaA3K2MrwKeZGqhIin35U=
 github.com/duckdb/duckdb-go-bindings v0.3.3/go.mod h1:zS7OpBP8zwVlP38OljRZOnqWYlNd4KLcVfMoA1JFzpk=
+github.com/duckdb/duckdb-go-bindings v0.3.4 h1:K0h/G9AdQBAJ0cTI+Z2iDHT2/K94pBZXZawsG3qUAj8=
+github.com/duckdb/duckdb-go-bindings v0.3.4/go.mod h1:zS7OpBP8zwVlP38OljRZOnqWYlNd4KLcVfMoA1JFzpk=
 github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.3.3 h1:ue8BtIOSt+2Bt2fEfTAvBcQLxzBFhgfCcyzPtqQWTRA=
 github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.3.3/go.mod h1:EnAvZh1kNJHp5yF+M1ZHNEvapnmt6anq1xXHVrAGqMo=
 github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.3.3 h1:2TrSeTgtwi3WIvub9ba0mny+AClSNo1w0Ghszc2B8lQ=
