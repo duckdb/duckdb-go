@@ -1,4 +1,4 @@
-DUCKDB_VERSION=v1.4.4
+DUCKDB_VERSION=v1.5.0
 
 test.examples:
 	go run examples/appender/main.go
