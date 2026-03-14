@@ -450,7 +450,7 @@ func (info *typeInfo) logicalListType() mapping.LogicalType {
 
 func (info *typeInfo) logicalStructType() mapping.LogicalType {
 	var types []mapping.LogicalType
-	defer destroyLogicalTypes(types)
+	defer func() { destroyLogicalTypes(types) }()
 
 	var names []string
 	for _, entry := range info.structEntries {
@@ -476,7 +476,7 @@ func (info *typeInfo) logicalArrayType() mapping.LogicalType {
 
 func (info *typeInfo) logicalUnionType() mapping.LogicalType {
 	var types []mapping.LogicalType
-	defer destroyLogicalTypes(types)
+	defer func() { destroyLogicalTypes(types) }()
 	for _, t := range info.types {
 		types = append(types, t.logicalType())
 	}

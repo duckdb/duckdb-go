@@ -404,7 +404,7 @@ func inferSliceLogicalTypeAndValue[T any](val T, array bool, length int) (mappin
 	}
 
 	logicalTypes := make([]mapping.LogicalType, 0, length)
-	defer destroyLogicalTypes(logicalTypes)
+	defer func() { destroyLogicalTypes(logicalTypes) }()
 
 	var elemLogicalType mapping.LogicalType
 	expectedIndex := -1
