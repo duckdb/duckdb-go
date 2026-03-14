@@ -202,21 +202,22 @@ func (vec *vector) getDecimal(rowIdx mapping.IdxT) Decimal {
 }
 
 func (vec *vector) getEnum(rowIdx mapping.IdxT) string {
-	var idx mapping.IdxT
+	var idx uint32
 	switch vec.internalType {
 	case TYPE_UTINYINT:
-		idx = mapping.IdxT(getPrimitive[uint8](vec, rowIdx))
+		idx = uint32(getPrimitive[uint8](vec, rowIdx))
 	case TYPE_USMALLINT:
-		idx = mapping.IdxT(getPrimitive[uint16](vec, rowIdx))
+		idx = uint32(getPrimitive[uint16](vec, rowIdx))
 	case TYPE_UINTEGER:
-		idx = mapping.IdxT(getPrimitive[uint32](vec, rowIdx))
+		idx = uint32(getPrimitive[uint32](vec, rowIdx))
 	case TYPE_UBIGINT:
-		idx = mapping.IdxT(getPrimitive[uint64](vec, rowIdx))
+		idx = uint32(getPrimitive[uint64](vec, rowIdx))
 	}
 
-	logicalType := mapping.VectorGetColumnType(vec.vec)
-	defer mapping.DestroyLogicalType(&logicalType)
-	return mapping.EnumDictionaryValue(logicalType, idx)
+	// Use the pre-built reverse dictionary instead of CGO round-trips.
+	// Before: VectorGetColumnType + EnumDictionaryValue + DestroyLogicalType per cell.
+	// After:  single map lookup — no CGO, no heap allocation.
+	return vec.enumDict[idx]
 }
 
 func (vec *vector) getList(rowIdx mapping.IdxT) []any {
