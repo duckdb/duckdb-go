@@ -132,6 +132,8 @@ func (r *rows) getScanType(logicalType mapping.LogicalType, index mapping.IdxT) 
 		return reflectTypeString
 	case TYPE_BLOB:
 		return reflectTypeBytes
+	case TYPE_BIT:
+		return reflectTypeBit
 	case TYPE_DECIMAL:
 		return reflectTypeDecimal
 	case TYPE_LIST:

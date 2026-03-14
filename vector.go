@@ -80,6 +80,8 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 		vec.initBignum()
 	case TYPE_VARCHAR, TYPE_BLOB:
 		vec.initBytes(t)
+	case TYPE_BIT:
+		vec.initBit()
 	case TYPE_DECIMAL:
 		return vec.initDecimal(logicalType, colIdx)
 	case TYPE_ENUM:
@@ -312,6 +314,23 @@ func (vec *vector) initBytes(t Type) {
 		return setBytes(vec, rowIdx, val)
 	}
 	vec.Type = t
+}
+
+func (vec *vector) initBit() {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+		if vec.getNull(rowIdx) {
+			return nil
+		}
+		return vec.getBit(rowIdx)
+	}
+	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
+		if val == nil || val == (*Bit)(nil) {
+			vec.setNull(rowIdx)
+			return nil
+		}
+		return setBit(vec, rowIdx, val)
+	}
+	vec.Type = TYPE_BIT
 }
 
 func (vec *vector) initJSON() {

@@ -39,6 +39,7 @@ var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_BIGNUM:       {input: `46::BIGNUM`, output: `46`},
 	TYPE_VARCHAR:      {input: `'hello world'::VARCHAR`, output: `hello world`},
 	TYPE_BLOB:         {input: `'\xAA'::BLOB`, output: `[170]`},
+	TYPE_BIT:          {input: `'10101'::BIT`, output: `10101`},
 	TYPE_TIMESTAMP_S:  {input: `TIMESTAMP_S '1992-09-20 11:30:00'`, output: `1992-09-20 11:30:00 +0000 UTC`},
 	TYPE_TIMESTAMP_MS: {input: `TIMESTAMP_MS '1992-09-20 11:30:00.123'`, output: `1992-09-20 11:30:00.123 +0000 UTC`},
 	TYPE_TIMESTAMP_NS: {input: `TIMESTAMP_NS '1992-09-20 11:30:00.123456789'`, output: `1992-09-20 11:30:00.123456789 +0000 UTC`},
