@@ -175,6 +175,12 @@ func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 	return []byte(str)
 }
 
+func (vec *vector) getBit(rowIdx mapping.IdxT) Bit {
+	strT := getPrimitive[mapping.StringT](vec, rowIdx)
+	str := mapping.StringTData(&strT)
+	return Bit{Data: []byte(str)}
+}
+
 func (vec *vector) getJSON(rowIdx mapping.IdxT) any {
 	bytes := vec.getBytes(rowIdx).(string)
 	var value any

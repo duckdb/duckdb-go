@@ -613,6 +613,102 @@ func TestDecimalString(t *testing.T) {
 	}
 }
 
+func TestBit(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("SELECT different BIT values", func(t *testing.T) {
+		tests := []string{
+			"10101",
+			"0",
+			"1",
+			"00000000",
+			"11111111",
+			"100000001",
+			// Multi-byte tests
+			"1010101010101010",                 // 16 bits (2 bytes)
+			"10101010101010101",                // 17 bits (3 bytes with padding)
+			"10101010101010101010101010101010", // 32 bits (4 bytes)
+			"111100001100110011",               // 18 bits (3 bytes with 6 padding)
+			"0000000011111111001",              // 19 bits (3 bytes with 5 padding)
+			"1101101001011",                    // 13 bits (2 bytes with 3 padding)
+			"00000000000000000000000010110101", // 30 bits (4 bytes with 2 padding)
+		}
+		for _, bits := range tests {
+			var res Bit
+			err := db.QueryRow(fmt.Sprintf("SELECT '%s'::BIT", bits)).Scan(&res)
+			require.NoError(t, err, "failed for input %s", bits)
+			require.Equal(t, bits, res.String(), "mismatch for input %s", bits)
+		}
+	})
+
+	t.Run("BitFromData", func(t *testing.T) {
+		// Multi-byte: 10 bits "1010101011" = padding=6, [11111110 10101011]
+		b := Bit{Data: []byte{6, 0xFE, 0xAB}}
+		require.Equal(t, 10, b.Len())
+		require.Equal(t, "1010101011", b.String())
+
+		// Byte-aligned: 0xAA = 10101010 (no padding)
+		b8 := Bit{Data: []byte{0, 0xAA}}
+		require.Equal(t, 8, b8.Len())
+		require.Equal(t, "10101010", b8.String())
+
+		// nil returns empty Bit
+		bNil := Bit{}
+		require.Equal(t, 0, bNil.Len())
+
+		// Single byte (just padding count, no data) returns empty Bit
+		bEmpty := Bit{Data: []byte{0}}
+		require.Equal(t, 0, bEmpty.Len())
+	})
+
+	t.Run("Validate", func(t *testing.T) {
+		require.NoError(t, Bit{}.Validate())
+		require.NoError(t, (Bit{Data: []byte{0, 0xAA}}).Validate())
+		require.NoError(t, (Bit{Data: []byte{6, 0xFE, 0xAB}}).Validate())
+
+		// Invalid padding count (> 7)
+		require.ErrorContains(t, (Bit{Data: []byte{8, 0xAA}}).Validate(), "invalid padding count")
+
+		// Padding bits not set to 1
+		require.ErrorContains(t, (Bit{Data: []byte{6, 0x3E, 0xAB}}).Validate(), "padding bits must be 1s")
+	})
+
+	t.Run("NewBitFromString", func(t *testing.T) {
+		// Empty string returns empty Bit.
+		b, err := NewBitFromString("")
+		require.NoError(t, err)
+		require.Equal(t, Bit{}, b)
+
+		// Invalid characters
+		_, err = NewBitFromString("10102")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid character")
+	})
+
+	t.Run("BIT binding", func(t *testing.T) {
+		_, err := db.Exec("CREATE TABLE bit_bind_test (bits BIT)")
+		require.NoError(t, err)
+
+		tests := []string{
+			"11001100",
+			"111100001010010110110100",
+		}
+		for _, bits := range tests {
+			bitVal, err := NewBitFromString(bits)
+			require.NoError(t, err)
+
+			_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", bitVal)
+			require.NoError(t, err)
+
+			var res Bit
+			err = db.QueryRow("SELECT bits FROM bit_bind_test WHERE bits = ?", bitVal).Scan(&res)
+			require.NoError(t, err)
+			require.Equal(t, bits, res.String())
+		}
+	})
+}
+
 func TestBlob(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
