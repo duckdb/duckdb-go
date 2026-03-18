@@ -209,7 +209,7 @@ func (vec *vector) getEnum(rowIdx mapping.IdxT) string {
 	case TYPE_USMALLINT:
 		idx = uint32(getPrimitive[uint16](vec, rowIdx))
 	case TYPE_UINTEGER:
-		idx = uint32(getPrimitive[uint32](vec, rowIdx))
+		idx = getPrimitive[uint32](vec, rowIdx)
 	case TYPE_UBIGINT:
 		idx = uint32(getPrimitive[uint64](vec, rowIdx))
 	}

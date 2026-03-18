@@ -790,7 +790,9 @@ func TestEnumNullValues(t *testing.T) {
 
 	rows, err := db.Query("SELECT val FROM nullable_colors ORDER BY rowid")
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() {
+		require.NoError(t, rows.Close())
+	}()
 
 	expected := []any{"red", nil, "blue"}
 	for _, exp := range expected {
@@ -827,7 +829,9 @@ func TestEnumLargeDictionary(t *testing.T) {
 
 	rows, err := db.Query("SELECT val FROM large_enum_tbl ORDER BY rowid")
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() {
+		require.NoError(t, rows.Close())
+	}()
 
 	expected := []string{"v0", "v255", "v299"}
 	for _, exp := range expected {

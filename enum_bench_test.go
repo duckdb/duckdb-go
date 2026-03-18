@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
 
-	"github.com/duckdb/duckdb-go/v2/mapping"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // getEnumCGO is the original (pre-optimization) implementation, preserved
@@ -79,7 +81,9 @@ func benchEnumVector(b *testing.B, rowCount int, useCGO bool) {
 	mc, err := c.Connect(context.Background())
 	require.NoError(b, err)
 	conn := mc.(*Conn)
-	defer conn.Close()
+	defer func() {
+		require.NoError(b, conn.Close())
+	}()
 
 	var sink string
 	b.ResetTimer()
@@ -98,7 +102,7 @@ func benchEnumVector(b *testing.B, rowCount int, useCGO bool) {
 
 		for {
 			e = r.Next(dest)
-			if e == io.EOF {
+			if errors.Is(e, io.EOF) {
 				break
 			}
 			require.NoError(b, e)
@@ -114,8 +118,8 @@ func benchEnumVector(b *testing.B, rowCount int, useCGO bool) {
 			count++
 		}
 
-		dkRows.Close()
-		s.Close()
+		require.NoError(b, dkRows.Close())
+		require.NoError(b, s.Close())
 		require.Equal(b, rowCount, count)
 	}
 
