@@ -362,12 +362,11 @@ func (vec *vector) initDecimal(logicalType mapping.LogicalType, colIdx int) erro
 
 func (vec *vector) initEnum(logicalType mapping.LogicalType, colIdx int) error {
 	// Initialize the forward (name→index) and reverse (index→name) dictionaries.
-	// The reverse dictionary (enumDict) eliminates per-cell CGO calls in getEnum:
-	// without it, every getEnum call would create and destroy a LogicalType via CGO
-	// just to look up the enum string — O(2 CGO round-trips) per cell.
+	// enumDict uses a slice because enum indices are dense integers starting at 0,
+	// making slice indexing faster than map hashing.
 	dictSize := mapping.EnumDictionarySize(logicalType)
 	vec.namesDict = make(map[string]uint32, dictSize)
-	vec.enumDict = make(map[uint32]string, dictSize)
+	vec.enumDict = make([]string, dictSize)
 
 	for i := range dictSize {
 		str := mapping.EnumDictionaryValue(logicalType, mapping.IdxT(i))

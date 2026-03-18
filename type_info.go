@@ -126,8 +126,9 @@ type vectorTypeInfo struct {
 	namesDict map[string]uint32
 	tagDict   map[uint32]string
 	// enumDict is the reverse of namesDict for ENUM types (index → name).
-	// Built once during initEnum to avoid per-cell CGO calls in getEnum.
-	enumDict map[uint32]string
+	// Uses a slice instead of a map because enum indices are dense integers starting at 0,
+	// making indexing faster than map hashing.
+	enumDict []string
 }
 
 type typeInfo struct {

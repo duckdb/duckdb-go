@@ -214,9 +214,9 @@ func (vec *vector) getEnum(rowIdx mapping.IdxT) string {
 		idx = uint32(getPrimitive[uint64](vec, rowIdx))
 	}
 
-	// Use the pre-built reverse dictionary instead of CGO round-trips.
+	// Use the pre-built slice instead of CGO round-trips.
 	// Before: VectorGetColumnType + EnumDictionaryValue + DestroyLogicalType per cell.
-	// After:  single map lookup — no CGO, no heap allocation.
+	// After:  single slice index — no CGO, no hashing, no heap allocation.
 	return vec.enumDict[idx]
 }
 

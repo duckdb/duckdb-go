@@ -57,7 +57,7 @@ func setupEnumBench(b *testing.B, rowCount int) (*sql.DB, *Connector) {
 //
 // Both sub-benchmarks iterate the same data at the vector level,
 // differing only in the getter function called per cell:
-//   - Dict: vec.getEnum()    — single map[uint32]string lookup
+//   - Dict: vec.getEnum()    — single []string slice index lookup
 //   - CGO:  vec.getEnumCGO() — VectorGetColumnType + EnumDictionaryValue + DestroyLogicalType
 func BenchmarkEnumGetValue(b *testing.B) {
 	for _, n := range []int{10_000, 100_000} {

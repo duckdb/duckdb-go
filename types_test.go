@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -773,6 +774,68 @@ func TestENUMs(t *testing.T) {
 	var row Composite[[]environment]
 	require.NoError(t, db.QueryRow("SELECT environments FROM all_enums").Scan(&row))
 	require.ElementsMatch(t, []environment{Air, Sea, Land}, row.Get())
+}
+
+// TestEnumNullValues verifies that NULL ENUM cells are read back as nil.
+func TestEnumNullValues(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec("CREATE TYPE nullable_color AS ENUM ('red', 'green', 'blue')")
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE nullable_colors (val nullable_color)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO nullable_colors VALUES ('red'), (NULL), ('blue')")
+	require.NoError(t, err)
+
+	rows, err := db.Query("SELECT val FROM nullable_colors ORDER BY rowid")
+	require.NoError(t, err)
+	defer rows.Close()
+
+	expected := []any{"red", nil, "blue"}
+	for _, exp := range expected {
+		require.True(t, rows.Next())
+		var val any
+		require.NoError(t, rows.Scan(&val))
+		require.Equal(t, exp, val)
+	}
+}
+
+// TestEnumLargeDictionary verifies correctness when the ENUM dictionary exceeds
+// 255 entries, forcing DuckDB to use USMALLINT as the internal storage type.
+// This exercises the TYPE_USMALLINT branch in getEnum.
+func TestEnumLargeDictionary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// Build 300 unique enum values: "v0", "v1", ..., "v299"
+	// DuckDB uses UTINYINT for ≤255 values and USMALLINT for 256–65535.
+	values := make([]string, 300)
+	for i := range values {
+		values[i] = fmt.Sprintf("'v%d'", i)
+	}
+	createSQL := fmt.Sprintf("CREATE TYPE large_enum AS ENUM (%s)", strings.Join(values, ", "))
+	_, err := db.Exec(createSQL)
+	require.NoError(t, err)
+
+	_, err = db.Exec("CREATE TABLE large_enum_tbl (val large_enum)")
+	require.NoError(t, err)
+
+	// Insert first, last, and a middle value to cover boundary indices.
+	_, err = db.Exec("INSERT INTO large_enum_tbl VALUES ('v0'), ('v255'), ('v299')")
+	require.NoError(t, err)
+
+	rows, err := db.Query("SELECT val FROM large_enum_tbl ORDER BY rowid")
+	require.NoError(t, err)
+	defer rows.Close()
+
+	expected := []string{"v0", "v255", "v299"}
+	for _, exp := range expected {
+		require.True(t, rows.Next())
+		var val string
+		require.NoError(t, rows.Scan(&val))
+		require.Equal(t, exp, val)
+	}
 }
 
 func TestHugeInt(t *testing.T) {
