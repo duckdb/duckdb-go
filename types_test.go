@@ -55,6 +55,7 @@ type testTypesRow struct {
 	List_col         Composite[[]int32]
 	Struct_col       Composite[testTypesStruct]
 	Map_col          Map
+	OrderedMap_col   OrderedMap
 	Array_col        Composite[[3]int32]
 	Time_tz_col      time.Time
 	Timestamp_tz_col time.Time
@@ -93,6 +94,7 @@ const testTypesTableSQL = `CREATE TABLE test (
 	List_col INTEGER[],
 	Struct_col STRUCT(A INTEGER, B VARCHAR),
 	Map_col MAP(INTEGER, VARCHAR),
+	OrderedMap_col MAP(INTEGER, VARCHAR),
 	Array_col INTEGER[3],
 	Time_tz_col TIMETZ,
 	Timestamp_tz_col TIMESTAMPTZ,
@@ -149,6 +151,9 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 	mapCol := Map{
 		int32(i): "other_longer_val",
 	}
+	orderedMapCol := OrderedMap{}
+	orderedMapCol.Set(int32(i), "other_longer_val")
+	orderedMapCol.Set(int32(i+2), "even_longer_val")
 	arrayCol := Composite[[3]int32]{
 		[3]int32{int32(i), int32(i), int32(i)},
 	}
@@ -190,6 +195,7 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 		listCol,
 		structCol,
 		mapCol,
+		orderedMapCol,
 		arrayCol,
 		timeTZ,
 		ts,
@@ -247,6 +253,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			r.List_col.Get(),
 			r.Struct_col.Get(),
 			r.Map_col,
+			r.OrderedMap_col,
 			r.Array_col.Get(),
 			r.Time_tz_col,
 			r.Timestamp_tz_col,
@@ -295,6 +302,7 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 			&r.List_col,
 			&r.Struct_col,
 			&r.Map_col,
+			&r.OrderedMap_col,
 			&r.Array_col,
 			&r.Time_tz_col,
 			&r.Timestamp_tz_col,
@@ -313,22 +321,26 @@ func testTypes[T require.TestingT](t T, db *sql.DB, a *Appender, expectedRows []
 }
 
 func TestTypes(t *testing.T) {
-	expectedRows := testTypesGenerateRows(t, 3)
-	c, db, conn, a := prepareAppender(t, testTypesEnumSQL+";"+testTypesTableSQL)
-	defer cleanupAppender(t, c, db, conn, a)
-	actualRows := testTypes(t, db, a, expectedRows)
+	for _, appenderType := range appenderTypes {
+		func() {
+			expectedRows := testTypesGenerateRows(t, 3)
+			c, db, conn, a := prepareAppender(t, appenderType, testTypesEnumSQL+";"+testTypesTableSQL)
+			defer cleanupAppender(t, c, db, conn, a)
+			actualRows := testTypes(t, db, a, expectedRows)
 
-	for i := range actualRows {
-		expectedRows[i].toUTC()
-		// Time_tz_col preserves timezone, compare using Equal() which compares instants.
-		require.True(t, expectedRows[i].Time_tz_col.Equal(actualRows[i].Time_tz_col),
-			"Time_tz_col mismatch: expected %v, got %v", expectedRows[i].Time_tz_col, actualRows[i].Time_tz_col)
-		// Set to same value for struct comparison.
-		actualRows[i].Time_tz_col = expectedRows[i].Time_tz_col
-		actualRows[i].normalizeBigInt()
-		require.Equal(t, expectedRows[i], actualRows[i])
+			for i := range actualRows {
+				expectedRows[i].toUTC()
+				// Time_tz_col preserves timezone, compare using Equal() which compares instants.
+				require.True(t, expectedRows[i].Time_tz_col.Equal(actualRows[i].Time_tz_col),
+					"Time_tz_col mismatch: expected %v, got %v", expectedRows[i].Time_tz_col, actualRows[i].Time_tz_col)
+				// Set to same value for struct comparison.
+				actualRows[i].Time_tz_col = expectedRows[i].Time_tz_col
+				actualRows[i].normalizeBigInt()
+				require.Equal(t, expectedRows[i], actualRows[i])
+			}
+			require.Len(t, actualRows, len(expectedRows))
+		}()
 	}
-	require.Len(t, actualRows, len(expectedRows))
 }
 
 // NOTE: duckdb-go only contains very few benchmarks. The purpose of those benchmarks is to avoid regressions
@@ -337,7 +349,7 @@ var benchmarkTypesResult []testTypesRow
 
 func BenchmarkTypes(b *testing.B) {
 	expectedRows := testTypesGenerateRows(b, GetDataChunkCapacity()*3+10)
-	c, db, conn, a := prepareAppender(b, testTypesEnumSQL+";"+testTypesTableSQL)
+	c, db, conn, a := prepareAppender(b, appenderTypeDefault, testTypesEnumSQL+";"+testTypesTableSQL)
 	defer cleanupAppender(b, c, db, conn, a)
 
 	var r []testTypesRow
@@ -1326,4 +1338,151 @@ func TestBigNum(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, val.String(), res.String())
 	})
+}
+
+func TestOrderedMap(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE ordered_map_test (data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	orderedMap := OrderedMap{
+		keys:   []any{"first", "second", "third"},
+		values: []any{int32(1), int32(2), int32(3)},
+	}
+
+	_, err = db.Exec(`INSERT INTO ordered_map_test (data) VALUES (?)`, orderedMap)
+	require.NoError(t, err)
+
+	var result OrderedMap
+	err = db.QueryRow(`SELECT data FROM ordered_map_test`).Scan(&result)
+	require.NoError(t, err)
+
+	require.Equal(t, orderedMap.Keys(), result.Keys())
+	require.Equal(t, orderedMap.Values(), result.Values())
+}
+
+func TestMap(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE map_test (data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	testMap := Map{
+		"first":  int32(1),
+		"second": int32(2),
+		"third":  int32(3),
+	}
+
+	_, err = db.Exec(`INSERT INTO map_test (data) VALUES (?)`, testMap)
+	require.NoError(t, err)
+
+	var result Map
+	err = db.QueryRow(`SELECT data FROM map_test`).Scan(&result)
+	require.NoError(t, err)
+
+	require.Equal(t, testMap, result)
+}
+
+func TestOrderedMapWhereClause(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE map_equality_test (id INTEGER, data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	// Insert two rows with ordered maps
+	orderedMap1 := OrderedMap{
+		keys:   []any{"a", "b", "c"},
+		values: []any{int32(1), int32(2), int32(3)},
+	}
+	orderedMap2 := OrderedMap{
+		keys:   []any{"x", "y", "z"},
+		values: []any{int32(7), int32(8), int32(9)},
+	}
+
+	_, err = db.Exec(`INSERT INTO map_equality_test (id, data) VALUES (?, ?)`, 1, orderedMap1)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO map_equality_test (id, data) VALUES (?, ?)`, 2, orderedMap2)
+	require.NoError(t, err)
+
+	// Test WHERE clause with exact map equality
+	var resultID int
+	var resultMap OrderedMap
+	err = db.QueryRow(`SELECT id, data FROM map_equality_test WHERE data = ?`, orderedMap1).Scan(&resultID, &resultMap)
+	require.NoError(t, err)
+	require.Equal(t, 1, resultID)
+	require.Equal(t, orderedMap1.Keys(), resultMap.Keys())
+	require.Equal(t, orderedMap1.Values(), resultMap.Values())
+
+	// Test that wrong order doesn't match
+	wrongOrderMap := OrderedMap{
+		keys:   []any{"c", "b", "a"}, // Different order
+		values: []any{int32(3), int32(2), int32(1)},
+	}
+	err = db.QueryRow(`SELECT id, data FROM map_equality_test WHERE data = ?`, wrongOrderMap).Scan(&resultID, &resultMap)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestOrderedMapEmpty(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE empty_map_test (data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	// Test empty OrderedMap
+	emptyMap := OrderedMap{
+		keys:   []any{},
+		values: []any{},
+	}
+
+	_, err = db.Exec(`INSERT INTO empty_map_test (data) VALUES (?)`, emptyMap)
+	require.NoError(t, err)
+
+	var result OrderedMap
+	err = db.QueryRow(`SELECT data FROM empty_map_test`).Scan(&result)
+	require.NoError(t, err)
+
+	require.Equal(t, 0, result.Len())
+	require.Equal(t, emptyMap.Keys(), result.Keys())
+	require.Equal(t, emptyMap.Values(), result.Values())
+}
+
+func TestOrderedMapNullValue(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE null_map_test (id INTEGER, data MAP(VARCHAR, INTEGER))`)
+	require.NoError(t, err)
+
+	// Test inserting a NULL map
+	_, err = db.Exec(`INSERT INTO null_map_test (id, data) VALUES (?, ?)`, 1, nil)
+	require.NoError(t, err)
+
+	// Test inserting a regular map
+	regularMap := OrderedMap{
+		keys:   []any{"first", "second"},
+		values: []any{int32(1), int32(2)},
+	}
+	_, err = db.Exec(`INSERT INTO null_map_test (id, data) VALUES (?, ?)`, 2, regularMap)
+	require.NoError(t, err)
+
+	// Verify NULL map
+	var id int
+	var result *OrderedMap
+	err = db.QueryRow(`SELECT id, data FROM null_map_test WHERE id = 1`).Scan(&id, &result)
+	require.NoError(t, err)
+	require.Equal(t, 1, id)
+	require.Nil(t, result)
+
+	// Verify regular map
+	var result2 OrderedMap
+	err = db.QueryRow(`SELECT id, data FROM null_map_test WHERE id = 2`).Scan(&id, &result2)
+	require.NoError(t, err)
+	require.Equal(t, 2, id)
+	require.Equal(t, regularMap.Keys(), result2.Keys())
+	require.Equal(t, regularMap.Values(), result2.Values())
 }

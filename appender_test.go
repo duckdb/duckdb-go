@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
+	"sync"
 	"testing"
 	"time"
 	_ "time/tzdata"
@@ -56,7 +57,7 @@ type mixedStruct struct {
 		L []int32
 	}
 	C struct {
-		L Map
+		L OrderedMap
 	}
 }
 
@@ -118,14 +119,29 @@ func randInt(lo, hi int64) int64 {
 	return rand.Int63n(hi-lo+1) + lo
 }
 
-func prepareAppender[T require.TestingT](t T, query string) (*Connector, *sql.DB, driver.Conn, *Appender) {
+const (
+	appenderTypeDefault = "default"
+	appenderTypeTable   = "table"
+)
+
+var appenderTypes = []string{appenderTypeDefault, appenderTypeTable}
+
+func prepareAppender[T require.TestingT](t T, appenderType, createQuery string) (*Connector, *sql.DB, driver.Conn, *Appender) {
 	c := newConnectorWrapper(t, ``, nil)
 
+	// Create the table.
 	db := sql.OpenDB(c)
-	_, err := db.Exec(query)
+	_, err := db.Exec(createQuery)
 	require.NoError(t, err)
 
 	conn := openDriverConnWrapper(t, c)
+
+	if appenderType == "table" {
+		appendQuery := `INSERT INTO test FROM appended_data`
+		a := newTableAppenderWrapper(t, &conn, appendQuery, "", "", "test", []string{})
+		return c, db, conn, a
+	}
+
 	a := newAppenderWrapper(t, &conn, "", "test")
 	return c, db, conn, a
 }
@@ -155,13 +171,13 @@ func cleanupAppender[T require.TestingT](t T, c *Connector, db *sql.DB, conn dri
 }
 
 func TestAppenderClose(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (i INTEGER)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (i INTEGER)`)
 	defer cleanupAppender(t, c, db, conn, a)
 	require.NoError(t, a.AppendRow(int32(42)))
 }
 
 func TestAppendChunks(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 			id BIGINT,
 			uint8 UTINYINT
@@ -198,7 +214,7 @@ func TestAppendChunks(t *testing.T) {
 }
 
 func TestAppenderList(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
 		string_list VARCHAR[],
 		int_list INTEGER[]
@@ -233,7 +249,7 @@ func TestAppenderList(t *testing.T) {
 }
 
 func TestAppenderArray(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (string_array VARCHAR[3])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (string_array VARCHAR[3])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	count := 10
@@ -260,61 +276,65 @@ func TestAppenderArray(t *testing.T) {
 }
 
 func TestAppenderNested(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, createNestedDataTableSQL)
-	defer cleanupAppender(t, c, db, conn, a)
+	for _, appenderType := range appenderTypes {
+		func() {
+			c, db, conn, a := prepareAppender(t, appenderType, createNestedDataTableSQL)
+			defer cleanupAppender(t, c, db, conn, a)
 
-	const rowCount = 1000
-	rowsToAppend := prepareNestedData(rowCount)
-	appendNestedData(t, a, rowsToAppend)
+			const rowCount = 1000
+			rowsToAppend := prepareNestedData(rowCount)
+			appendNestedData(t, a, rowsToAppend)
 
-	// Verify results.
-	res, err := db.QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
-	require.NoError(t, err)
-	defer closeRowsWrapper(t, res)
+			// Verify results.
+			res, err := db.QueryContext(context.Background(), `SELECT * FROM test ORDER BY id`)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, res)
 
-	i := 0
-	for res.Next() {
-		var r resultRow
-		require.NoError(t, res.Scan(
-			&r.ID,
-			&r.stringList,
-			&r.intList,
-			&r.nestedIntList,
-			&r.tripleNestedIntList,
-			&r.simpleStruct,
-			&r.wrappedStruct,
-			&r.doubleWrappedStruct,
-			&r.structList,
-			&r.structWithList,
-			&r.mix,
-			&r.mixList,
-		))
+			i := 0
+			for res.Next() {
+				var r resultRow
+				require.NoError(t, res.Scan(
+					&r.ID,
+					&r.stringList,
+					&r.intList,
+					&r.nestedIntList,
+					&r.tripleNestedIntList,
+					&r.simpleStruct,
+					&r.wrappedStruct,
+					&r.doubleWrappedStruct,
+					&r.structList,
+					&r.structWithList,
+					&r.mix,
+					&r.mixList,
+				))
 
-		require.Equal(t, rowsToAppend[i].ID, r.ID)
-		require.Equal(t, rowsToAppend[i].stringList, castList[string](r.stringList))
-		require.Equal(t, rowsToAppend[i].intList, castList[int32](r.intList))
+				require.Equal(t, rowsToAppend[i].ID, r.ID)
+				require.Equal(t, rowsToAppend[i].stringList, castList[string](r.stringList))
+				require.Equal(t, rowsToAppend[i].intList, castList[int32](r.intList))
 
-		strRes := fmt.Sprintf("%v", r.nestedIntList)
-		require.Equal(t, "[[1 2 3] [4 5 6]]", strRes)
-		strRes = fmt.Sprintf("%v", r.tripleNestedIntList)
-		require.Equal(t, "[[[1 2 3] [4 5 6]] [[7 8 9] [10 11 12]]]", strRes)
+				strRes := fmt.Sprintf("%v", r.nestedIntList)
+				require.Equal(t, "[[1 2 3] [4 5 6]]", strRes)
+				strRes = fmt.Sprintf("%v", r.tripleNestedIntList)
+				require.Equal(t, "[[[1 2 3] [4 5 6]] [[7 8 9] [10 11 12]]]", strRes)
 
-		require.Equal(t, rowsToAppend[i].simpleStruct, castMapToStruct[simpleStruct](t, r.simpleStruct))
-		require.Equal(t, rowsToAppend[i].wrappedStruct, castMapToStruct[wrappedStruct](t, r.wrappedStruct))
-		require.Equal(t, rowsToAppend[i].doubleWrappedStruct, castMapToStruct[doubleWrappedStruct](t, r.doubleWrappedStruct))
+				require.Equal(t, rowsToAppend[i].simpleStruct, castMapToStruct[simpleStruct](t, r.simpleStruct))
+				require.Equal(t, rowsToAppend[i].wrappedStruct, castMapToStruct[wrappedStruct](t, r.wrappedStruct))
+				require.Equal(t, rowsToAppend[i].doubleWrappedStruct, castMapToStruct[doubleWrappedStruct](t, r.doubleWrappedStruct))
 
-		require.Equal(t, rowsToAppend[i].structList, castMapListToStruct[simpleStruct](t, r.structList))
-		require.Equal(t, rowsToAppend[i].structWithList, castMapToStruct[structWithList](t, r.structWithList))
-		require.Equal(t, rowsToAppend[i].mix, castMapToStruct[mixedStruct](t, r.mix))
-		require.Equal(t, rowsToAppend[i].mixList, castMapListToStruct[mixedStruct](t, r.mixList))
+				require.Equal(t, rowsToAppend[i].structList, castMapListToStruct[simpleStruct](t, r.structList))
+				require.Equal(t, rowsToAppend[i].structWithList, castMapToStruct[structWithList](t, r.structWithList))
+				require.Equal(t, rowsToAppend[i].mix, castMapToStruct[mixedStruct](t, r.mix))
+				require.Equal(t, rowsToAppend[i].mixList, castMapListToStruct[mixedStruct](t, r.mixList))
 
-		i++
+				i++
+			}
+			require.Equal(t, rowCount, i)
+		}()
 	}
-	require.Equal(t, rowCount, i)
 }
 
 func TestAppenderNullList(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (int_slice VARCHAR[][][])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (int_slice VARCHAR[][][])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	require.NoError(t, a.AppendRow([][][]string{{{}}}))
@@ -355,7 +375,7 @@ func TestAppenderNullList(t *testing.T) {
 }
 
 func TestAppenderNullStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
 		simple_struct STRUCT(a INT, B VARCHAR)
 	)`)
@@ -385,7 +405,9 @@ func TestAppenderNullStruct(t *testing.T) {
 }
 
 func TestAppenderNestedNullStruct(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	for _, appenderType := range appenderTypes {
+		func() {
+			c, db, conn, a := prepareAppender(t, appenderType, `
 	CREATE TABLE test (
 		double_wrapped_struct STRUCT(
 				X VARCHAR,
@@ -398,45 +420,47 @@ func TestAppenderNestedNullStruct(t *testing.T) {
 				)
 			)
 	)`)
-	defer cleanupAppender(t, c, db, conn, a)
+			defer cleanupAppender(t, c, db, conn, a)
 
-	require.NoError(t, a.AppendRow(doubleWrappedStruct{
-		"so much nesting",
-		wrappedStruct{
-			"wrapped",
-			simpleStruct{1, "foo"},
-		},
-	}))
-	require.NoError(t, a.AppendRow(nil))
-	require.NoError(t, a.AppendRow(doubleWrappedStruct{
-		"now we are done nesting NULLs",
-		wrappedStruct{
-			"unwrap",
-			simpleStruct{21, "bar"},
-		},
-	}))
-	require.NoError(t, a.Flush())
+			require.NoError(t, a.AppendRow(doubleWrappedStruct{
+				"so much nesting",
+				wrappedStruct{
+					"wrapped",
+					simpleStruct{1, "foo"},
+				},
+			}))
+			require.NoError(t, a.AppendRow(nil))
+			require.NoError(t, a.AppendRow(doubleWrappedStruct{
+				"now we are done nesting NULLs",
+				wrappedStruct{
+					"unwrap",
+					simpleStruct{21, "bar"},
+				},
+			}))
+			require.NoError(t, a.Flush())
 
-	// Verify results.
-	res, err := db.QueryContext(context.Background(), `SELECT double_wrapped_struct FROM test`)
-	require.NoError(t, err)
-	defer closeRowsWrapper(t, res)
-
-	i := 0
-	for res.Next() {
-		var row any
-		err := res.Scan(&row)
-		if i == 1 {
-			require.Nil(t, row)
-		} else {
+			// Verify results.
+			res, err := db.QueryContext(context.Background(), `SELECT double_wrapped_struct FROM test`)
 			require.NoError(t, err)
-		}
-		i++
+			defer closeRowsWrapper(t, res)
+
+			i := 0
+			for res.Next() {
+				var row any
+				err := res.Scan(&row)
+				if i == 1 {
+					require.Nil(t, row)
+				} else {
+					require.NoError(t, err)
+				}
+				i++
+			}
+		}()
 	}
 }
 
 func TestAppenderNullIntAndString(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (id BIGINT, str VARCHAR)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id BIGINT, str VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	require.NoError(t, a.AppendRow(int64(32), "hello"))
@@ -475,7 +499,7 @@ func TestAppenderNullIntAndString(t *testing.T) {
 }
 
 func TestAppenderUUID(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (id UUID)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id UUID)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	id := UUID(uuid.New())
@@ -538,7 +562,7 @@ func newAppenderHugeIntFloatTest[T float32 | float64](val T, lower, upper *big.I
 }
 
 func testAppenderSignedHugeInt(t *testing.T, sqlType string) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (val `+sqlType+`, id VARCHAR)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (val `+sqlType+`, id VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	tests := map[string]func(t *testing.T){
@@ -568,7 +592,7 @@ func TestAppenderHugeInt(t *testing.T) {
 }
 
 func TestAppenderUHugeInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (val UHUGEINT, id VARCHAR)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (val UHUGEINT, id VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	tests := map[string]func(t *testing.T){
@@ -593,7 +617,7 @@ func TestAppenderBigNum(t *testing.T) {
 }
 
 func TestAppenderTsNs(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (timestamp TIMESTAMP_NS)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (timestamp TIMESTAMP_NS)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	ts := time.Date(2022, time.January, 1, 12, 0, 33, 242, time.UTC)
@@ -609,7 +633,7 @@ func TestAppenderTsNs(t *testing.T) {
 }
 
 func TestAppenderDate(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (date DATE)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (date DATE)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	ts := time.Date(1996, time.July, 23, 11, 42, 23, 123, time.UTC)
@@ -627,7 +651,7 @@ func TestAppenderDate(t *testing.T) {
 }
 
 func TestAppenderTime(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (time TIME)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (time TIME)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	ts := time.Date(1996, time.July, 23, 11, 42, 23, 123000, time.UTC)
@@ -644,7 +668,7 @@ func TestAppenderTime(t *testing.T) {
 }
 
 func TestAppenderNullTimestampTZ(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (ts TIMESTAMPTZ)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (ts TIMESTAMPTZ)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *time.Time.
@@ -661,7 +685,7 @@ func TestAppenderNullTimestampTZ(t *testing.T) {
 }
 
 func TestAppenderNullDate(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (d DATE)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (d DATE)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *time.Time.
@@ -678,7 +702,7 @@ func TestAppenderNullDate(t *testing.T) {
 }
 
 func TestAppenderNullTime(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (t TIME)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t TIME)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *time.Time.
@@ -695,7 +719,7 @@ func TestAppenderNullTime(t *testing.T) {
 }
 
 func TestAppenderNullTimeTZ(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (t TIMETZ)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t TIMETZ)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *time.Time.
@@ -712,7 +736,7 @@ func TestAppenderNullTimeTZ(t *testing.T) {
 }
 
 func TestAppenderNullInterval(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (i INTERVAL)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (i INTERVAL)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *Interval.
@@ -729,7 +753,7 @@ func TestAppenderNullInterval(t *testing.T) {
 }
 
 func TestAppenderNullHugeInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (h HUGEINT)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (h HUGEINT)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *big.Int.
@@ -746,7 +770,7 @@ func TestAppenderNullHugeInt(t *testing.T) {
 }
 
 func TestAppenderNullUHugeInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (h UHUGEINT)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (h UHUGEINT)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *big.Int.
@@ -763,7 +787,7 @@ func TestAppenderNullUHugeInt(t *testing.T) {
 }
 
 func TestAppenderNullBigNum(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (b BIGNUM)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (b BIGNUM)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Append a nil *big.Int.
@@ -780,7 +804,7 @@ func TestAppenderNullBigNum(t *testing.T) {
 }
 
 func TestAppenderTimeTZ(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (time TIMETZ)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (time TIMETZ)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Test a location east of GMT (Asia/Shanghai is UTC+8).
@@ -819,7 +843,7 @@ func TestAppenderTimeTZ(t *testing.T) {
 }
 
 func TestAppenderBlob(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (data BLOB)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (data BLOB)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	data := []byte{0x01, 0x02, 0x00, 0x03, 0x04}
@@ -846,7 +870,7 @@ func TestAppenderBlob(t *testing.T) {
 }
 
 func TestAppenderBlobTinyInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
 		data UTINYINT[]
 	)`)
@@ -883,7 +907,7 @@ func TestAppenderBlobTinyInt(t *testing.T) {
 }
 
 func TestAppenderUint8SliceTinyInt(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
 		data UTINYINT[]
 	)`)
@@ -916,7 +940,7 @@ func TestAppenderUint8SliceTinyInt(t *testing.T) {
 }
 
 func TestAppenderDecimal(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
 		data DECIMAL(4,3)
 	)`)
@@ -949,34 +973,38 @@ func TestAppenderDecimal(t *testing.T) {
 }
 
 func TestAppenderStrings(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	for _, appenderType := range appenderTypes {
+		func() {
+			c, db, conn, a := prepareAppender(t, appenderType, `
 	CREATE TABLE test (str VARCHAR)`)
-	defer cleanupAppender(t, c, db, conn, a)
+			defer cleanupAppender(t, c, db, conn, a)
 
-	expected := []string{
-		"I am not an inlined string no no",
-		"I am",
-		"Who wants to be inlined anyways?",
+			expected := []string{
+				"I am not an inlined string no no",
+				"I am",
+				"Who wants to be inlined anyways?",
+			}
+
+			require.NoError(t, a.AppendRow(expected[0]))
+			require.NoError(t, a.AppendRow(expected[1]))
+			require.NoError(t, a.AppendRow(expected[2]))
+			require.NoError(t, a.Flush())
+
+			// Verify results.
+			res, err := db.QueryContext(context.Background(), `SELECT str FROM test`)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, res)
+
+			i := 0
+			for res.Next() {
+				var str string
+				require.NoError(t, res.Scan(&str))
+				require.Equal(t, expected[i], str)
+				i++
+			}
+			require.Equal(t, 3, i)
+		}()
 	}
-
-	require.NoError(t, a.AppendRow(expected[0]))
-	require.NoError(t, a.AppendRow(expected[1]))
-	require.NoError(t, a.AppendRow(expected[2]))
-	require.NoError(t, a.Flush())
-
-	// Verify results.
-	res, err := db.QueryContext(context.Background(), `SELECT str FROM test`)
-	require.NoError(t, err)
-	defer closeRowsWrapper(t, res)
-
-	i := 0
-	for res.Next() {
-		var str string
-		require.NoError(t, res.Scan(&str))
-		require.Equal(t, expected[i], str)
-		i++
-	}
-	require.Equal(t, 3, i)
 }
 
 func TestAppendToCatalog(t *testing.T) {
@@ -1046,7 +1074,7 @@ var jsonResults = [][]string{
 }
 
 func TestAppenderWithJSON(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
 		    c1 UBIGINT,
 			l1 TINYINT[],
@@ -1089,69 +1117,73 @@ func TestAppenderWithJSON(t *testing.T) {
 }
 
 func TestAppenderUnion(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `
-    CREATE TABLE test (
-    	i INTEGER,
-        u UNION(num INTEGER, str VARCHAR)
-    )`)
-	defer cleanupAppender(t, c, db, conn, a)
+	for _, appenderType := range appenderTypes {
+		func() {
+			c, db, conn, a := prepareAppender(t, appenderType, `
+			CREATE TABLE test (
+				i INTEGER,
+				u UNION(num INTEGER, str VARCHAR)
+			)`)
+			defer cleanupAppender(t, c, db, conn, a)
 
-	testCases := []struct {
-		name     string
-		input    any
-		expected any
-	}{
-		{
-			name:     "integer union",
-			input:    Union{Tag: "num", Value: int32(42)},
-			expected: Union{Tag: "num", Value: int32(42)},
-		},
-		{
-			name:     "string union",
-			input:    Union{Tag: "str", Value: "hello union"},
-			expected: Union{Tag: "str", Value: "hello union"},
-		},
-		{
-			name:     "plain integer",
-			input:    42,
-			expected: Union{Tag: "num", Value: int32(42)},
-		},
-		{
-			name:     "plain string",
-			input:    "plain",
-			expected: Union{Tag: "str", Value: "plain"},
-		},
-		{
-			name:     "nil value",
-			input:    nil,
-			expected: nil,
-		},
+			testCases := []struct {
+				name     string
+				input    any
+				expected any
+			}{
+				{
+					name:     "integer union",
+					input:    Union{Tag: "num", Value: int32(42)},
+					expected: Union{Tag: "num", Value: int32(42)},
+				},
+				{
+					name:     "string union",
+					input:    Union{Tag: "str", Value: "hello union"},
+					expected: Union{Tag: "str", Value: "hello union"},
+				},
+				{
+					name:     "plain integer",
+					input:    42,
+					expected: Union{Tag: "num", Value: int32(42)},
+				},
+				{
+					name:     "plain string",
+					input:    "plain",
+					expected: Union{Tag: "str", Value: "plain"},
+				},
+				{
+					name:     "nil value",
+					input:    nil,
+					expected: nil,
+				},
+			}
+
+			for i, tc := range testCases {
+				require.NoError(t, a.AppendRow(i, tc.input))
+			}
+			require.NoError(t, a.Flush())
+
+			// Verify results.
+			res, err := db.QueryContext(context.Background(), `SELECT u FROM test ORDER BY i`)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, res)
+
+			i := 0
+			for res.Next() {
+				var v any
+				require.NoError(t, res.Scan(&v))
+				require.Equal(t, testCases[i].expected, v, "case: %s", testCases[i].name)
+				i++
+			}
+			require.Equal(t, len(testCases), i)
+		}()
 	}
-
-	for i, tc := range testCases {
-		require.NoError(t, a.AppendRow(i, tc.input))
-	}
-	require.NoError(t, a.Flush())
-
-	// Verify results.
-	res, err := db.QueryContext(context.Background(), `SELECT u FROM test ORDER BY i`)
-	require.NoError(t, err)
-	defer closeRowsWrapper(t, res)
-
-	i := 0
-	for res.Next() {
-		var v any
-		require.NoError(t, res.Scan(&v))
-		require.Equal(t, testCases[i].expected, v, "case: %s", testCases[i].name)
-		i++
-	}
-	require.Equal(t, len(testCases), i)
 }
 
 func TestAppenderAppendDataChunk(t *testing.T) {
 	// Ensures that appending multiple data chunks correctly resets the previous chunk.
 
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test(id INT, attr UNION(i INT, s VARCHAR))`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test(id INT, attr UNION(i INT, s VARCHAR))`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Add enough rows to overflow several chunks.
@@ -1264,7 +1296,7 @@ func TestAppenderUpsert(t *testing.T) {
 
 // Regression test for https://github.com/duckdb/duckdb-go/issues/22
 func TestAppenderArrayOfNullInterface(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (element VARCHAR[])`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (element VARCHAR[])`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// The original issue unmarshaled `[null, null]` into []interface{}{nil, nil} and passed it to AppendRow.
@@ -1293,6 +1325,88 @@ func TestAppenderArrayOfNullInterface(t *testing.T) {
 	require.Len(t, arr, 2)
 	require.Nil(t, arr[0])
 	require.Nil(t, arr[1])
+}
+
+func TestAppenderInterrupt(t *testing.T) {
+	for i := range 2 {
+		func() {
+			c := newConnectorWrapper(t, ``, nil)
+			defer closeConnectorWrapper(t, c)
+
+			// Create a table with a PK for UPSERT.
+			db := sql.OpenDB(c)
+			defer closeDbWrapper(t, db)
+			_, err := db.Exec(`
+				CREATE TABLE test (
+					id INT PRIMARY KEY
+			)`)
+			require.NoError(t, err)
+
+			conn := openDriverConnWrapper(t, c)
+			defer closeDriverConnWrapper(t, &conn)
+
+			// Create the types.
+			intType, err := NewTypeInfo(TYPE_INTEGER)
+			require.NoError(t, err)
+
+			// Create the appender.
+			query := `INSERT INTO test SELECT col1 FROM appended_data WHERE col1 = (SELECT SUM(range) FROM range(100_000_000_000) t(range))`
+			colTypes := []TypeInfo{intType}
+			a := newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+
+			// Insert a row.
+			require.NoError(t, a.AppendRow(0))
+
+			if i == 0 {
+				// Long-running flush.
+				ctx, cancel := context.WithCancel(context.Background())
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					err = a.FlushWithCancel(ctx)
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Interrupt it.
+				time.Sleep(100 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+				wg.Wait()
+
+				err = a.Clear()
+				require.NoError(t, err)
+				go func() {
+					err = a.CloseWithCancel(ctx)
+					require.NoError(t, err)
+				}()
+
+				// Interrupt it.
+				time.Sleep(100 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+			} else {
+				// Long-running close.
+				ctx, cancel := context.WithCancel(context.Background())
+				var wg sync.WaitGroup
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					err = a.CloseWithCancel(ctx)
+					require.ErrorContains(t, err, "Interrupted!")
+				}()
+
+				// Interrupt it.
+				time.Sleep(100 * time.Millisecond)
+				go func() {
+					cancel()
+				}()
+				wg.Wait()
+			}
+		}()
+	}
 }
 
 func TestAppenderWithColumnsBasic(t *testing.T) {
@@ -1449,7 +1563,7 @@ func TestEmbeddedNulls(t *testing.T) {
 		},
 	}
 
-	c, db, conn, a := prepareAppender(t, `CREATE TABLE test (id INTEGER, text_value VARCHAR)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id INTEGER, text_value VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
 	// Method 1: Appender API
@@ -1484,7 +1598,7 @@ func TestEmbeddedNulls(t *testing.T) {
 }
 
 func BenchmarkAppenderNested(b *testing.B) {
-	c, db, conn, a := prepareAppender(b, createNestedDataTableSQL)
+	c, db, conn, a := prepareAppender(b, appenderTypeDefault, createNestedDataTableSQL)
 	defer cleanupAppender(b, c, db, conn, a)
 
 	const rowCount = 600
@@ -1544,8 +1658,8 @@ func prepareNestedData(rowCount int) []nestedDataRow {
 			{[]int32{1, 2, 3}},
 		},
 		C: struct {
-			L Map
-		}{L: Map{"foo": int32(1), "bar": int32(2)}},
+			L OrderedMap
+		}{L: OrderedMap{[]any{"foo", "bar"}, []any{int32(1), int32(2)}}},
 	}
 
 	rowsToAppend := make([]nestedDataRow, rowCount)
@@ -1593,4 +1707,36 @@ func appendNestedData[T require.TestingT](t T, a *Appender, rowsToAppend []neste
 			row.mixList))
 	}
 	require.NoError(t, a.Flush())
+}
+
+func TestAppenderMapConversion(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id INTEGER, data MAP(VARCHAR, INTEGER))`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Test appending a Go Map (should convert to OrderedMap)
+	testMap := Map{
+		"first":  int32(1),
+		"second": int32(2),
+		"third":  int32(3),
+	}
+
+	require.NoError(t, a.AppendRow(1, testMap))
+	require.NoError(t, a.Flush())
+
+	// Verify the data was appended correctly
+	var id int
+	var result OrderedMap
+	err := db.QueryRow(`SELECT id, data FROM test WHERE id = 1`).Scan(&id, &result)
+	require.NoError(t, err)
+	require.Equal(t, 1, id)
+	require.Equal(t, 3, result.Len())
+
+	// Verify all keys and values are present
+	keys := result.Keys()
+	values := result.Values()
+	resultMap := make(map[any]any)
+	for i, key := range keys {
+		resultMap[key] = values[i]
+	}
+	require.Equal(t, testMap, Map(resultMap))
 }

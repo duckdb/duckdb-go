@@ -281,6 +281,7 @@ type (
 	BindInfo            = bindings.BindInfo
 	InitInfo            = bindings.InitInfo
 	ReplacementScanInfo = bindings.ReplacementScanInfo
+	LogStorage          = bindings.LogStorage
 )
 
 // Functions.
@@ -763,17 +764,20 @@ var (
 	AppenderClearColumns = bindings.AppenderClearColumns
 	AppendDefaultToChunk = bindings.AppendDefaultToChunk
 	AppendDataChunk      = bindings.AppendDataChunk
+	AppenderClear        = bindings.AppenderClear
 )
 
 // Table description.
 
 var (
-	TableDescriptionCreate        = bindings.TableDescriptionCreate
-	TableDescriptionCreateExt     = bindings.TableDescriptionCreateExt
-	TableDescriptionDestroy       = bindings.TableDescriptionDestroy
-	TableDescriptionError         = bindings.TableDescriptionError
-	ColumnHasDefault              = bindings.ColumnHasDefault
-	TableDescriptionGetColumnName = bindings.TableDescriptionGetColumnName
+	TableDescriptionCreate         = bindings.TableDescriptionCreate
+	TableDescriptionCreateExt      = bindings.TableDescriptionCreateExt
+	TableDescriptionDestroy        = bindings.TableDescriptionDestroy
+	TableDescriptionError          = bindings.TableDescriptionError
+	ColumnHasDefault               = bindings.ColumnHasDefault
+	TableDescriptionGetColumnCount = bindings.TableDescriptionGetColumnCount
+	TableDescriptionGetColumnName  = bindings.TableDescriptionGetColumnName
+	TableDescriptionGetColumnType  = bindings.TableDescriptionGetColumnType
 )
 
 // Result interface.
@@ -787,6 +791,17 @@ var (
 	ExpressionReturnType = bindings.ExpressionReturnType
 	ExpressionIsFoldable = bindings.ExpressionIsFoldable
 	ExpressionFold       = bindings.ExpressionFold
+)
+
+// Logging.
+
+var (
+	CreateLogStorage           = bindings.CreateLogStorage
+	DestroyLogStorage          = bindings.DestroyLogStorage
+	LogStorageSetWriteLogEntry = bindings.LogStorageSetWriteLogEntry
+	LogStorageSetExtraData     = bindings.LogStorageSetExtraData
+	LogStorageSetName          = bindings.LogStorageSetName
+	RegisterLogStorage         = bindings.RegisterLogStorage
 )
 
 // Go bindings helper.

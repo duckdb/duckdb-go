@@ -715,11 +715,17 @@ func TestErrScalarUDF(t *testing.T) {
 	testError(t, row.Err(), errAPI.Error())
 
 	// Register the same scalar function a second time.
-	// Since DuckDB 1.5.0, duplicate names add overloads instead of erroring
+	// Since RegisterScalarUDF takes ownership of udf, we are now passing nil.
 	var udf *simpleSUDF
 	err = RegisterScalarUDF(conn, "my_sum", udf)
 	require.NoError(t, err)
 	err = RegisterScalarUDF(conn, "my_sum", udf)
+	require.NoError(t, err)
+
+	// Register a scalar function whose name already exists.
+	// Since DuckDB 1.5.0, duplicate names add overloads instead of erroring.
+	var errDuplicateUDF *simpleSUDF
+	err = RegisterScalarUDF(conn, "my_sum", errDuplicateUDF)
 	require.NoError(t, err)
 
 	// Register a scalar function that is nil.

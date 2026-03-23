@@ -40,7 +40,7 @@ var (
 	reflectTypeDecimal   = reflect.TypeFor[Decimal]()
 	reflectTypeSliceAny  = reflect.TypeFor[[]any]()
 	reflectTypeMapString = reflect.TypeFor[map[string]any]()
-	reflectTypeMap       = reflect.TypeFor[Map]()
+	reflectTypeMap       = reflect.TypeFor[OrderedMap]()
 	reflectTypeUnion     = reflect.TypeFor[Union]()
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
@@ -348,15 +348,104 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 	return uhi, err
 }
 
+// Map is used to represent DuckDB maps as Go maps.
+// Note that Go maps do not preserve key order, so direct comparison operations
+// on DuckDB maps may not behave as expected when using this type. Use OrderedMap as an alternative.
+// Deprecated: Use OrderedMap instead to preserve key order.
 type Map map[any]any
 
 func (m *Map) Scan(v any) error {
-	data, ok := v.(Map)
+	data, ok := v.(OrderedMap)
 	if !ok {
-		return fmt.Errorf("invalid type `%T` for scanning `Map`, expected `Map`", data)
+		return fmt.Errorf("invalid type `%T` for scanning `Map`, expected `OrderedMap`", v)
 	}
 
-	*m = data
+	nm := make(map[any]any, data.Len())
+	keys := data.Keys()
+	vals := data.Values()
+	for i, key := range keys {
+		nm[key] = vals[i]
+	}
+
+	*m = nm
+	return nil
+}
+
+// OrderedMap is used to represent DuckDB maps while preserving key order.
+// Key order is significant in DuckDB maps for direct comparison operations.
+//
+// NOTE: only supports keys of comparable types (no slices, maps, or functions).
+// NOTE: Set and Get use linear search, so performance may degrade with large maps.
+//
+//nolint:recvcheck
+type OrderedMap struct {
+	keys   []any
+	values []any
+}
+
+func (om *OrderedMap) Keys() []any {
+	return append([]any(nil), om.keys...)
+}
+
+func (om *OrderedMap) Values() []any {
+	return append([]any(nil), om.values...)
+}
+
+func (om *OrderedMap) Len() int {
+	return len(om.keys)
+}
+
+// String implements the fmt.Stringer interface for debugging purposes.
+func (om OrderedMap) String() string {
+	var sb strings.Builder
+	sb.WriteString("OrderedMap{")
+	for i, key := range om.keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		fmt.Fprintf(&sb, "%v: %v", key, om.values[i])
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// Set adds or updates a key-value pair, always inserting the key to the end of the map.
+// Previous entries with the same key will be removed to ensure only the last value is retained.
+func (om *OrderedMap) Set(k, v any) {
+	om.Delete(k)
+
+	om.keys = append(om.keys, k)
+	om.values = append(om.values, v)
+}
+
+func (om *OrderedMap) Get(k any) (any, bool) {
+	for i, key := range om.keys {
+		if key == k {
+			return om.values[i], true
+		}
+	}
+	return nil, false
+}
+
+func (om *OrderedMap) Delete(k any) {
+	for i, key := range om.keys {
+		if key == k {
+			om.keys = append(om.keys[:i], om.keys[i+1:]...)
+			om.values = append(om.values[:i], om.values[i+1:]...)
+			return
+		}
+	}
+}
+
+func (om *OrderedMap) Scan(v any) error {
+	data, ok := v.(OrderedMap)
+	if !ok {
+		return fmt.Errorf("invalid type `%T` for scanning `OrderedMap`, expected `OrderedMap`", v)
+	}
+
+	om.keys = data.Keys()
+	om.values = data.Values()
+
 	return nil
 }
 
