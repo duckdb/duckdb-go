@@ -361,13 +361,17 @@ func (vec *vector) initDecimal(logicalType mapping.LogicalType, colIdx int) erro
 }
 
 func (vec *vector) initEnum(logicalType mapping.LogicalType, colIdx int) error {
-	// Initialize the dictionary.
+	// Initialize the forward (name→index) and reverse (index→name) dictionaries.
+	// enumDict uses a slice because enum indices are dense integers starting at 0,
+	// making slice indexing faster than map hashing.
 	dictSize := mapping.EnumDictionarySize(logicalType)
-	vec.namesDict = make(map[string]uint32)
+	vec.namesDict = make(map[string]uint32, dictSize)
+	vec.enumDict = make([]string, dictSize)
 
 	for i := range dictSize {
 		str := mapping.EnumDictionaryValue(logicalType, mapping.IdxT(i))
 		vec.namesDict[str] = i
+		vec.enumDict[i] = str
 	}
 
 	t := mapping.EnumInternalType(logicalType)
