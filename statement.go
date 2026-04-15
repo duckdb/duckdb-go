@@ -293,6 +293,18 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
 
+func (s *Stmt) bindBit(val *Bit, n int) (mapping.State, error) {
+	if err := val.Validate(); err != nil {
+		return mapping.StateError, err
+	}
+	bit := mapping.NewBit(val.Data)
+	defer mapping.DestroyBit(&bit)
+	v := mapping.CreateBit(bit)
+	defer mapping.DestroyValue(&v)
+	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), v)
+	return state, nil
+}
+
 // Used for binding Array, List, Struct, Map. In the future, Union.
 func (s *Stmt) bindCompositeValue(val driver.NamedValue, n int) (mapping.State, error) {
 	lt, err := s.paramLogicalType(n + 1)
@@ -435,6 +447,13 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 			return mapping.StateError, inferErr
 		}
 		return mapping.BindInterval(*s.preparedStmt, mapping.IdxT(n+1), i), nil
+	case Bit:
+		return s.bindBit(&v, n)
+	case *Bit:
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindBit(v, n)
 	case nil:
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}

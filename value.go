@@ -61,6 +61,10 @@ func getValue(v mapping.Value) (any, error) {
 	case TYPE_INTERVAL:
 		interval := mapping.GetInterval(v)
 		return getInterval(&interval), nil
+	case TYPE_BIT:
+		bit := mapping.GetBit(v)
+		defer mapping.DestroyBit(&bit)
+		return Bit{Data: mapping.BitMembers(&bit)}, nil
 	case TYPE_HUGEINT:
 		hugeInt := mapping.GetHugeInt(v)
 		return hugeIntToNative(&hugeInt), nil
@@ -210,6 +214,11 @@ func createPrimitiveValue(t mapping.Type, v any) (mapping.Value, error) {
 		lower, upper := mapping.HugeIntMembers(&vv)
 		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper))
 		return mapping.CreateUUID(uHugeInt), nil
+	case TYPE_BIT:
+		vv := v.(Bit)
+		bit := mapping.NewBit(vv.Data)
+		defer mapping.DestroyBit(&bit)
+		return mapping.CreateBit(bit), nil
 	}
 	return mapping.Value{}, unsupportedTypeError(typeToStringMap[t])
 }
@@ -359,6 +368,8 @@ func inferPrimitiveType(v any) (Type, any) {
 		t = TYPE_DECIMAL
 	case UUID:
 		t = TYPE_UUID
+	case Bit:
+		t = TYPE_BIT
 	case Map, OrderedMap:
 		// We special-case TYPE_MAP to disambiguate with structs passed as map[string]any.
 		t = TYPE_MAP
@@ -374,7 +385,7 @@ func isPrimitiveType(t Type) bool {
 	case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION:
 		// Complex type.
 		return false
-	case TYPE_INVALID, TYPE_BIT, TYPE_ANY:
+	case TYPE_INVALID, TYPE_ANY:
 		// Invalid or unsupported.
 		return false
 	}
