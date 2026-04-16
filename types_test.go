@@ -1424,10 +1424,21 @@ func TestGeometry(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
 
+	r, err := db.Query(`SELECT 'POINT(1 1)'::GEOMETRY`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, r)
+
+	cols, err := r.ColumnTypes()
+	require.NoError(t, err)
+	require.Equal(t, "GEOMETRY", cols[0].DatabaseTypeName())
+	require.Equal(t, reflectTypeBytes, cols[0].ScanType())
+
 	var res []byte
-	err := db.QueryRow(`SELECT 'POINT(1 1)'::GEOMETRY`).Scan(&res)
+	require.True(t, r.Next())
+	err = r.Scan(&res)
 	require.NoError(t, err)
 	// We expect Geography/Geometry to come back as a native binary BLOB map
 	require.NotEmpty(t, res)
+	require.False(t, r.Next())
 }
 
