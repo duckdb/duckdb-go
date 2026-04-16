@@ -1419,3 +1419,15 @@ func TestOrderedMapNullValue(t *testing.T) {
 	require.Equal(t, regularMap.Keys(), result2.Keys())
 	require.Equal(t, regularMap.Values(), result2.Values())
 }
+
+func TestGeometry(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	var res []byte
+	err := db.QueryRow(`SELECT 'POINT(1 1)'::GEOMETRY`).Scan(&res)
+	require.NoError(t, err)
+	// We expect Geography/Geometry to come back as a native binary BLOB map
+	require.NotEmpty(t, res)
+}
+
