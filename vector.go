@@ -78,7 +78,7 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 		vec.initUhugeint()
 	case TYPE_BIGNUM:
 		vec.initBignum()
-	case TYPE_VARCHAR, TYPE_BLOB:
+	case TYPE_VARCHAR, TYPE_BLOB, TYPE_GEOMETRY:
 		vec.initBytes(t)
 	case TYPE_DECIMAL:
 		return vec.initDecimal(logicalType, colIdx)

@@ -130,7 +130,7 @@ func (r *rows) getScanType(logicalType mapping.LogicalType, index mapping.IdxT) 
 		return reflectTypeBigInt
 	case TYPE_VARCHAR, TYPE_ENUM:
 		return reflectTypeString
-	case TYPE_BLOB:
+	case TYPE_BLOB, TYPE_GEOMETRY:
 		return reflectTypeBytes
 	case TYPE_DECIMAL:
 		return reflectTypeDecimal
