@@ -45,6 +45,7 @@ const (
 	TYPE_ANY          = mapping.TypeAny
 	TYPE_BIGNUM       = mapping.TypeBigNum
 	TYPE_SQLNULL      = mapping.TypeSQLNull
+	TYPE_GEOMETRY     = mapping.TypeGeometry
 	// TODO: add TYPE_TIME_NS here, or support it.
 )
 
@@ -93,6 +94,7 @@ var typeToStringMap = map[Type]string{
 	TYPE_ANY:          "ANY",
 	TYPE_BIGNUM:       "BIGNUM",
 	TYPE_SQLNULL:      "SQLNULL",
+	TYPE_GEOMETRY:     "GEOMETRY",
 }
 
 const aliasJSON = "JSON"
