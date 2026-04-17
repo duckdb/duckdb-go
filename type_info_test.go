@@ -45,6 +45,7 @@ var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_UUID:         {input: `uuid()`, output: ``},
 	TYPE_TIME_TZ:      {input: `'11:30:00.123456+06'::TIMETZ`, output: `0001-01-01 11:30:00.123456 +0600 +0600`},
 	TYPE_TIMESTAMP_TZ: {input: `TIMESTAMPTZ '1992-09-20 11:30:00.123456+04'`, output: `1992-09-20 07:30:00.123456 +0000 UTC`},
+	TYPE_GEOMETRY:     {input: `NULL::GEOMETRY`, output: `<nil>`},
 }
 
 func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
