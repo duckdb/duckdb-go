@@ -243,9 +243,11 @@ func TestQueryChunksContextStringRefs(t *testing.T) {
 	defer closeDbWrapper(t, db)
 
 	ctx := context.Background()
-	createTable(t, db, `CREATE TABLE labels (s VARCHAR)`)
+	createTable(t, db, `CREATE TABLE labels (id INTEGER, s VARCHAR)`)
 
-	_, err := db.ExecContext(ctx, `INSERT INTO labels VALUES ('alpha'), (NULL), ('gamma')`)
+	const longLabel = "abcdefghijklmnopqrstuvwxyz"
+
+	_, err := db.ExecContext(ctx, `INSERT INTO labels VALUES (1, ''), (2, NULL), (3, 'alpha'), (4, ?)`, longLabel)
 	require.NoError(t, err)
 
 	conn := openConnWrapper(t, db, ctx)
@@ -254,7 +256,7 @@ func TestQueryChunksContextStringRefs(t *testing.T) {
 	err = conn.Raw(func(driverConn any) error {
 		duckConn := driverConn.(*Conn)
 
-		rows, err := duckConn.QueryChunksContext(ctx, `SELECT s FROM labels ORDER BY s NULLS FIRST`, nil)
+		rows, err := duckConn.QueryChunksContext(ctx, `SELECT s FROM labels ORDER BY id`, nil)
 		require.NoError(t, err)
 		defer func() {
 			require.NoError(t, rows.Close())
@@ -265,22 +267,31 @@ func TestQueryChunksContextStringRefs(t *testing.T) {
 
 		refs, err := chunk.StringRefs(0)
 		require.NoError(t, err)
-		require.Len(t, refs, 3)
+		require.Len(t, refs, 4)
 
 		isNull, err := chunk.IsNull(0, 0)
 		require.NoError(t, err)
-		require.True(t, isNull)
+		require.False(t, isNull)
+		require.Equal(t, "", refs[0].UnsafeString())
+		require.Equal(t, 0, refs[0].Len())
 
 		isNull, err = chunk.IsNull(0, 1)
 		require.NoError(t, err)
-		require.False(t, isNull)
-		require.Equal(t, "alpha", refs[1].UnsafeString())
-		require.Equal(t, 5, refs[1].Len())
+		require.True(t, isNull)
+		require.Equal(t, "", refs[1].UnsafeString())
+		require.Equal(t, 0, refs[1].Len())
 
 		isNull, err = chunk.IsNull(0, 2)
 		require.NoError(t, err)
 		require.False(t, isNull)
-		require.Equal(t, "gamma", refs[2].UnsafeString())
+		require.Equal(t, "alpha", refs[2].UnsafeString())
+		require.Equal(t, 5, refs[2].Len())
+
+		isNull, err = chunk.IsNull(0, 3)
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, longLabel, refs[3].UnsafeString())
+		require.Equal(t, len(longLabel), refs[3].Len())
 
 		return nil
 	})
