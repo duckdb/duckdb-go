@@ -51,6 +51,10 @@ const (
 	TypeTimeNS         = bindings.TypeTimeNS
 )
 
+// UTF8Bytes and UnsafeUTF8Bytes mark zero-copy []byte payloads for vector assign.
+type UTF8Bytes = bindings.UTF8Bytes
+type UnsafeUTF8Bytes = bindings.UnsafeUTF8Bytes
+
 type State = bindings.State
 
 const (
@@ -613,9 +617,11 @@ var (
 	VectorGetData                = bindings.VectorGetData
 	VectorGetValidity            = bindings.VectorGetValidity
 	VectorEnsureValidityWritable = bindings.VectorEnsureValidityWritable
-	VectorAssignStringElement    = bindings.VectorAssignStringElement
-	VectorAssignStringElementLen = bindings.VectorAssignStringElementLen
-	ListVectorGetChild           = bindings.ListVectorGetChild
+	VectorAssignStringElement          = bindings.VectorAssignStringElement
+	VectorAssignStringElementLen       = bindings.VectorAssignStringElementLen
+	VectorAssignByteElement            = bindings.VectorAssignByteElement
+	UnsafeVectorAssignStringElementLen = bindings.UnsafeVectorAssignStringElementLen
+	ListVectorGetChild                 = bindings.ListVectorGetChild
 	ListVectorGetSize            = bindings.ListVectorGetSize
 	ListVectorSetSize            = bindings.ListVectorSetSize
 	ListVectorReserve            = bindings.ListVectorReserve

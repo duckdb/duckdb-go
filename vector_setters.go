@@ -223,6 +223,14 @@ func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, []byte(v))
 	case []byte:
 		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, v)
+	case AppendBytes:
+		mapping.VectorAssignByteElement(vec.vec, rowIdx, []byte(v))
+	case AppendBytesUnsafe:
+		mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, []byte(v))
+	case mapping.UTF8Bytes:
+		mapping.VectorAssignByteElement(vec.vec, rowIdx, []byte(v))
+	case mapping.UnsafeUTF8Bytes:
+		mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, []byte(v))
 	default:
 		return castError(reflect.TypeOf(val).String(), reflect.String.String())
 	}
@@ -230,6 +238,18 @@ func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	switch v := any(val).(type) {
+	case json.RawMessage:
+		return setBytes(vec, rowIdx, AppendBytesUnsafe(v))
+	case AppendBytes:
+		return setBytes(vec, rowIdx, v)
+	case AppendBytesUnsafe:
+		return setBytes(vec, rowIdx, v)
+	case mapping.UTF8Bytes:
+		return setBytes(vec, rowIdx, v)
+	case mapping.UnsafeUTF8Bytes:
+		return setBytes(vec, rowIdx, v)
+	}
 	bytes, err := json.Marshal(val)
 	if err != nil {
 		return err
