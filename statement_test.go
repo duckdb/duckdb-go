@@ -1461,6 +1461,49 @@ func TestPreparedStatementColumnTypeInfo(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestVariantColumnType(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	err := conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT {'a': 42}::VARIANT AS variant_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_VARIANT, colType)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.Error(t, innerErr)
+		require.ErrorIs(t, innerErr, errAPI)
+		require.ErrorContains(t, innerErr, unsupportedTypeErrMsg)
+		require.ErrorContains(t, innerErr, "VARIANT")
+		require.Nil(t, typeInfo)
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	rows, err := db.Query(`SELECT {'a': 42}::VARIANT AS variant_col`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	columnTypes, err := rows.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, columnTypes, 1)
+	require.Equal(t, "VARIANT", columnTypes[0].DatabaseTypeName())
+
+	require.False(t, rows.Next())
+	require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
+}
+
 func TestPreparedStatementAmbiguousColumnTypes(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

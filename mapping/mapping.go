@@ -50,6 +50,7 @@ const (
 	TypeIntegerLiteral = bindings.TypeIntegerLiteral
 	TypeTimeNS         = bindings.TypeTimeNS
 	TypeGeometry       = bindings.TypeGeometry
+	TypeVariant        = bindings.TypeVariant
 )
 
 type State = bindings.State
