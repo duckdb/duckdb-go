@@ -411,7 +411,7 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.StateError, err
 	}
 
-	name, ok := unsupportedTypeToStringMap[t]
+	name, ok := unsupportedValueTypeToStringMap[t]
 	if ok && t != TYPE_INVALID {
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
 	}

@@ -30,7 +30,7 @@ type vector struct {
 //nolint:gocyclo
 func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	t := mapping.GetTypeId(logicalType)
-	name, inMap := unsupportedTypeToStringMap[t]
+	name, inMap := unsupportedValueTypeToStringMap[t]
 	if inMap {
 		return addIndexToError(unsupportedTypeError(name), colIdx)
 	}

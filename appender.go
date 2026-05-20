@@ -97,7 +97,7 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 
 		// Ensure that we only create an appender for supported column types.
 		t := mapping.GetTypeId(colType)
-		name, found := unsupportedTypeToStringMap[t]
+		name, found := unsupportedValueTypeToStringMap[t]
 		if found {
 			err = addIndexToError(unsupportedTypeError(name), int(i)+1)
 			destroyLogicalTypes(a.types)
@@ -136,7 +136,7 @@ func (a *Appender) initTableColumns(columns []string) error {
 
 		// Ensure that we only create an appender for supported column types.
 		t := mapping.GetTypeId(colType)
-		if name, found := unsupportedTypeToStringMap[t]; found {
+		if name, found := unsupportedValueTypeToStringMap[t]; found {
 			err := addIndexToError(unsupportedTypeError(name), i+1)
 			destroyLogicalTypes(a.types)
 			return getError(errAppenderCreation, err)

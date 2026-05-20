@@ -1480,11 +1480,9 @@ func TestVariantColumnType(t *testing.T) {
 		require.Equal(t, TYPE_VARIANT, colType)
 
 		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
-		require.Error(t, innerErr)
-		require.ErrorIs(t, innerErr, errAPI)
-		require.ErrorContains(t, innerErr, unsupportedTypeErrMsg)
-		require.ErrorContains(t, innerErr, "VARIANT")
-		require.Nil(t, typeInfo)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_VARIANT, typeInfo.InternalType())
 
 		require.NoError(t, stmt.Close())
 		return nil

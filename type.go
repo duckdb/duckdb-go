@@ -54,6 +54,11 @@ const (
 var unsupportedTypeToStringMap = map[Type]string{
 	TYPE_INVALID: "INVALID",
 	TYPE_ANY:     "ANY",
+}
+
+var unsupportedValueTypeToStringMap = map[Type]string{
+	TYPE_INVALID: "INVALID",
+	TYPE_ANY:     "ANY",
 	TYPE_VARIANT: "VARIANT",
 }
 
