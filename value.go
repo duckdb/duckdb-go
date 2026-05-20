@@ -389,7 +389,7 @@ func isPrimitiveType(t Type) bool {
 	case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION:
 		// Complex type.
 		return false
-	case TYPE_INVALID, TYPE_ANY:
+	case TYPE_INVALID, TYPE_ANY, TYPE_VARIANT:
 		// Invalid or unsupported.
 		return false
 	}

@@ -1502,6 +1502,18 @@ func TestVariantColumnType(t *testing.T) {
 	require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
 }
 
+func TestVariantParameterBindUnsupported(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE test (variant_col VARIANT)`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO test VALUES (?)`, "hello")
+	require.ErrorContains(t, err, "unsupported data type: VARIANT")
+	require.ErrorContains(t, err, "index: 1")
+}
+
 func TestPreparedStatementAmbiguousColumnTypes(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
