@@ -1461,6 +1461,84 @@ func TestPreparedStatementColumnTypeInfo(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestVariantColumnType(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	err := conn.Raw(func(driverConn any) error {
+		innerConn := driverConn.(*Conn)
+
+		s, innerErr := innerConn.PrepareContext(context.Background(), `SELECT {'a': 42}::VARIANT AS variant_col`)
+		require.NoError(t, innerErr)
+		stmt := s.(*Stmt)
+
+		colType, innerErr := stmt.ColumnType(0)
+		require.NoError(t, innerErr)
+		require.Equal(t, TYPE_VARIANT, colType)
+
+		typeInfo, innerErr := stmt.ColumnTypeInfo(0)
+		require.NoError(t, innerErr)
+		require.NotNil(t, typeInfo)
+		require.Equal(t, TYPE_VARIANT, typeInfo.InternalType())
+
+		require.NoError(t, stmt.Close())
+		return nil
+	})
+	require.NoError(t, err)
+
+	rows, err := db.Query(`SELECT {'a': 42}::VARIANT AS variant_col`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	columnTypes, err := rows.ColumnTypes()
+	require.NoError(t, err)
+	require.Len(t, columnTypes, 1)
+	require.Equal(t, "VARIANT", columnTypes[0].DatabaseTypeName())
+
+	require.False(t, rows.Next())
+	require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
+}
+
+func TestNestedVariantColumnScanUnsupported(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "list", query: `SELECT [123::VARIANT] AS variant_list`},
+		{name: "struct", query: `SELECT {'v': 123::VARIANT} AS variant_struct`},
+		{name: "map", query: `SELECT map(['v'], [123::VARIANT]) AS variant_map`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := db.Query(tc.query)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, rows)
+
+			require.False(t, rows.Next())
+			require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
+		})
+	}
+}
+
+func TestVariantParameterBindUnsupported(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE test (variant_col VARIANT)`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO test VALUES (?)`, "hello")
+	require.ErrorContains(t, err, "unsupported data type: VARIANT")
+	require.ErrorContains(t, err, "index: 1")
+}
+
 func TestPreparedStatementAmbiguousColumnTypes(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

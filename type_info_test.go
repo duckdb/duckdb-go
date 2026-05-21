@@ -60,7 +60,7 @@ func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
 			continue
 		}
 		switch k {
-		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL, TYPE_BIGNUM:
+		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL, TYPE_BIGNUM, TYPE_VARIANT:
 			continue
 		}
 		primitiveTypes = append(primitiveTypes, k)
@@ -357,7 +357,7 @@ func TestNewTypeInfoFromLogicalType(t *testing.T) {
 		TYPE_FLOAT, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_DATE, TYPE_TIME,
 		TYPE_INTERVAL, TYPE_HUGEINT, TYPE_VARCHAR, TYPE_BLOB,
 		TYPE_TIMESTAMP_S, TYPE_TIMESTAMP_MS, TYPE_TIMESTAMP_NS,
-		TYPE_UUID, TYPE_TIME_TZ, TYPE_TIMESTAMP_TZ,
+		TYPE_UUID, TYPE_TIME_TZ, TYPE_TIMESTAMP_TZ, TYPE_VARIANT,
 	}
 
 	for _, primitiveType := range primitiveTests {

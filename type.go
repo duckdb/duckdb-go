@@ -46,6 +46,7 @@ const (
 	TYPE_BIGNUM       = mapping.TypeBigNum
 	TYPE_SQLNULL      = mapping.TypeSQLNull
 	TYPE_GEOMETRY     = mapping.TypeGeometry
+	TYPE_VARIANT      = mapping.TypeVariant
 	// TODO: add TYPE_TIME_NS here, or support it.
 )
 
@@ -53,6 +54,12 @@ const (
 var unsupportedTypeToStringMap = map[Type]string{
 	TYPE_INVALID: "INVALID",
 	TYPE_ANY:     "ANY",
+}
+
+var unsupportedValueTypeToStringMap = map[Type]string{
+	TYPE_INVALID: "INVALID",
+	TYPE_ANY:     "ANY",
+	TYPE_VARIANT: "VARIANT",
 }
 
 var typeToStringMap = map[Type]string{
@@ -94,6 +101,7 @@ var typeToStringMap = map[Type]string{
 	TYPE_BIGNUM:       "BIGNUM",
 	TYPE_SQLNULL:      "SQLNULL",
 	TYPE_GEOMETRY:     "GEOMETRY",
+	TYPE_VARIANT:      "VARIANT",
 }
 
 const aliasJSON = "JSON"

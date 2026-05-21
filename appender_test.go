@@ -176,6 +176,42 @@ func TestAppenderClose(t *testing.T) {
 	require.NoError(t, a.AppendRow(int32(42)))
 }
 
+func TestAppenderRejectsVariant(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(driver.Conn) (*Appender, error)
+	}{
+		{
+			name: "all columns",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppender(conn, "", "", "test")
+			},
+		},
+		{
+			name: "selected variant column",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppenderWithColumns(conn, "", "", "test", []string{"variant_col"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnectorWrapper(t, ``, nil)
+			db := sql.OpenDB(c)
+			_, err := db.Exec(`CREATE TABLE test (id INTEGER, variant_col VARIANT)`)
+			require.NoError(t, err)
+
+			conn := openDriverConnWrapper(t, c)
+			defer cleanupDb(t, c, db, conn)
+
+			a, err := tc.open(conn)
+			defer closeAppenderWrapper(t, a)
+			require.ErrorContains(t, err, "unsupported data type: VARIANT")
+		})
+	}
+}
+
 func TestAppendChunks(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (

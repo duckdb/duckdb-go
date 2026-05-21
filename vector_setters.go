@@ -494,7 +494,7 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 
 //nolint:gocyclo
 func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	name, inMap := unsupportedTypeToStringMap[vec.Type]
+	name, inMap := unsupportedValueTypeToStringMap[vec.Type]
 	if inMap {
 		return unsupportedTypeError(name)
 	}
@@ -554,7 +554,7 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setMap(vec, rowIdx, val)
 	case TYPE_ARRAY:
 		// FIXME: Is this already supported? And tested?
-		return unsupportedTypeError(unsupportedTypeToStringMap[vec.Type])
+		return unsupportedTypeError(typeToStringMap[vec.Type])
 	case TYPE_UUID:
 		return setUUID(vec, rowIdx, val)
 	case TYPE_UNION:

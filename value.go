@@ -233,7 +233,7 @@ func getPointerValue(v any) any {
 			return nil
 		}
 		vo := reflect.ValueOf(v)
-		if vo.Kind() == reflect.Ptr {
+		if vo.Kind() == reflect.Pointer {
 			if vo.IsNil() {
 				return nil
 			}
@@ -253,7 +253,7 @@ func isNil(i any) bool {
 	kind := value.Kind()
 
 	switch kind {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Interface, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Interface, reflect.Slice:
 		return value.IsNil()
 	default:
 		return false
@@ -308,7 +308,7 @@ func inferLogicalTypeAndValue(v any) (mapping.LogicalType, mapping.Value, error)
 	case reflect.Struct, reflect.Map:
 		// TODO.
 		return mapping.LogicalType{}, mapping.Value{}, unsupportedTypeError(typeToStringMap[TYPE_STRUCT])
-	case reflect.Ptr:
+	case reflect.Pointer:
 		// Extract pointer and recurse.
 		return inferLogicalTypeAndValue(getPointerValue(v))
 	case reflect.Array, reflect.Slice:
@@ -389,7 +389,7 @@ func isPrimitiveType(t Type) bool {
 	case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION:
 		// Complex type.
 		return false
-	case TYPE_INVALID, TYPE_ANY:
+	case TYPE_INVALID, TYPE_ANY, TYPE_VARIANT:
 		// Invalid or unsupported.
 		return false
 	}

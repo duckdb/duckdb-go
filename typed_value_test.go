@@ -271,6 +271,7 @@ func TestTypedValidation(t *testing.T) {
 			{name: "blob", typ: TYPE_BLOB, value: []byte{}},
 			{name: "bit", typ: TYPE_BIT, value: Bit{}},
 			{name: "hugeint", typ: TYPE_HUGEINT, value: int64(1)},
+			{name: "variant", typ: TYPE_VARIANT, value: "hello"},
 		}
 
 		for _, tc := range tests {

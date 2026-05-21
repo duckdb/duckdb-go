@@ -282,7 +282,7 @@ func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
 func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	// Check if the interface contains a nil pointer using reflection
 	v := reflect.ValueOf(val.Value)
-	if v.Kind() == reflect.Ptr && v.IsNil() {
+	if v.Kind() == reflect.Pointer && v.IsNil() {
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}
 
@@ -411,8 +411,13 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.StateError, err
 	}
 
-	name, ok := unsupportedTypeToStringMap[t]
+	name, ok := unsupportedValueTypeToStringMap[t]
 	if ok && t != TYPE_INVALID {
+		// TODO: DuckDB can coerce primitive scalar binds into VARIANT columns
+		// when callers use the low-level bind functions; duckdb-rs relies on
+		// that behavior. Keep this blocked until tests prove this path can
+		// delegate primitive binds without falling through to Go-side VARIANT
+		// value creation, which has no C API helpers yet.
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
 	}
 
