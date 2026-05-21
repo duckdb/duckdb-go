@@ -1502,6 +1502,31 @@ func TestVariantColumnType(t *testing.T) {
 	require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
 }
 
+func TestNestedVariantColumnScanUnsupported(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{name: "list", query: `SELECT [123::VARIANT] AS variant_list`},
+		{name: "struct", query: `SELECT {'v': 123::VARIANT} AS variant_struct`},
+		{name: "map", query: `SELECT map(['v'], [123::VARIANT]) AS variant_map`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := db.Query(tc.query)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, rows)
+
+			require.False(t, rows.Next())
+			require.ErrorContains(t, rows.Err(), "unsupported data type: VARIANT")
+		})
+	}
+}
+
 func TestVariantParameterBindUnsupported(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
