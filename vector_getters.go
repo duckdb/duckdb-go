@@ -3,6 +3,7 @@ package duckdb
 import (
 	"encoding/json"
 	"math/big"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -12,11 +13,16 @@ import (
 // fnGetVectorValue is the getter callback function for any (nested) vector.
 type fnGetVectorValue func(vec *vector, rowIdx mapping.IdxT) any
 
+// getNull checks DuckDB's validity bitfield: one bit per row packed into uint64 words.
+// Bit = 1 means valid (not null), bit = 0 means null.
 func (vec *vector) getNull(rowIdx mapping.IdxT) bool {
 	if vec.maskPtr == nil {
 		return false
 	}
-	return !mapping.ValidityMaskValueIsValid(vec.maskPtr, rowIdx)
+	entryIdx := uint64(rowIdx) / 64                         // which uint64 word holds this row's bit
+	idxInEntry := uint64(rowIdx) % 64                       // which bit position within that word (0-63)
+	mask := *(*uint64)(unsafe.Add(vec.maskPtr, entryIdx*8)) // read the word at byte offset entryIdx*8
+	return mask&(1<<idxInEntry) == 0                        // 0 = null, 1 = valid
 }
 
 func getPrimitive[T any](vec *vector, rowIdx mapping.IdxT) T {
@@ -168,11 +174,21 @@ func (vec *vector) getBigNum(rowIdx mapping.IdxT) *big.Int {
 
 func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 	strT := getPrimitive[mapping.StringT](vec, rowIdx)
-	str := mapping.StringTData(&strT)
-	if vec.Type == TYPE_VARCHAR {
-		return str
+	// duckdb_string_t layout: uint32 length at offset 0; if length <= 12 data is inlined
+	// at offset 4, otherwise a pointer at offset 8 (see duckdb.h string_t::INLINE_LENGTH).
+	length := *(*uint32)(unsafe.Pointer(&strT))
+	var data string
+	if length <= 12 {
+		ptr := unsafe.Add(unsafe.Pointer(&strT), 4)
+		data = unsafe.String((*byte)(ptr), int(length))
+	} else {
+		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(&strT), 8))
+		data = unsafe.String((*byte)(dataPtr), int(length))
 	}
-	return []byte(str)
+	if vec.Type == TYPE_VARCHAR {
+		return strings.Clone(data)
+	}
+	return []byte(data)
 }
 
 func (vec *vector) getBit(rowIdx mapping.IdxT) Bit {
