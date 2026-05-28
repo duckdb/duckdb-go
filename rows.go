@@ -73,11 +73,13 @@ func (r *rows) Next(dst []driver.Value) error {
 		r.rowCount = 0
 	}
 
-	columnCount := len(r.chunk.columns)
-	for colIdx := range columnCount {
-		var err error
-		if dst[colIdx], err = r.chunk.GetValue(colIdx, r.rowCount); err != nil {
-			return err
+	// Call getFn directly, bypassing GetValue/verifyAndRewriteColIdx — indices are
+	// always valid here since we control the chunk lifecycle.
+	rowIdx := mapping.IdxT(r.rowCount)
+	for colIdx := range r.chunk.columns {
+		dst[colIdx] = r.chunk.columns[colIdx].getFn(&r.chunk.columns[colIdx], rowIdx)
+		if bit, ok := dst[colIdx].(Bit); ok {
+			dst[colIdx] = bit.String()
 		}
 	}
 	r.rowCount++
@@ -130,8 +132,12 @@ func (r *rows) getScanType(logicalType mapping.LogicalType, index mapping.IdxT) 
 		return reflectTypeBigInt
 	case TYPE_VARCHAR, TYPE_ENUM:
 		return reflectTypeString
-	case TYPE_BLOB:
+	case TYPE_BLOB, TYPE_GEOMETRY:
 		return reflectTypeBytes
+	case TYPE_BIT:
+		// rows.Next exposes BIT values as strings so database/sql can scan them
+		// into string, []byte, and Bit destinations via the normal conversion path.
+		return reflectTypeString
 	case TYPE_DECIMAL:
 		return reflectTypeDecimal
 	case TYPE_LIST:

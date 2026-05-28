@@ -282,7 +282,7 @@ func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
 func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	// Check if the interface contains a nil pointer using reflection
 	v := reflect.ValueOf(val.Value)
-	if v.Kind() == reflect.Ptr && v.IsNil() {
+	if v.Kind() == reflect.Pointer && v.IsNil() {
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}
 
@@ -291,6 +291,18 @@ func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), str, mapping.IdxT(len(str))), nil
 	}
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
+}
+
+func (s *Stmt) bindBit(val *Bit, n int) (mapping.State, error) {
+	if err := val.Validate(); err != nil {
+		return mapping.StateError, err
+	}
+	bit := mapping.NewBit(val.Data)
+	defer mapping.DestroyBit(&bit)
+	v := mapping.CreateBit(bit)
+	defer mapping.DestroyValue(&v)
+	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), v)
+	return state, nil
 }
 
 // Used for binding Array, List, Struct, Map. In the future, Union.
@@ -348,8 +360,49 @@ func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name strin
 	return mapping.StateError, addIndexToError(unsupportedTypeError(unknownTypeErrMsg), n+1)
 }
 
+func (s *Stmt) bindTypedValue(val TypedValue, n int) (mapping.State, error) {
+	value := val.value
+	// Unwrap driver.Valuer unless the caller already signalled NULL.
+	// Calling Value() on a typed-nil receiver can panic.
+	if val.typ != TYPE_SQLNULL && !isNil(value) {
+		if valuer, ok := value.(driver.Valuer); ok {
+			driverVal, err := valuer.Value()
+			if err != nil {
+				return mapping.StateError, addIndexToError(err, n+1)
+			}
+			value = driverVal
+		}
+	}
+
+	coerced, err := coerceTypedValue(val.typ, value)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	if coerced == nil {
+		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+	}
+
+	mappedVal, err := createPrimitiveValue(val.typ, coerced)
+	defer mapping.DestroyValue(&mappedVal)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+
+	return mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal), nil
+}
+
 //nolint:gocyclo
 func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
+	switch explicit := val.Value.(type) {
+	case TypedValue:
+		return s.bindTypedValue(explicit, n)
+	case *TypedValue:
+		if explicit == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindTypedValue(*explicit, n)
+	}
+
 	// For some queries, we cannot resolve the parameter type when preparing the query.
 	// E.g., for "SELECT * FROM (VALUES (?, ?)) t(a, b)", we cannot know the parameter types from the SQL statement alone.
 	// For these cases, ParamType returns TYPE_INVALID.
@@ -358,8 +411,13 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.StateError, err
 	}
 
-	name, ok := unsupportedTypeToStringMap[t]
+	name, ok := unsupportedValueTypeToStringMap[t]
 	if ok && t != TYPE_INVALID {
+		// TODO: DuckDB can coerce primitive scalar binds into VARIANT columns
+		// when callers use the low-level bind functions; duckdb-rs relies on
+		// that behavior. Keep this blocked until tests prove this path can
+		// delegate primitive binds without falling through to Go-side VARIANT
+		// value creation, which has no C API helpers yet.
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
 	}
 
@@ -435,6 +493,13 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 			return mapping.StateError, inferErr
 		}
 		return mapping.BindInterval(*s.preparedStmt, mapping.IdxT(n+1), i), nil
+	case Bit:
+		return s.bindBit(&v, n)
+	case *Bit:
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindBit(v, n)
 	case nil:
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}

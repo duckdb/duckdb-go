@@ -125,6 +125,10 @@ type vectorTypeInfo struct {
 
 	namesDict map[string]uint32
 	tagDict   map[uint32]string
+	// enumDict is the reverse of namesDict for ENUM types (index → name).
+	// Uses a slice instead of a map because enum indices are dense integers starting at 0,
+	// making indexing faster than map hashing.
+	enumDict []string
 }
 
 type typeInfo struct {
@@ -211,7 +215,7 @@ func (info *typeInfo) Details() TypeDetails {
 // Valid types are:
 // TYPE_[BOOLEAN, TINYINT, SMALLINT, INTEGER, BIGINT, UTINYINT, USMALLINT, UINTEGER,
 // UBIGINT, FLOAT, DOUBLE, TIMESTAMP, DATE, TIME, INTERVAL, HUGEINT, UHUGEINT, VARCHAR,
-// BLOB, TIMESTAMP_S, TIMESTAMP_MS, TIMESTAMP_NS, UUID, TIMESTAMP_TZ, ANY].
+// BLOB, BIT, TIMESTAMP_S, TIMESTAMP_MS, TIMESTAMP_NS, UUID, TIMESTAMP_TZ, VARIANT, ANY].
 func NewTypeInfo(t Type) (TypeInfo, error) {
 	name, inMap := unsupportedTypeToStringMap[t]
 	if inMap && t != TYPE_ANY {
@@ -418,7 +422,7 @@ func (info *typeInfo) logicalType() mapping.LogicalType {
 	case TYPE_BOOLEAN, TYPE_TINYINT, TYPE_SMALLINT, TYPE_INTEGER, TYPE_BIGINT, TYPE_UTINYINT, TYPE_USMALLINT,
 		TYPE_UINTEGER, TYPE_UBIGINT, TYPE_FLOAT, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_S, TYPE_TIMESTAMP_MS,
 		TYPE_TIMESTAMP_NS, TYPE_TIMESTAMP_TZ, TYPE_DATE, TYPE_TIME, TYPE_TIME_TZ, TYPE_INTERVAL, TYPE_HUGEINT,
-		TYPE_UHUGEINT, TYPE_VARCHAR, TYPE_BLOB, TYPE_UUID, TYPE_ANY:
+		TYPE_UHUGEINT, TYPE_VARCHAR, TYPE_BLOB, TYPE_BIT, TYPE_GEOMETRY, TYPE_UUID, TYPE_VARIANT, TYPE_ANY:
 		return mapping.CreateLogicalType(info.Type)
 	case TYPE_DECIMAL:
 		return mapping.CreateDecimalType(info.decimalWidth, info.decimalScale)

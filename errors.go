@@ -3,6 +3,7 @@ package duckdb
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -17,6 +18,14 @@ func getError(errDriver, err error) error {
 
 func castError(actual, expected string) error {
 	return fmt.Errorf("%s: cannot cast %s to %s", castErrMsg, actual, expected)
+}
+
+func castErrorForValue(v any, expected string) error {
+	actual := "<nil>"
+	if v != nil {
+		actual = reflect.TypeOf(v).String()
+	}
+	return castError(actual, expected)
 }
 
 func conversionError(actual, min, max int) error {

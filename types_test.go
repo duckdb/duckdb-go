@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -625,6 +626,140 @@ func TestDecimalString(t *testing.T) {
 	}
 }
 
+func TestBit(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("SELECT different BIT values", func(t *testing.T) {
+		tests := []string{
+			"10101",
+			"0",
+			"1",
+			"00000000",
+			"11111111",
+			"100000001",
+			// Multi-byte tests
+			"1010101010101010",                 // 16 bits (2 bytes)
+			"10101010101010101",                // 17 bits (3 bytes with padding)
+			"10101010101010101010101010101010", // 32 bits (4 bytes)
+			"111100001100110011",               // 18 bits (3 bytes with 6 padding)
+			"0000000011111111001",              // 19 bits (3 bytes with 5 padding)
+			"1101101001011",                    // 13 bits (2 bytes with 3 padding)
+			"00000000000000000000000010110101", // 30 bits (4 bytes with 2 padding)
+		}
+		for _, bits := range tests {
+			var res Bit
+			err := db.QueryRow(fmt.Sprintf("SELECT '%s'::BIT", bits)).Scan(&res)
+			require.NoError(t, err, "failed for input %s", bits)
+			require.Equal(t, bits, res.String(), "mismatch for input %s", bits)
+		}
+	})
+
+	t.Run("BitFromData", func(t *testing.T) {
+		// Multi-byte: 10 bits "1010101011" = padding=6, [11111110 10101011]
+		b := Bit{Data: []byte{6, 0xFE, 0xAB}}
+		require.Equal(t, 10, b.Len())
+		require.Equal(t, "1010101011", b.String())
+
+		// Byte-aligned: 0xAA = 10101010 (no padding)
+		b8 := Bit{Data: []byte{0, 0xAA}}
+		require.Equal(t, 8, b8.Len())
+		require.Equal(t, "10101010", b8.String())
+
+		// nil returns empty Bit
+		bNil := Bit{}
+		require.Equal(t, 0, bNil.Len())
+
+		// Single byte (just padding count, no data) returns empty Bit
+		bEmpty := Bit{Data: []byte{0}}
+		require.Equal(t, 0, bEmpty.Len())
+
+		// Malformed values should not panic when stringified.
+		bInvalid := Bit{Data: []byte{7}}
+		require.Equal(t, 0, bInvalid.Len())
+		require.Empty(t, bInvalid.String())
+	})
+
+	t.Run("Validate", func(t *testing.T) {
+		require.ErrorContains(t, Bit{}.Validate(), "empty bit string")
+		require.ErrorContains(t, (Bit{Data: []byte{0}}).Validate(), "empty bit string")
+		require.NoError(t, (Bit{Data: []byte{0, 0xAA}}).Validate())
+		require.NoError(t, (Bit{Data: []byte{6, 0xFE, 0xAB}}).Validate())
+
+		// Invalid padding count (> 7)
+		require.ErrorContains(t, (Bit{Data: []byte{8, 0xAA}}).Validate(), "invalid padding count")
+
+		// Padding bits not set to 1
+		require.ErrorContains(t, (Bit{Data: []byte{6, 0x3E, 0xAB}}).Validate(), "padding bits must be 1s")
+	})
+
+	t.Run("NewBitFromString", func(t *testing.T) {
+		// Empty string returns an error.
+		_, err := NewBitFromString("")
+		require.ErrorContains(t, err, "empty bit string")
+
+		// Invalid characters
+		_, err = NewBitFromString("10102")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid character")
+	})
+
+	t.Run("BIT scan compatibility", func(t *testing.T) {
+		bits := "10101010101010101"
+
+		var s string
+		err := db.QueryRow(fmt.Sprintf("SELECT '%s'::BIT", bits)).Scan(&s)
+		require.NoError(t, err)
+		require.Equal(t, bits, s)
+
+		var raw []byte
+		err = db.QueryRow(fmt.Sprintf("SELECT '%s'::BIT", bits)).Scan(&raw)
+		require.NoError(t, err)
+		require.Equal(t, []byte(bits), raw)
+
+		var v any
+		err = db.QueryRow(fmt.Sprintf("SELECT '%s'::BIT", bits)).Scan(&v)
+		require.NoError(t, err)
+		require.Equal(t, bits, v)
+	})
+
+	t.Run("BIT binding", func(t *testing.T) {
+		_, err := db.Exec("CREATE TABLE bit_bind_test (bits BIT)")
+		require.NoError(t, err)
+
+		tests := []string{
+			"11001100",
+			"111100001010010110110100",
+		}
+		for _, bits := range tests {
+			bitVal, err := NewBitFromString(bits)
+			require.NoError(t, err)
+
+			_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", bitVal)
+			require.NoError(t, err)
+
+			// Also test binding *Bit.
+			_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", &bitVal)
+			require.NoError(t, err)
+
+			var res Bit
+			err = db.QueryRow("SELECT bits FROM bit_bind_test WHERE bits = ?", bitVal).Scan(&res)
+			require.NoError(t, err)
+			require.Equal(t, bits, res.String())
+		}
+
+		// Test binding nil *Bit.
+		var nilBit *Bit
+		_, err = db.Exec("INSERT INTO bit_bind_test VALUES(?)", nilBit)
+		require.NoError(t, err)
+
+		var res *Bit
+		err = db.QueryRow("SELECT bits FROM bit_bind_test WHERE bits IS NULL").Scan(&res)
+		require.NoError(t, err)
+		require.Nil(t, res)
+	})
+}
+
 func TestBlob(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -785,6 +920,72 @@ func TestENUMs(t *testing.T) {
 	var row Composite[[]environment]
 	require.NoError(t, db.QueryRow("SELECT environments FROM all_enums").Scan(&row))
 	require.ElementsMatch(t, []environment{Air, Sea, Land}, row.Get())
+}
+
+// TestEnumNullValues verifies that NULL ENUM cells are read back as nil.
+func TestEnumNullValues(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec("CREATE TYPE nullable_color AS ENUM ('red', 'green', 'blue')")
+	require.NoError(t, err)
+	_, err = db.Exec("CREATE TABLE nullable_colors (val nullable_color)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO nullable_colors VALUES ('red'), (NULL), ('blue')")
+	require.NoError(t, err)
+
+	rows, err := db.Query("SELECT val FROM nullable_colors ORDER BY rowid")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rows.Close())
+	}()
+
+	expected := []any{"red", nil, "blue"}
+	for _, exp := range expected {
+		require.True(t, rows.Next())
+		var val any
+		require.NoError(t, rows.Scan(&val))
+		require.Equal(t, exp, val)
+	}
+}
+
+// TestEnumLargeDictionary verifies correctness when the ENUM dictionary exceeds
+// 255 entries, forcing DuckDB to use USMALLINT as the internal storage type.
+// This exercises the TYPE_USMALLINT branch in getEnum.
+func TestEnumLargeDictionary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// Build 300 unique enum values: "v0", "v1", ..., "v299"
+	// DuckDB uses UTINYINT for ≤255 values and USMALLINT for 256–65535.
+	values := make([]string, 300)
+	for i := range values {
+		values[i] = fmt.Sprintf("'v%d'", i)
+	}
+	createSQL := fmt.Sprintf("CREATE TYPE large_enum AS ENUM (%s)", strings.Join(values, ", "))
+	_, err := db.Exec(createSQL)
+	require.NoError(t, err)
+
+	_, err = db.Exec("CREATE TABLE large_enum_tbl (val large_enum)")
+	require.NoError(t, err)
+
+	// Insert first, last, and a middle value to cover boundary indices.
+	_, err = db.Exec("INSERT INTO large_enum_tbl VALUES ('v0'), ('v255'), ('v299')")
+	require.NoError(t, err)
+
+	rows, err := db.Query("SELECT val FROM large_enum_tbl ORDER BY rowid")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rows.Close())
+	}()
+
+	expected := []string{"v0", "v255", "v299"}
+	for _, exp := range expected {
+		require.True(t, rows.Next())
+		var val string
+		require.NoError(t, rows.Scan(&val))
+		require.Equal(t, exp, val)
+	}
 }
 
 func TestHugeInt(t *testing.T) {
@@ -1418,4 +1619,26 @@ func TestOrderedMapNullValue(t *testing.T) {
 	require.Equal(t, 2, id)
 	require.Equal(t, regularMap.Keys(), result2.Keys())
 	require.Equal(t, regularMap.Values(), result2.Values())
+}
+
+func TestGeometry(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	r, err := db.Query(`SELECT 'POINT(1 1)'::GEOMETRY`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, r)
+
+	cols, err := r.ColumnTypes()
+	require.NoError(t, err)
+	require.Equal(t, "GEOMETRY", cols[0].DatabaseTypeName())
+	require.Equal(t, reflectTypeBytes, cols[0].ScanType())
+
+	var res []byte
+	require.True(t, r.Next())
+	err = r.Scan(&res)
+	require.NoError(t, err)
+	// We expect Geography/Geometry to come back as a native binary BLOB map
+	require.NotEmpty(t, res)
+	require.False(t, r.Next())
 }

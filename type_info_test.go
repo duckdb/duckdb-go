@@ -39,12 +39,14 @@ var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_BIGNUM:       {input: `46::BIGNUM`, output: `46`},
 	TYPE_VARCHAR:      {input: `'hello world'::VARCHAR`, output: `hello world`},
 	TYPE_BLOB:         {input: `'\xAA'::BLOB`, output: `[170]`},
+	TYPE_BIT:          {input: `'10101'::BIT`, output: `10101`},
 	TYPE_TIMESTAMP_S:  {input: `TIMESTAMP_S '1992-09-20 11:30:00'`, output: `1992-09-20 11:30:00 +0000 UTC`},
 	TYPE_TIMESTAMP_MS: {input: `TIMESTAMP_MS '1992-09-20 11:30:00.123'`, output: `1992-09-20 11:30:00.123 +0000 UTC`},
 	TYPE_TIMESTAMP_NS: {input: `TIMESTAMP_NS '1992-09-20 11:30:00.123456789'`, output: `1992-09-20 11:30:00.123456789 +0000 UTC`},
 	TYPE_UUID:         {input: `uuid()`, output: ``},
 	TYPE_TIME_TZ:      {input: `'11:30:00.123456+06'::TIMETZ`, output: `0001-01-01 11:30:00.123456 +0600 +0600`},
 	TYPE_TIMESTAMP_TZ: {input: `TIMESTAMPTZ '1992-09-20 11:30:00.123456+04'`, output: `1992-09-20 07:30:00.123456 +0000 UTC`},
+	TYPE_GEOMETRY:     {input: `NULL::GEOMETRY`, output: `<nil>`},
 }
 
 func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
@@ -58,7 +60,7 @@ func getTypeInfos(t *testing.T, useAny bool) []testTypeInfo {
 			continue
 		}
 		switch k {
-		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL, TYPE_BIGNUM:
+		case TYPE_DECIMAL, TYPE_ENUM, TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION, TYPE_SQLNULL, TYPE_BIGNUM, TYPE_VARIANT:
 			continue
 		}
 		primitiveTypes = append(primitiveTypes, k)
@@ -355,7 +357,7 @@ func TestNewTypeInfoFromLogicalType(t *testing.T) {
 		TYPE_FLOAT, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_DATE, TYPE_TIME,
 		TYPE_INTERVAL, TYPE_HUGEINT, TYPE_VARCHAR, TYPE_BLOB,
 		TYPE_TIMESTAMP_S, TYPE_TIMESTAMP_MS, TYPE_TIMESTAMP_NS,
-		TYPE_UUID, TYPE_TIME_TZ, TYPE_TIMESTAMP_TZ,
+		TYPE_UUID, TYPE_TIME_TZ, TYPE_TIMESTAMP_TZ, TYPE_VARIANT,
 	}
 
 	for _, primitiveType := range primitiveTests {

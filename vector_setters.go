@@ -237,6 +237,35 @@ func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
+func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	var bit Bit
+	switch v := any(val).(type) {
+	case Bit:
+		bit = v
+	case *Bit:
+		bit = *v
+	case string:
+		var err error
+		bit, err = NewBitFromString(v)
+		if err != nil {
+			return err
+		}
+	case []byte:
+		var err error
+		bit, err = NewBitFromString(string(v))
+		if err != nil {
+			return err
+		}
+	default:
+		return castError(reflect.TypeOf(val).String(), reflectTypeBit.String())
+	}
+	if err := bit.Validate(); err != nil {
+		return err
+	}
+	mapping.VectorAssignStringElementLen(vec.vec, rowIdx, bit.Data)
+	return nil
+}
+
 func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	switch v := any(val).(type) {
 	case json.RawMessage:
@@ -483,8 +512,9 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	}
 }
 
+//nolint:gocyclo
 func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	name, inMap := unsupportedTypeToStringMap[vec.Type]
+	name, inMap := unsupportedValueTypeToStringMap[vec.Type]
 	if inMap {
 		return unsupportedTypeError(name)
 	}
@@ -528,8 +558,10 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setBignum(vec, rowIdx, val)
 	case TYPE_VARCHAR:
 		return setBytes(vec, rowIdx, val)
-	case TYPE_BLOB:
+	case TYPE_BLOB, TYPE_GEOMETRY:
 		return setBytes(vec, rowIdx, val)
+	case TYPE_BIT:
+		return setBit(vec, rowIdx, val)
 	case TYPE_DECIMAL:
 		return setDecimal(vec, rowIdx, val)
 	case TYPE_ENUM:
@@ -542,7 +574,7 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setMap(vec, rowIdx, val)
 	case TYPE_ARRAY:
 		// FIXME: Is this already supported? And tested?
-		return unsupportedTypeError(unsupportedTypeToStringMap[vec.Type])
+		return unsupportedTypeError(typeToStringMap[vec.Type])
 	case TYPE_UUID:
 		return setUUID(vec, rowIdx, val)
 	case TYPE_UNION:
