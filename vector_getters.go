@@ -13,15 +13,15 @@ import (
 // fnGetVectorValue is the getter callback function for any (nested) vector.
 type fnGetVectorValue func(vec *vector, rowIdx mapping.IdxT) any
 
-// getNull checks DuckDB's validity bitfield: one bit per row packed into uint64 words.
+// getNull checks DuckDB's validity bitfield: one bit per row packed into uint64 entries.
 // Bit = 1 means valid (not null), bit = 0 means null.
 func (vec *vector) getNull(rowIdx mapping.IdxT) bool {
 	if vec.maskPtr == nil {
 		return false
 	}
-	entryIdx := uint64(rowIdx) / 64                         // which uint64 word holds this row's bit
-	idxInEntry := uint64(rowIdx) % 64                       // which bit position within that word (0-63)
-	mask := *(*uint64)(unsafe.Add(vec.maskPtr, entryIdx*8)) // read the word at byte offset entryIdx*8
+	entryIdx := uint64(rowIdx) / 64                         // which uint64 entry holds this row's bit
+	idxInEntry := uint64(rowIdx) % 64                       // which bit position within that entry (0-63)
+	mask := *(*uint64)(unsafe.Add(vec.maskPtr, entryIdx*8)) // read the entry at byte offset entryIdx*8
 	return mask&(1<<idxInEntry) == 0                        // 0 = null, 1 = valid
 }
 
@@ -176,6 +176,8 @@ func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 	strT := getPrimitive[mapping.StringT](vec, rowIdx)
 	// duckdb_string_t layout: uint32 length at offset 0; if length <= 12 data is inlined
 	// at offset 4, otherwise a pointer at offset 8 (see duckdb.h string_t::INLINE_LENGTH).
+	// NOTE: INLINE_LENGTH (12) is not exposed via the C API and could change in a future
+	// DuckDB version. If string tests start failing after a DuckDB upgrade, check here first.
 	length := *(*uint32)(unsafe.Pointer(&strT))
 	var data string
 	if length <= 12 {
