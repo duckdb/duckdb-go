@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -794,6 +795,10 @@ func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 func argsToNamedArgs(values []driver.Value) []driver.NamedValue {
 	args := make([]driver.NamedValue, len(values))
 	for n, param := range values {
+		if np, ok := param.(sql.NamedArg); ok {
+			args[n].Name = np.Name
+			param = np.Value
+		}
 		args[n].Value = param
 		args[n].Ordinal = n + 1
 	}
