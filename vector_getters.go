@@ -184,7 +184,8 @@ func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 		ptr := unsafe.Add(unsafe.Pointer(&strT), 4)
 		data = unsafe.String((*byte)(ptr), int(length))
 	} else {
-		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(&strT), 8))
+		var dataPtr unsafe.Pointer
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(&dataPtr)), 8), unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(&strT), 8)), 8))
 		data = unsafe.String((*byte)(dataPtr), int(length))
 	}
 	if vec.Type == TYPE_VARCHAR {
