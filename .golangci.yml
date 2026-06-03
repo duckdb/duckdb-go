@@ -31,8 +31,10 @@ linters:
     - cyclop
     - forcetypeassert
     - funcorder
+    - goconst # too noisy for repeated test fixtures and stable type-name strings
     - gocognit
     - gocritic
+    - gomodguard # deprecated; replaced by gomodguard_v2
     - gosec # integer overflow conversions
     - mnd
     - nilnil

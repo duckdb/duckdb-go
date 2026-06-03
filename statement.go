@@ -282,7 +282,7 @@ func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
 func (s *Stmt) bindUUID(val driver.NamedValue, n int) (mapping.State, error) {
 	// Check if the interface contains a nil pointer using reflection
 	v := reflect.ValueOf(val.Value)
-	if v.Kind() == reflect.Ptr && v.IsNil() {
+	if v.Kind() == reflect.Pointer && v.IsNil() {
 		return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
 	}
 
