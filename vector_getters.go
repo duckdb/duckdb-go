@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"encoding/json"
+	"maps"
 	"math/big"
 	"strings"
 	"time"
@@ -251,11 +252,10 @@ func (vec *vector) getList(rowIdx mapping.IdxT) []any {
 }
 
 func (vec *vector) getStruct(rowIdx mapping.IdxT) map[string]any {
-	m := map[string]any{}
+	m := maps.Clone(vec.structTemplate)
 	for i := range vec.childVectors {
 		child := &vec.childVectors[i]
-		val := child.getFn(child, rowIdx)
-		m[vec.structEntries[i].Name()] = val
+		m[vec.structEntries[i].Name()] = child.getFn(child, rowIdx)
 	}
 	return m
 }
