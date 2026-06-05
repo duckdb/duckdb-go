@@ -17,7 +17,7 @@ import (
 )
 
 // duckdb-go exports the following type wrappers:
-// UUID, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
+// UUID, Bit, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
 
 // Pre-computed reflect type values to avoid repeated allocations.
 var (
@@ -44,6 +44,7 @@ var (
 	reflectTypeUnion     = reflect.TypeFor[Union]()
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
+	reflectTypeBit       = reflect.TypeFor[Bit]()
 )
 
 type numericType interface {
@@ -134,6 +135,139 @@ func uuidToHugeInt(uuid UUID) mapping.HugeInt {
 	lower := binary.BigEndian.Uint64(uuid[8:])
 	upper := binary.BigEndian.Uint64(uuid[:8])
 	return mapping.NewHugeInt(lower, int64(upper^(1<<63)))
+}
+
+// Bit represents a DuckDB BIT value as a sequence of bits.
+// Data stores DuckDB's internal format: a padding-count prefix byte followed by
+// the bit bytes (right-aligned with 1-padded MSB bits).
+// For example, "10101" (5 bits) is stored as [3, 11110101] where 3 is the padding count.
+//
+//nolint:recvcheck // Scan must use a pointer receiver for sql.Scanner. Helpers stay on value receivers so Bit values implement fmt.Stringer.
+type Bit struct {
+	Data []byte
+}
+
+// Scan implements the sql.Scanner interface.
+func (b *Bit) Scan(v any) error {
+	if b == nil {
+		return fmt.Errorf("invalid Bit destination")
+	}
+
+	switch val := v.(type) {
+	case nil:
+		b.Data = nil
+		return nil
+	case Bit:
+		if err := val.Validate(); err != nil {
+			return err
+		}
+		b.Data = append([]byte(nil), val.Data...)
+		return nil
+	case *Bit:
+		if val == nil {
+			b.Data = nil
+			return nil
+		}
+		return b.Scan(*val)
+	case string:
+		bit, err := NewBitFromString(val)
+		if err != nil {
+			return err
+		}
+		*b = bit
+		return nil
+	case []byte:
+		return b.Scan(string(val))
+	default:
+		return fmt.Errorf("invalid Bit value type: %T", v)
+	}
+}
+
+// NewBitFromString creates a Bit from a string of '0' and '1' characters.
+func NewBitFromString(s string) (Bit, error) {
+	if len(s) == 0 {
+		return Bit{}, fmt.Errorf("empty bit string")
+	}
+
+	numBytes := (len(s) + 7) / 8
+	padding := (8 - (len(s) % 8)) % 8
+	data := make([]byte, numBytes+1)
+	data[0] = byte(padding)
+
+	// Set padding bits to 1
+	if padding > 0 {
+		data[1] = byte(0xFF) << (8 - padding)
+	}
+
+	for i, c := range s {
+		switch c {
+		case '1':
+			bitPos := padding + i
+			byteIdx := bitPos/8 + 1
+			bitIdx := 7 - (bitPos % 8)
+			data[byteIdx] |= 1 << bitIdx
+		case '0':
+		default:
+			return Bit{}, fmt.Errorf("invalid character in bit string: %c", c)
+		}
+	}
+
+	return Bit{Data: data}, nil
+}
+
+// Validate checks that Data is a valid DuckDB bit encoding: the padding count
+// (first byte) must be 0-7, and the padding bits in the first data byte must
+// all be set to 1.
+func (b Bit) Validate() error {
+	if len(b.Data) <= 1 {
+		return fmt.Errorf("empty bit string")
+	}
+	padding := int(b.Data[0])
+	if padding > 7 {
+		return fmt.Errorf("invalid padding count %d, must be 0-7", padding)
+	}
+	if padding > 0 {
+		expectedMask := byte(0xFF) << (8 - padding)
+		if (b.Data[1] & expectedMask) != expectedMask {
+			return fmt.Errorf("padding bits must be 1s, expected high %d bits of first byte to be set", padding)
+		}
+	}
+	return nil
+}
+
+// Len returns the number of bits.
+func (b Bit) Len() int {
+	if len(b.Data) <= 1 {
+		return 0
+	}
+	length := (len(b.Data)-1)*8 - int(b.Data[0])
+	if length < 0 {
+		return 0
+	}
+	return length
+}
+
+// String returns the bit string representation (e.g., "10101").
+func (b Bit) String() string {
+	length := b.Len()
+	if length <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(length)
+	padding := int(b.Data[0])
+	bitData := b.Data[1:]
+	for i := range length {
+		bitPos := padding + i
+		byteIdx := bitPos / 8
+		bitIdx := 7 - (bitPos % 8)
+		if (bitData[byteIdx] & (1 << bitIdx)) != 0 {
+			sb.WriteByte('1')
+		} else {
+			sb.WriteByte('0')
+		}
+	}
+	return sb.String()
 }
 
 func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {

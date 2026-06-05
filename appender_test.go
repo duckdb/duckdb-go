@@ -176,6 +176,42 @@ func TestAppenderClose(t *testing.T) {
 	require.NoError(t, a.AppendRow(int32(42)))
 }
 
+func TestAppenderRejectsVariant(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(driver.Conn) (*Appender, error)
+	}{
+		{
+			name: "all columns",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppender(conn, "", "", "test")
+			},
+		},
+		{
+			name: "selected variant column",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppenderWithColumns(conn, "", "", "test", []string{"variant_col"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnectorWrapper(t, ``, nil)
+			db := sql.OpenDB(c)
+			_, err := db.Exec(`CREATE TABLE test (id INTEGER, variant_col VARIANT)`)
+			require.NoError(t, err)
+
+			conn := openDriverConnWrapper(t, c)
+			defer cleanupDb(t, c, db, conn)
+
+			a, err := tc.open(conn)
+			defer closeAppenderWrapper(t, a)
+			require.ErrorContains(t, err, "unsupported data type: VARIANT")
+		})
+	}
+}
+
 func TestAppendChunks(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
@@ -840,6 +876,89 @@ func TestAppenderTimeTZ(t *testing.T) {
 	require.NoError(t, res.Scan(&r))
 	expected = time.Date(1, time.January, 1, 11, 42, 23, 123000, time.FixedZone("", -7*3600))
 	require.Equal(t, expected, r)
+}
+
+func TestAppenderBit(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (data BIT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	expected := []string{
+		"10101",
+		"11110000",
+		"1",
+		"111100001100110011",
+		"00000000000000000000000010110101",
+	}
+	for _, bits := range expected {
+		bitVal, err := NewBitFromString(bits)
+		require.NoError(t, err)
+		require.NoError(t, a.AppendRow(bitVal))
+	}
+
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	res, err := db.QueryContext(context.Background(), `SELECT data FROM test`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	i := 0
+	for res.Next() {
+		var b *Bit
+		require.NoError(t, res.Scan(&b))
+		require.NotNil(t, b)
+		require.Equal(t, expected[i], b.String())
+		i++
+	}
+	require.Equal(t, len(expected), i)
+}
+
+func TestAppenderEmptyBit(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (b BIT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	require.ErrorContains(t, a.AppendRow(Bit{}), "empty bit string")
+
+	// Also test the bind path.
+	_, err := db.Exec(`INSERT INTO test VALUES (?)`, Bit{})
+	require.ErrorContains(t, err, "empty bit string")
+}
+
+func TestAppenderNullBit(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (b BIT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// Append a nil *Bit.
+	var nilBit *Bit
+	require.NoError(t, a.AppendRow(nilBit))
+
+	// Append a non-nil Bit.
+	nonNilBit, err := NewBitFromString("10101")
+	require.NoError(t, err)
+	require.NoError(t, a.AppendRow(nonNilBit))
+
+	// Append a non-nil *Bit.
+	require.NoError(t, a.AppendRow(&nonNilBit))
+
+	require.NoError(t, a.Flush())
+
+	// Verify results.
+	rows, err := db.QueryContext(context.Background(), `SELECT b FROM test`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	require.True(t, rows.Next())
+	var r *Bit
+	require.NoError(t, rows.Scan(&r))
+	require.Nil(t, r)
+
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&r))
+	require.Equal(t, &nonNilBit, r)
+
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&r))
+	require.Equal(t, &nonNilBit, r)
 }
 
 func TestAppenderBlob(t *testing.T) {

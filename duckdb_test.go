@@ -580,6 +580,12 @@ func TestTypeNamesAndScanTypes(t *testing.T) {
 			value:    []byte("foo"),
 			typeName: "BLOB",
 		},
+		// DUCKDB_TYPE_BIT
+		{
+			sql:      `SELECT '10101'::BIT AS col`,
+			value:    "10101",
+			typeName: "BIT",
+		},
 		// DUCKDB_TYPE_DECIMAL
 		{
 			sql:      `SELECT 31::DECIMAL(30,17) AS col`,
