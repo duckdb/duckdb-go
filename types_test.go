@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -1641,4 +1642,133 @@ func TestGeometry(t *testing.T) {
 	// We expect Geography/Geometry to come back as a native binary BLOB map
 	require.NotEmpty(t, res)
 	require.False(t, r.Next())
+}
+
+// TestIntervalJSON checks that Interval marshals to/from {"days":N,"months":N,"micros":N}.
+func TestIntervalJSON(t *testing.T) {
+	i := Interval{Days: 5, Months: 2, Micros: 1000}
+
+	data, err := json.Marshal(i)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"days":5,"months":2,"micros":1000}`, string(data))
+
+	var got Interval
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, i, got)
+}
+
+// TestBitJSON checks that Bit marshals to/from a bit string (e.g. "10110001"),
+// not as a base64-encoded byte array.
+func TestBitJSON(t *testing.T) {
+	b, err := NewBitFromString("10110001")
+	require.NoError(t, err)
+
+	data, err := json.Marshal(b)
+	require.NoError(t, err)
+	require.Equal(t, `"10110001"`, string(data))
+
+	var got Bit
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, b, got)
+}
+
+// TestJSONNullRoundtrip checks that unmarshaling JSON null resets each type to its zero
+// state and does not error — consistent with how encoding/json handles nullable types.
+func TestJSONNullRoundtrip(t *testing.T) {
+	t.Run("Bit", func(t *testing.T) {
+		b, err := NewBitFromString("101")
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal([]byte("null"), &b))
+		require.Nil(t, b.Data)
+	})
+
+	t.Run("Decimal", func(t *testing.T) {
+		d := Decimal{Width: 18, Scale: 2, Value: big.NewInt(123)}
+		require.NoError(t, json.Unmarshal([]byte("null"), &d))
+		require.Nil(t, d.Value)
+	})
+
+	t.Run("OrderedMap", func(t *testing.T) {
+		om := OrderedMap{}
+		om.Set("k", float64(1))
+		require.NoError(t, json.Unmarshal([]byte("null"), &om))
+		require.Equal(t, 0, om.Len())
+	})
+}
+
+// TestBitJSONEmpty checks that a non-nil but zero-length Bit round-trips through JSON
+// without error. Previously MarshalJSON emitted "" which UnmarshalJSON rejected.
+func TestBitJSONEmpty(t *testing.T) {
+	cases := []Bit{
+		{Data: []byte{}},
+		{Data: []byte{0}}, // valid encoding: padding=0, no bit data
+	}
+	for _, b := range cases {
+		data, err := json.Marshal(b)
+		require.NoError(t, err)
+		var got Bit
+		require.NoError(t, json.Unmarshal(data, &got))
+		require.Equal(t, 0, got.Len())
+	}
+}
+
+// TestDecimalJSONNilValue checks that a nil-Value Decimal marshals to null and
+// round-trips symmetrically: nil Value → null → nil Value.
+func TestDecimalJSONNilValue(t *testing.T) {
+	d := Decimal{Width: 18, Scale: 2, Value: nil}
+
+	data, err := json.Marshal(d)
+	require.NoError(t, err)
+	require.Equal(t, `null`, string(data))
+
+	var got Decimal
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Nil(t, got.Value)
+}
+
+// TestDecimalJSON checks that Decimal marshals to/from its decimal string representation
+// (e.g. "1.23"), not as a struct with Width/Scale/Value fields.
+func TestDecimalJSON(t *testing.T) {
+	d := Decimal{Width: 18, Scale: 2, Value: big.NewInt(123)}
+
+	data, err := json.Marshal(d)
+	require.NoError(t, err)
+	require.Equal(t, `"1.23"`, string(data))
+
+	var got Decimal
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, d.String(), got.String())
+}
+
+// TestUnionJSON checks that Union marshals to/from {"tag":"...","value":...}.
+func TestUnionJSON(t *testing.T) {
+	u := Union{Tag: "int32", Value: int32(42)}
+
+	data, err := json.Marshal(u)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"tag":"int32","value":42}`, string(data))
+
+	var got Union
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, u.Tag, got.Tag)
+	// JSON numbers unmarshal as float64 when the target is any/driver.Value.
+	require.Equal(t, float64(42), got.Value)
+}
+
+// TestOrderedMapJSON checks that OrderedMap marshals to a JSON object preserving
+// insertion order, not as an empty object (which would happen with unexported fields).
+func TestOrderedMapJSON(t *testing.T) {
+	om := OrderedMap{}
+	om.Set("b", float64(2))
+	om.Set("a", float64(1))
+
+	data, err := json.Marshal(om)
+	require.NoError(t, err)
+	// Keys must appear in insertion order.
+	require.Equal(t, `{"b":2,"a":1}`, string(data))
+
+	var got OrderedMap
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, om.Keys(), got.Keys())
+	require.Equal(t, om.Values(), got.Values())
 }

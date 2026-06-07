@@ -1,9 +1,11 @@
 package duckdb
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -270,6 +272,34 @@ func (b Bit) String() string {
 	return sb.String()
 }
 
+// MarshalJSON encodes the bit as a JSON string of '0'/'1' characters (e.g. "10110001").
+// Zero-length and nil bits both marshal to JSON null.
+func (b Bit) MarshalJSON() ([]byte, error) {
+	if b.Len() == 0 {
+		return []byte("null"), nil
+	}
+	return json.Marshal(b.String())
+}
+
+// UnmarshalJSON decodes a JSON string of '0'/'1' characters produced by MarshalJSON.
+// JSON null resets the bit to nil.
+func (b *Bit) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		b.Data = nil
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	bit, err := NewBitFromString(s)
+	if err != nil {
+		return err
+	}
+	*b = bit
+	return nil
+}
+
 func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {
 	lower, upper := mapping.HugeIntMembers(hugeInt)
 	i := big.NewInt(upper)
@@ -511,7 +541,10 @@ func (m *Map) Scan(v any) error {
 // NOTE: only supports keys of comparable types (no slices, maps, or functions).
 // NOTE: Set and Get use linear search, so performance may degrade with large maps.
 //
-//nolint:recvcheck
+// Value receivers on MarshalJSON/String let plain OrderedMap values satisfy
+// json.Marshaler/fmt.Stringer; Set/Delete/Scan/UnmarshalJSON need pointer receivers.
+//
+//nolint:recvcheck // value + pointer receivers are intentional (see above)
 type OrderedMap struct {
 	keys   []any
 	values []any
@@ -583,6 +616,79 @@ func (om *OrderedMap) Scan(v any) error {
 	return nil
 }
 
+// MarshalJSON encodes the map as a JSON object preserving insertion order.
+// Non-string keys are stringified via fmt.Sprintf; they are not recoverable on unmarshal
+// (UnmarshalJSON always produces string keys). Nested OrderedMap values are also not
+// preserved: they re-encode correctly but decode back as map[string]any.
+func (om OrderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range om.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		// JSON object keys must be strings; wrap non-string keys.
+		if len(keyBytes) == 0 || keyBytes[0] != '"' {
+			keyBytes, err = json.Marshal(fmt.Sprintf("%v", key))
+			if err != nil {
+				return nil, err
+			}
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, err := json.Marshal(om.values[i])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// UnmarshalJSON decodes a JSON object into the map, preserving the key order from the
+// JSON stream. All keys are decoded as strings; numeric/other key types are not restored.
+// JSON null resets the map to empty.
+func (om *OrderedMap) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		om.keys = nil
+		om.values = nil
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("expected JSON object, got %v", t)
+	}
+	om.keys = nil
+	om.values = nil
+	for dec.More() {
+		t, err = dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := t.(string)
+		if !ok {
+			return fmt.Errorf("expected string key, got %T", t)
+		}
+		var val any
+		if err = dec.Decode(&val); err != nil {
+			return err
+		}
+		om.keys = append(om.keys, key)
+		om.values = append(om.values, val)
+	}
+	_, err = dec.Token() // closing '}'
+	return err
+}
+
 func mapKeysField() string {
 	return "key"
 }
@@ -623,6 +729,7 @@ func (s *Composite[T]) Scan(v any) error {
 
 const max_decimal_width = 38
 
+//nolint:recvcheck // MarshalJSON uses a value receiver; UnmarshalJSON requires a pointer receiver.
 type Decimal struct {
 	Width uint8
 	Scale uint8
@@ -640,7 +747,7 @@ func (d Decimal) Float64() float64 {
 
 func (d Decimal) String() string {
 	// Get the sign, and return early, if zero.
-	if d.Value.Sign() == 0 {
+	if d.Value == nil || d.Value.Sign() == 0 {
 		return "0"
 	}
 
@@ -666,6 +773,58 @@ func (d Decimal) String() string {
 		return fmt.Sprintf("%s0.%s%s", signStr, strings.Repeat("0", scale-len(zeroTrimmed)), zeroTrimmed)
 	}
 	return signStr + zeroTrimmed[:len(zeroTrimmed)-scale] + "." + zeroTrimmed[len(zeroTrimmed)-scale:]
+}
+
+// MarshalJSON encodes the decimal as a canonical decimal string (e.g. "1.23").
+// A nil Value marshals to JSON null, matching UnmarshalJSON's null handling and making
+// the nil round-trip symmetric: nil → null → nil.
+// Trailing zeros are stripped by String(), so Scale and Width are not fully preserved:
+// Decimal{Scale:2, Value:100} marshals to "1", not "1.00".
+func (d Decimal) MarshalJSON() ([]byte, error) {
+	if d.Value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(d.String())
+}
+
+// UnmarshalJSON decodes a canonical decimal string produced by MarshalJSON.
+// Scale is inferred from the number of fractional digits; Width is set to 0 (not
+// encoded). Trailing zeros stripped by MarshalJSON are not restored, so a round-trip
+// through JSON is value-preserving but not struct-equal. JSON null resets all fields.
+// Returns an error if the input has more than 255 fractional digits.
+func (d *Decimal) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		d.Value = nil
+		d.Scale = 0
+		d.Width = 0
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	dotIdx := strings.IndexByte(s, '.')
+	var intStr string
+	var scale uint8
+	if dotIdx == -1 {
+		intStr = s
+	} else {
+		fracDigits := len(s) - dotIdx - 1
+		if fracDigits > 255 {
+			return fmt.Errorf("decimal has %d fractional digits, max 255", fracDigits)
+		}
+		scale = uint8(fracDigits)
+		intStr = s[:dotIdx] + s[dotIdx+1:]
+	}
+	value := new(big.Int)
+	if _, ok := value.SetString(intStr, 10); !ok {
+		return fmt.Errorf("invalid decimal value: %s", s)
+	}
+	d.Value = value
+	d.Scale = scale
+	// Width is not encoded in the string representation.
+	d.Width = 0
+	return nil
 }
 
 type Union struct {
