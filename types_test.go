@@ -770,6 +770,65 @@ func TestBlob(t *testing.T) {
 	require.Equal(t, []byte{0xAA}, b)
 }
 
+// TestVarcharBoundary covers the inlined (≤12 chars) and non-inlined (>12 chars) paths
+// in getBytes, including the exact boundary and the alignment-sensitive pointer read.
+func TestVarcharBoundary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name string
+		val  string
+	}{
+		{"empty", ""},
+		{"one char", "a"},
+		{"inlined max (12)", "123456789012"},
+		{"non-inlined min (13)", "1234567890123"},
+		{"long", "this is a much longer string that is definitely not inlined"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			require.NoError(t, db.QueryRow("SELECT ?::VARCHAR", tc.val).Scan(&got))
+			require.Equal(t, tc.val, got)
+		})
+	}
+}
+
+// TestBlobBoundary mirrors TestVarcharBoundary for the BLOB type,
+// which shares the same getBytes path but returns []byte.
+func TestBlobBoundary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE blob_boundary (data BLOB)`)
+
+	tests := []struct {
+		name string
+		val  []byte
+	}{
+		{"empty", []byte{}},
+		{"inlined max (12)", bytes.Repeat([]byte{0xFF}, 12)},
+		{"non-inlined min (13)", bytes.Repeat([]byte{0xFF}, 13)},
+		{"long", bytes.Repeat([]byte{0xAB}, 64)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := db.Exec("INSERT INTO blob_boundary VALUES (?)", tc.val)
+			require.NoError(t, err)
+
+			var got []byte
+			require.NoError(t, db.QueryRow("SELECT data FROM blob_boundary WHERE data = ?", tc.val).Scan(&got))
+			require.Equal(t, tc.val, got)
+
+			_, err = db.Exec("DELETE FROM blob_boundary")
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestList(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
