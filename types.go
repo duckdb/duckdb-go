@@ -272,34 +272,6 @@ func (b Bit) String() string {
 	return sb.String()
 }
 
-// MarshalJSON encodes the bit as a JSON string of '0'/'1' characters (e.g. "10110001").
-// Zero-length and nil bits both marshal to JSON null.
-func (b Bit) MarshalJSON() ([]byte, error) {
-	if b.Len() == 0 {
-		return []byte("null"), nil
-	}
-	return json.Marshal(b.String())
-}
-
-// UnmarshalJSON decodes a JSON string of '0'/'1' characters produced by MarshalJSON.
-// JSON null resets the bit to nil.
-func (b *Bit) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		b.Data = nil
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	bit, err := NewBitFromString(s)
-	if err != nil {
-		return err
-	}
-	*b = bit
-	return nil
-}
-
 func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {
 	lower, upper := mapping.HugeIntMembers(hugeInt)
 	i := big.NewInt(upper)
@@ -729,7 +701,6 @@ func (s *Composite[T]) Scan(v any) error {
 
 const max_decimal_width = 38
 
-//nolint:recvcheck // MarshalJSON uses a value receiver; UnmarshalJSON requires a pointer receiver.
 type Decimal struct {
 	Width uint8
 	Scale uint8
@@ -747,7 +718,7 @@ func (d Decimal) Float64() float64 {
 
 func (d Decimal) String() string {
 	// Get the sign, and return early, if zero.
-	if d.Value == nil || d.Value.Sign() == 0 {
+	if d.Value.Sign() == 0 {
 		return "0"
 	}
 
@@ -773,58 +744,6 @@ func (d Decimal) String() string {
 		return fmt.Sprintf("%s0.%s%s", signStr, strings.Repeat("0", scale-len(zeroTrimmed)), zeroTrimmed)
 	}
 	return signStr + zeroTrimmed[:len(zeroTrimmed)-scale] + "." + zeroTrimmed[len(zeroTrimmed)-scale:]
-}
-
-// MarshalJSON encodes the decimal as a canonical decimal string (e.g. "1.23").
-// A nil Value marshals to JSON null, matching UnmarshalJSON's null handling and making
-// the nil round-trip symmetric: nil → null → nil.
-// Trailing zeros are stripped by String(), so Scale and Width are not fully preserved:
-// Decimal{Scale:2, Value:100} marshals to "1", not "1.00".
-func (d Decimal) MarshalJSON() ([]byte, error) {
-	if d.Value == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(d.String())
-}
-
-// UnmarshalJSON decodes a canonical decimal string produced by MarshalJSON.
-// Scale is inferred from the number of fractional digits; Width is set to 0 (not
-// encoded). Trailing zeros stripped by MarshalJSON are not restored, so a round-trip
-// through JSON is value-preserving but not struct-equal. JSON null resets all fields.
-// Returns an error if the input has more than 255 fractional digits.
-func (d *Decimal) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		d.Value = nil
-		d.Scale = 0
-		d.Width = 0
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	dotIdx := strings.IndexByte(s, '.')
-	var intStr string
-	var scale uint8
-	if dotIdx == -1 {
-		intStr = s
-	} else {
-		fracDigits := len(s) - dotIdx - 1
-		if fracDigits > 255 {
-			return fmt.Errorf("decimal has %d fractional digits, max 255", fracDigits)
-		}
-		scale = uint8(fracDigits)
-		intStr = s[:dotIdx] + s[dotIdx+1:]
-	}
-	value := new(big.Int)
-	if _, ok := value.SetString(intStr, 10); !ok {
-		return fmt.Errorf("invalid decimal value: %s", s)
-	}
-	d.Value = value
-	d.Scale = scale
-	// Width is not encoded in the string representation.
-	d.Width = 0
-	return nil
 }
 
 type Union struct {

@@ -1657,87 +1657,15 @@ func TestIntervalJSON(t *testing.T) {
 	require.Equal(t, i, got)
 }
 
-// TestBitJSON checks that Bit marshals to/from a bit string (e.g. "10110001"),
-// not as a base64-encoded byte array.
-func TestBitJSON(t *testing.T) {
-	b, err := NewBitFromString("10110001")
-	require.NoError(t, err)
-
-	data, err := json.Marshal(b)
-	require.NoError(t, err)
-	require.Equal(t, `"10110001"`, string(data))
-
-	var got Bit
-	require.NoError(t, json.Unmarshal(data, &got))
-	require.Equal(t, b, got)
-}
-
-// TestJSONNullRoundtrip checks that unmarshaling JSON null resets each type to its zero
+// TestJSONNullRoundtrip checks that unmarshaling JSON null resets OrderedMap to its zero
 // state and does not error — consistent with how encoding/json handles nullable types.
 func TestJSONNullRoundtrip(t *testing.T) {
-	t.Run("Bit", func(t *testing.T) {
-		b, err := NewBitFromString("101")
-		require.NoError(t, err)
-		require.NoError(t, json.Unmarshal([]byte("null"), &b))
-		require.Nil(t, b.Data)
-	})
-
-	t.Run("Decimal", func(t *testing.T) {
-		d := Decimal{Width: 18, Scale: 2, Value: big.NewInt(123)}
-		require.NoError(t, json.Unmarshal([]byte("null"), &d))
-		require.Nil(t, d.Value)
-	})
-
 	t.Run("OrderedMap", func(t *testing.T) {
 		om := OrderedMap{}
 		om.Set("k", float64(1))
 		require.NoError(t, json.Unmarshal([]byte("null"), &om))
 		require.Equal(t, 0, om.Len())
 	})
-}
-
-// TestBitJSONEmpty checks that a non-nil but zero-length Bit round-trips through JSON
-// without error. Previously MarshalJSON emitted "" which UnmarshalJSON rejected.
-func TestBitJSONEmpty(t *testing.T) {
-	cases := []Bit{
-		{Data: []byte{}},
-		{Data: []byte{0}}, // valid encoding: padding=0, no bit data
-	}
-	for _, b := range cases {
-		data, err := json.Marshal(b)
-		require.NoError(t, err)
-		var got Bit
-		require.NoError(t, json.Unmarshal(data, &got))
-		require.Equal(t, 0, got.Len())
-	}
-}
-
-// TestDecimalJSONNilValue checks that a nil-Value Decimal marshals to null and
-// round-trips symmetrically: nil Value → null → nil Value.
-func TestDecimalJSONNilValue(t *testing.T) {
-	d := Decimal{Width: 18, Scale: 2, Value: nil}
-
-	data, err := json.Marshal(d)
-	require.NoError(t, err)
-	require.Equal(t, `null`, string(data))
-
-	var got Decimal
-	require.NoError(t, json.Unmarshal(data, &got))
-	require.Nil(t, got.Value)
-}
-
-// TestDecimalJSON checks that Decimal marshals to/from its decimal string representation
-// (e.g. "1.23"), not as a struct with Width/Scale/Value fields.
-func TestDecimalJSON(t *testing.T) {
-	d := Decimal{Width: 18, Scale: 2, Value: big.NewInt(123)}
-
-	data, err := json.Marshal(d)
-	require.NoError(t, err)
-	require.Equal(t, `"1.23"`, string(data))
-
-	var got Decimal
-	require.NoError(t, json.Unmarshal(data, &got))
-	require.Equal(t, d.String(), got.String())
 }
 
 // TestUnionJSON checks that Union marshals to/from {"tag":"...","value":...}.
