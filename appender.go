@@ -97,7 +97,12 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 
 		// Ensure that we only create an appender for supported column types.
 		t := mapping.GetTypeId(colType)
-		name, found := unsupportedTypeToStringMap[t]
+		// TODO: duckdb-rs can append scalars into VARIANT columns because it
+		// uses DuckDB's row-wise duckdb_append_* API, which lets DuckDB coerce
+		// each value. This appender writes typed data chunks through Go vector
+		// setters, so enabling VARIANT here needs a separate write path or
+		// setter design rather than only removing it from the unsupported map.
+		name, found := unsupportedValueTypeToStringMap[t]
 		if found {
 			err = addIndexToError(unsupportedTypeError(name), int(i)+1)
 			destroyLogicalTypes(a.types)
@@ -136,7 +141,10 @@ func (a *Appender) initTableColumns(columns []string) error {
 
 		// Ensure that we only create an appender for supported column types.
 		t := mapping.GetTypeId(colType)
-		if name, found := unsupportedTypeToStringMap[t]; found {
+		// TODO: Keep this in sync with the all-column appender path above.
+		// VARIANT support here needs an appender design that delegates scalar
+		// coercion to DuckDB instead of routing through Go vector setters.
+		if name, found := unsupportedValueTypeToStringMap[t]; found {
 			err := addIndexToError(unsupportedTypeError(name), i+1)
 			destroyLogicalTypes(a.types)
 			return getError(errAppenderCreation, err)
