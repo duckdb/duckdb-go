@@ -24,6 +24,14 @@ func testError(t *testing.T, actual error, contains ...string) {
 	testErrorInternal(t, actual, contains)
 }
 
+func TestGetErrorWrapsCause(t *testing.T) {
+	cause := errors.New("wrapped cause")
+
+	err := getError(errAppenderFlush, cause)
+	require.ErrorIs(t, err, errAppenderFlush)
+	require.ErrorIs(t, err, cause)
+}
+
 func TestErrConnect(t *testing.T) {
 	t.Run(errParseDSN.Error(), func(t *testing.T) {
 		db, err := sql.Open(`duckdb`, `:mem ory:`)
