@@ -1,9 +1,11 @@
 package duckdb
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -511,7 +513,10 @@ func (m *Map) Scan(v any) error {
 // NOTE: only supports keys of comparable types (no slices, maps, or functions).
 // NOTE: Set and Get use linear search, so performance may degrade with large maps.
 //
-//nolint:recvcheck
+// Value receivers on MarshalJSON/String let plain OrderedMap values satisfy
+// json.Marshaler/fmt.Stringer; Set/Delete/Scan/UnmarshalJSON need pointer receivers.
+//
+//nolint:recvcheck // value + pointer receivers are intentional (see above)
 type OrderedMap struct {
 	keys   []any
 	values []any
@@ -581,6 +586,79 @@ func (om *OrderedMap) Scan(v any) error {
 	om.values = data.Values()
 
 	return nil
+}
+
+// MarshalJSON encodes the map as a JSON object preserving insertion order.
+// Non-string keys are stringified via fmt.Sprintf; they are not recoverable on unmarshal
+// (UnmarshalJSON always produces string keys). Nested OrderedMap values are also not
+// preserved: they re-encode correctly but decode back as map[string]any.
+func (om OrderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range om.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		// JSON object keys must be strings; wrap non-string keys.
+		if len(keyBytes) == 0 || keyBytes[0] != '"' {
+			keyBytes, err = json.Marshal(fmt.Sprintf("%v", key))
+			if err != nil {
+				return nil, err
+			}
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, err := json.Marshal(om.values[i])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// UnmarshalJSON decodes a JSON object into the map, preserving the key order from the
+// JSON stream. All keys are decoded as strings; numeric/other key types are not restored.
+// JSON null resets the map to empty.
+func (om *OrderedMap) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		om.keys = nil
+		om.values = nil
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("expected JSON object, got %v", t)
+	}
+	om.keys = nil
+	om.values = nil
+	for dec.More() {
+		t, err = dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := t.(string)
+		if !ok {
+			return fmt.Errorf("expected string key, got %T", t)
+		}
+		var val any
+		if err = dec.Decode(&val); err != nil {
+			return err
+		}
+		om.keys = append(om.keys, key)
+		om.values = append(om.values, val)
+	}
+	_, err = dec.Token() // closing '}'
+	return err
 }
 
 func mapKeysField() string {
