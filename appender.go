@@ -296,7 +296,8 @@ func (a *Appender) Flush() error {
 // FlushWithCancel flushes the data chunks to the underlying table and clears the internal cache.
 // Does not close the appender, even if it returns an error. Unless you have a good reason to call this,
 // call CloseWithCancel when you are done with the appender.
-// Takes a context for cancellation.
+// Takes a context for cancellation. Unlike query execution, an already-canceled ctx does not
+// skip starting the flush, but that flush may be interrupted immediately.
 func (a *Appender) FlushWithCancel(ctx context.Context) error {
 	if err := a.appendDataChunk(); err != nil {
 		return getError(errAppenderFlush, invalidatedAppenderError(err))
@@ -314,17 +315,20 @@ func (a *Appender) FlushWithCancel(ctx context.Context) error {
 // Clear is typically used after an error occurs during Flush or FlushWithCancel to avoid memory leaks
 // before closing the appender. After calling Clear, the appender can be reused for appending new rows.
 func (a *Appender) Clear() error {
-	var errClear error
-	if mapping.AppenderClear(a.appender) == mapping.StateError {
-		errClear = getDuckDBError(mapping.AppenderError(a.appender))
-	}
-
+	errClear := a.clearAppender()
 	a.chunk.reset(true)
 	a.rowCount = 0
 
-	if errClear != nil {
+	return errClear
+}
+
+// clearAppender clears only DuckDB's appender state; it does not touch the Go chunk buffer.
+func (a *Appender) clearAppender() error {
+	if mapping.AppenderClear(a.appender) == mapping.StateError {
+		errClear := getDuckDBError(mapping.AppenderError(a.appender))
 		return getError(invalidatedAppenderClearError(errClear), nil)
 	}
+
 	return nil
 }
 
@@ -337,7 +341,7 @@ func (a *Appender) Close() error {
 // CloseWithCancel closes the appender. This flushes any remaining data chunks to the underlying table.
 // The flush operation can be cancelled via the provided context. If the flush fails, the appender is cleared
 // before closing to prevent a memory leak. It is essential to call this function when you are done with
-// the appender to avoid leaking memory.
+// the appender to avoid leaking memory. It uses the same cancellation behavior as FlushWithCancel.
 func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	if a.closed {
 		return getError(errAppenderDoubleClose, nil)
@@ -353,7 +357,7 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 
 	var errClear error
 	if errFlush != nil {
-		errClear = a.Clear()
+		errClear = a.clearAppender()
 	}
 	// Destroy all appender data and the appender.
 	destroyLogicalTypes(a.types)
@@ -461,7 +465,8 @@ func (a *Appender) flushWithCancel(ctx context.Context) error {
 	mainDoneCh := make(chan struct{})
 	bgDoneCh := make(chan struct{})
 
-	// Spawn go-routine waiting to receive on the context or main channel.
+	// Appender cancellation always starts the flush, even if ctx is already
+	// canceled. The background routine may interrupt the flush immediately.
 	go interruptRoutine(&mainDoneCh, &bgDoneCh, ctx, a.conn)
 
 	state := mapping.AppenderFlush(a.appender)
