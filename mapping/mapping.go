@@ -49,6 +49,8 @@ const (
 	TypeStringLiteral  = bindings.TypeStringLiteral
 	TypeIntegerLiteral = bindings.TypeIntegerLiteral
 	TypeTimeNS         = bindings.TypeTimeNS
+	TypeGeometry       = bindings.TypeGeometry
+	TypeVariant        = bindings.TypeVariant
 )
 
 type State = bindings.State
@@ -223,6 +225,8 @@ var (
 	TimestampStructMembers   = bindings.TimestampStructMembers
 	NewInterval              = bindings.NewInterval
 	IntervalMembers          = bindings.IntervalMembers
+	NewBit                   = bindings.NewBit
+	BitMembers               = bindings.BitMembers
 	NewHugeInt               = bindings.NewHugeInt
 	HugeIntMembers           = bindings.HugeIntMembers
 	NewUHugeInt              = bindings.NewUHugeInt

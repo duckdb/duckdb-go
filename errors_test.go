@@ -177,23 +177,6 @@ func TestErrAppender(t *testing.T) {
 		testError(t, err, errAppenderDoubleClose.Error())
 	})
 
-	t.Run(unsupportedTypeErrMsg, func(t *testing.T) {
-		c := newConnectorWrapper(t, ``, nil)
-		defer closeConnectorWrapper(t, c)
-
-		db := sql.OpenDB(c)
-		_, err := db.Exec(`CREATE TABLE test (bit_col BIT)`)
-		require.NoError(t, err)
-		defer closeDbWrapper(t, db)
-
-		conn := openDriverConnWrapper(t, c)
-		defer closeDriverConnWrapper(t, &conn)
-
-		a, err := NewAppenderFromConn(conn, "", "test")
-		defer closeAppenderWrapper(t, a)
-		testError(t, err, errAppenderCreation.Error(), unsupportedTypeErrMsg)
-	})
-
 	t.Run(columnCountErrMsg, func(t *testing.T) {
 		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (a VARCHAR, b VARCHAR)`)
 		defer cleanupAppender(t, c, db, conn, a)

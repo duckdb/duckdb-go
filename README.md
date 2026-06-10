@@ -5,9 +5,9 @@
 
 The DuckDB driver conforms to the built-in `database/sql` interface.
 
-**Current DuckDB version: `v1.5.1`.**
+**Current DuckDB version: `v1.5.3`.**
 
-The first duckdb-go tag with that version is `v2.10501.0`.
+The first duckdb-go tag with that version is `v2.10503.0`.
 
 Starting with DuckDB `v1.5.0`, the duckdb-go version encodes the DuckDB version in its second semver component.
 The format is `v2.MAJOR_MINOR_PATCH.x`, e.g., DuckDB `v1.5.0` maps to duckdb-go `v2.10500.x`.
@@ -16,6 +16,8 @@ Previous DuckDB versions:
 
 | DuckDB   | duckdb-go    |
 |----------|--------------|
+| `v1.5.3` | `v2.10503.0` |
+| `v1.5.2` | `v2.10502.0` |
 | `v1.5.1` | `v2.10501.0` |
 | `v1.5.0` | `v2.10500.0` |
 | `v1.4.4` | `v2.5.5`     |
@@ -209,7 +211,36 @@ For Darwin ARM64, you can then build your module like so:
 CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/libs" go build -tags=duckdb_use_static_lib
 ```
 
-You can also find these steps in the `Makefile` and the `tests.yaml`.
+#### Using a local DuckDB checkout
+
+If you want to validate local DuckDB changes from `duckdb-go`, point `duckdb-go` at a static library built from your local DuckDB checkout.
+
+1. Build DuckDB and create the bundled static archive in your local checkout. Rerun this command after editing DuckDB source files.
+
+```sh
+cd /path/to/duckdb
+make bundle-library
+```
+
+2. Run `duckdb-go` against that archive. The example below uses macOS linker flags.
+
+```sh
+CGO_ENABLED=1 \
+CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
+CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/duckdb/build/release" \
+go test -tags=duckdb_use_static_lib ./...
+```
+
+For targeted verification, run only the reproducer or regression test you care about:
+
+```sh
+CGO_ENABLED=1 \
+CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
+CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/duckdb/build/release" \
+go test -tags=duckdb_use_static_lib -run TestName -v
+```
+
+This lets you verify a local DuckDB fix from `duckdb-go` without replacing the bundled libraries in this repository. The same static-linking pattern is also used in the `Makefile` and `tests.yaml`.
 
 The DuckDB team also publishes pre-built libraries as part of their [releases](https://github.com/duckdb/duckdb/releases).
 The published zipped archives contain libraries for DuckDB core, the third-party libraries, and the default extensions.
@@ -269,6 +300,26 @@ microseconds elapsed since January 1, 1970, UTC (i.e., an instant without offset
 When passing a `time.Time` to duckdb-go, duckdb-go transforms it to an instant with `UnixMicro()`,
 even when using `TIMESTAMP_TZ`. Later, scanning either type of value returns an instant, as SQL types do not model
 time zone information for individual values.
+
+Use `duckdb.Typed(value, typ)` to force the DuckDB logical type used when binding a query parameter.
+This is useful when DuckDB cannot infer the desired parameter type from SQL alone, or when duckdb-go's
+default Go-type inference would choose a different DuckDB type.
+
+```go
+start := time.Date(2024, time.April, 5, 0, 0, 0, 0, time.UTC)
+end := time.Date(2024, time.April, 6, 0, 0, 0, 0, time.UTC)
+
+row := db.QueryRow(`
+	SELECT COUNT(*)
+	FROM (VALUES
+		(TIMESTAMP_NS '2024-04-05 12:00:00.000000001')
+	) events_ns(ts)
+	WHERE ts >= ? AND ts < ?
+`, duckdb.Typed(start, duckdb.TYPE_TIMESTAMP_NS), duckdb.Typed(end, duckdb.TYPE_TIMESTAMP_NS))
+```
+
+In this example, the wrapper ensures the parameters bind as `TIMESTAMP_NS`. Bare `time.Time` values bind as
+`TIMESTAMP_TZ` by default. `Typed` is a narrow scalar binding hint; validation happens when the parameter is bound.
 
 **Connection lifetime**
 

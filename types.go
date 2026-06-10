@@ -1,9 +1,11 @@
 package duckdb
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -17,7 +19,7 @@ import (
 )
 
 // duckdb-go exports the following type wrappers:
-// UUID, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
+// UUID, Bit, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
 
 // Pre-computed reflect type values to avoid repeated allocations.
 var (
@@ -44,6 +46,7 @@ var (
 	reflectTypeUnion     = reflect.TypeFor[Union]()
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
+	reflectTypeBit       = reflect.TypeFor[Bit]()
 )
 
 type numericType interface {
@@ -134,6 +137,139 @@ func uuidToHugeInt(uuid UUID) mapping.HugeInt {
 	lower := binary.BigEndian.Uint64(uuid[8:])
 	upper := binary.BigEndian.Uint64(uuid[:8])
 	return mapping.NewHugeInt(lower, int64(upper^(1<<63)))
+}
+
+// Bit represents a DuckDB BIT value as a sequence of bits.
+// Data stores DuckDB's internal format: a padding-count prefix byte followed by
+// the bit bytes (right-aligned with 1-padded MSB bits).
+// For example, "10101" (5 bits) is stored as [3, 11110101] where 3 is the padding count.
+//
+//nolint:recvcheck // Scan must use a pointer receiver for sql.Scanner. Helpers stay on value receivers so Bit values implement fmt.Stringer.
+type Bit struct {
+	Data []byte
+}
+
+// Scan implements the sql.Scanner interface.
+func (b *Bit) Scan(v any) error {
+	if b == nil {
+		return fmt.Errorf("invalid Bit destination")
+	}
+
+	switch val := v.(type) {
+	case nil:
+		b.Data = nil
+		return nil
+	case Bit:
+		if err := val.Validate(); err != nil {
+			return err
+		}
+		b.Data = append([]byte(nil), val.Data...)
+		return nil
+	case *Bit:
+		if val == nil {
+			b.Data = nil
+			return nil
+		}
+		return b.Scan(*val)
+	case string:
+		bit, err := NewBitFromString(val)
+		if err != nil {
+			return err
+		}
+		*b = bit
+		return nil
+	case []byte:
+		return b.Scan(string(val))
+	default:
+		return fmt.Errorf("invalid Bit value type: %T", v)
+	}
+}
+
+// NewBitFromString creates a Bit from a string of '0' and '1' characters.
+func NewBitFromString(s string) (Bit, error) {
+	if len(s) == 0 {
+		return Bit{}, fmt.Errorf("empty bit string")
+	}
+
+	numBytes := (len(s) + 7) / 8
+	padding := (8 - (len(s) % 8)) % 8
+	data := make([]byte, numBytes+1)
+	data[0] = byte(padding)
+
+	// Set padding bits to 1
+	if padding > 0 {
+		data[1] = byte(0xFF) << (8 - padding)
+	}
+
+	for i, c := range s {
+		switch c {
+		case '1':
+			bitPos := padding + i
+			byteIdx := bitPos/8 + 1
+			bitIdx := 7 - (bitPos % 8)
+			data[byteIdx] |= 1 << bitIdx
+		case '0':
+		default:
+			return Bit{}, fmt.Errorf("invalid character in bit string: %c", c)
+		}
+	}
+
+	return Bit{Data: data}, nil
+}
+
+// Validate checks that Data is a valid DuckDB bit encoding: the padding count
+// (first byte) must be 0-7, and the padding bits in the first data byte must
+// all be set to 1.
+func (b Bit) Validate() error {
+	if len(b.Data) <= 1 {
+		return fmt.Errorf("empty bit string")
+	}
+	padding := int(b.Data[0])
+	if padding > 7 {
+		return fmt.Errorf("invalid padding count %d, must be 0-7", padding)
+	}
+	if padding > 0 {
+		expectedMask := byte(0xFF) << (8 - padding)
+		if (b.Data[1] & expectedMask) != expectedMask {
+			return fmt.Errorf("padding bits must be 1s, expected high %d bits of first byte to be set", padding)
+		}
+	}
+	return nil
+}
+
+// Len returns the number of bits.
+func (b Bit) Len() int {
+	if len(b.Data) <= 1 {
+		return 0
+	}
+	length := (len(b.Data)-1)*8 - int(b.Data[0])
+	if length < 0 {
+		return 0
+	}
+	return length
+}
+
+// String returns the bit string representation (e.g., "10101").
+func (b Bit) String() string {
+	length := b.Len()
+	if length <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(length)
+	padding := int(b.Data[0])
+	bitData := b.Data[1:]
+	for i := range length {
+		bitPos := padding + i
+		byteIdx := bitPos / 8
+		bitIdx := 7 - (bitPos % 8)
+		if (bitData[byteIdx] & (1 << bitIdx)) != 0 {
+			sb.WriteByte('1')
+		} else {
+			sb.WriteByte('0')
+		}
+	}
+	return sb.String()
 }
 
 func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {
@@ -377,7 +513,10 @@ func (m *Map) Scan(v any) error {
 // NOTE: only supports keys of comparable types (no slices, maps, or functions).
 // NOTE: Set and Get use linear search, so performance may degrade with large maps.
 //
-//nolint:recvcheck
+// Value receivers on MarshalJSON/String let plain OrderedMap values satisfy
+// json.Marshaler/fmt.Stringer; Set/Delete/Scan/UnmarshalJSON need pointer receivers.
+//
+//nolint:recvcheck // value + pointer receivers are intentional (see above)
 type OrderedMap struct {
 	keys   []any
 	values []any
@@ -447,6 +586,79 @@ func (om *OrderedMap) Scan(v any) error {
 	om.values = data.Values()
 
 	return nil
+}
+
+// MarshalJSON encodes the map as a JSON object preserving insertion order.
+// Non-string keys are stringified via fmt.Sprintf; they are not recoverable on unmarshal
+// (UnmarshalJSON always produces string keys). Nested OrderedMap values are also not
+// preserved: they re-encode correctly but decode back as map[string]any.
+func (om OrderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range om.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		// JSON object keys must be strings; wrap non-string keys.
+		if len(keyBytes) == 0 || keyBytes[0] != '"' {
+			keyBytes, err = json.Marshal(fmt.Sprintf("%v", key))
+			if err != nil {
+				return nil, err
+			}
+		}
+		buf.Write(keyBytes)
+		buf.WriteByte(':')
+		valBytes, err := json.Marshal(om.values[i])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valBytes)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// UnmarshalJSON decodes a JSON object into the map, preserving the key order from the
+// JSON stream. All keys are decoded as strings; numeric/other key types are not restored.
+// JSON null resets the map to empty.
+func (om *OrderedMap) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		om.keys = nil
+		om.values = nil
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := t.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("expected JSON object, got %v", t)
+	}
+	om.keys = nil
+	om.values = nil
+	for dec.More() {
+		t, err = dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := t.(string)
+		if !ok {
+			return fmt.Errorf("expected string key, got %T", t)
+		}
+		var val any
+		if err = dec.Decode(&val); err != nil {
+			return err
+		}
+		om.keys = append(om.keys, key)
+		om.values = append(om.values, val)
+	}
+	_, err = dec.Token() // closing '}'
+	return err
 }
 
 func mapKeysField() string {
