@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -50,7 +51,7 @@ func BenchmarkQueryContextRowsScan(b *testing.B) {
 			for {
 				err := rows.Next(values)
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
@@ -94,7 +95,7 @@ func BenchmarkQueryContextRowsCount(b *testing.B) {
 			for {
 				err := rows.Next(values)
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
@@ -134,13 +135,13 @@ func BenchmarkQueryChunksContextScan(b *testing.B) {
 			for {
 				chunk, err := rows.NextChunk()
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
 				}
 
-				for rowIdx := 0; rowIdx < chunk.GetSize(); rowIdx++ {
+				for rowIdx := range chunk.GetSize() {
 					intVal, err := chunk.GetValue(0, rowIdx)
 					require.NoError(b, err)
 					floatVal, err := chunk.GetValue(1, rowIdx)
@@ -187,13 +188,13 @@ func BenchmarkQueryChunksContextGetValueNumericScan(b *testing.B) {
 			for {
 				chunk, err := rows.NextChunk()
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
 				}
 
-				for rowIdx := 0; rowIdx < chunk.GetSize(); rowIdx++ {
+				for rowIdx := range chunk.GetSize() {
 					intVal, err := chunk.GetValue(0, rowIdx)
 					require.NoError(b, err)
 					floatVal, err := chunk.GetValue(1, rowIdx)
@@ -236,7 +237,7 @@ func BenchmarkQueryChunksContextTypedNumericScan(b *testing.B) {
 			for {
 				chunk, err := rows.NextChunk()
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
@@ -299,7 +300,7 @@ func BenchmarkQueryChunksContextTypedStringScan(b *testing.B) {
 			for {
 				chunk, err := rows.NextChunk()
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err
@@ -371,7 +372,7 @@ func BenchmarkQueryChunksContextCount(b *testing.B) {
 			for {
 				chunk, err := rows.NextChunk()
 				if err != nil {
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						return nil
 					}
 					return err

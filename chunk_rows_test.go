@@ -3,8 +3,10 @@ package duckdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,7 +41,7 @@ func TestQueryChunksContextStreamsChunkValues(t *testing.T) {
 		for {
 			chunk, err := rows.NextChunk()
 			if err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					return nil
 				}
 				return err
@@ -67,15 +69,16 @@ func TestQueryChunksContextAdvancesAcrossMultipleChunks(t *testing.T) {
 	createTable(t, db, `CREATE TABLE numbers (i INTEGER)`)
 
 	totalRows := GetDataChunkCapacity() + 17
-	insertSQL := `INSERT INTO numbers VALUES `
+	var insertSQL strings.Builder
+	insertSQL.WriteString(`INSERT INTO numbers VALUES `)
 	for i := range totalRows {
 		if i > 0 {
-			insertSQL += ", "
+			insertSQL.WriteString(", ")
 		}
-		insertSQL += fmt.Sprintf("(%d)", i)
+		fmt.Fprintf(&insertSQL, "(%d)", i)
 	}
 
-	_, err := db.ExecContext(ctx, insertSQL)
+	_, err := db.ExecContext(ctx, insertSQL.String())
 	require.NoError(t, err)
 
 	conn := openConnWrapper(t, db, ctx)
@@ -97,7 +100,7 @@ func TestQueryChunksContextAdvancesAcrossMultipleChunks(t *testing.T) {
 		for {
 			chunk, err := rows.NextChunk()
 			if err != nil {
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					return nil
 				}
 				return err
@@ -313,13 +316,13 @@ func TestQueryChunksContextStringRefs(t *testing.T) {
 		isNull, err := chunk.IsNull(0, 0)
 		require.NoError(t, err)
 		require.False(t, isNull)
-		require.Equal(t, "", refs[0].UnsafeString())
+		require.Empty(t, refs[0].UnsafeString())
 		require.Equal(t, 0, refs[0].Len())
 
 		isNull, err = chunk.IsNull(0, 1)
 		require.NoError(t, err)
 		require.True(t, isNull)
-		require.Equal(t, "", refs[1].UnsafeString())
+		require.Empty(t, refs[1].UnsafeString())
 		require.Equal(t, 0, refs[1].Len())
 
 		isNull, err = chunk.IsNull(0, 2)
