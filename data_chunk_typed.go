@@ -42,8 +42,7 @@ func (chunk *DataChunk) Float64Slice(colIdx int) ([]float64, error) {
 	return typedChunkSlice[float64](chunk, colIdx, TYPE_DOUBLE)
 }
 
-// TimestampMicrosSlice returns TIMESTAMP values as Unix microseconds.
-// The returned slice is only valid until the chunk is invalidated.
+// TimestampMicrosSlice returns a copy of TIMESTAMP values as Unix microseconds.
 // For NULL rows, use IsNull to check whether the corresponding element is valid.
 func (chunk *DataChunk) TimestampMicrosSlice(colIdx int) ([]int64, error) {
 	_, values, err := typedChunkSliceWithColumn[mapping.Timestamp](chunk, colIdx, TYPE_TIMESTAMP)
