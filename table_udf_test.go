@@ -51,6 +51,12 @@ type (
 		count int64
 	}
 
+	// incTableOptionalNamedUDF is like incTableNamedUDF but ARG is optional (defaults to 5).
+	incTableOptionalNamedUDF struct {
+		n     int64
+		count int64
+	}
+
 	constTableUDF[T any] struct {
 		count int64
 		value T
@@ -136,6 +142,18 @@ var (
 			name:        "incTableNamedUDF",
 			query:       `SELECT * FROM %s(ARG=2048)`,
 			resultCount: 2048,
+		},
+		{
+			udf:         &incTableOptionalNamedUDF{},
+			name:        "incTableOptionalNamedUDF_supplied",
+			query:       `SELECT * FROM %s(ARG=3)`,
+			resultCount: 3,
+		},
+		{
+			udf:         &incTableOptionalNamedUDF{},
+			name:        "incTableOptionalNamedUDF_omitted",
+			query:       `SELECT * FROM %s()`,
+			resultCount: 5, // default
 		},
 		{
 			udf:         &constTableUDF[bool]{value: false, t: TYPE_BOOLEAN},
@@ -650,6 +668,50 @@ func (udf *incTableNamedUDF) GetTypes() []any {
 }
 
 func (udf *incTableNamedUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func (udf *incTableOptionalNamedUDF) GetFunction() RowTableFunction {
+	return RowTableFunction{
+		Config: TableFunctionConfig{
+			NamedArguments: map[string]TypeInfo{"ARG": typeBigintTableUDF},
+		},
+		BindArguments: bindIncTableOptionalNamedUDF,
+	}
+}
+
+func bindIncTableOptionalNamedUDF(namedArgs map[string]any, args ...any) (RowTableSource, error) {
+	n := int64(5) // default when ARG is omitted
+	if v := namedArgs["ARG"]; v != nil {
+		n = v.(int64)
+	}
+	return &incTableOptionalNamedUDF{n: n}, nil
+}
+
+func (udf *incTableOptionalNamedUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{{Name: "result", T: typeBigintTableUDF}}
+}
+
+func (udf *incTableOptionalNamedUDF) Init() {}
+
+func (udf *incTableOptionalNamedUDF) FillRow(row Row) (bool, error) {
+	if udf.count >= udf.n {
+		return false, nil
+	}
+	udf.count++
+	err := SetRowValue(row, 0, udf.count)
+	return true, err
+}
+
+func (udf *incTableOptionalNamedUDF) GetValue(r, c int) any {
+	return int64(r + 1)
+}
+
+func (udf *incTableOptionalNamedUDF) GetTypes() []any {
+	return []any{0}
+}
+
+func (udf *incTableOptionalNamedUDF) Cardinality() *CardinalityInfo {
 	return nil
 }
 
