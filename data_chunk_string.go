@@ -43,13 +43,16 @@ func (ref StringRef) UnsafeString() string {
 // The returned refs are only valid until the chunk is invalidated.
 // For NULL rows, use IsNull to check whether the corresponding element is valid.
 func (chunk *DataChunk) StringRefs(colIdx int) ([]StringRef, error) {
-	values, err := typedChunkSlice[mapping.StringT](chunk, colIdx, TYPE_VARCHAR)
+	colIdx, values, err := typedChunkSliceWithColumn[mapping.StringT](chunk, colIdx, TYPE_VARCHAR)
 	if err != nil {
 		return nil, err
 	}
 
 	refs := make([]StringRef, len(values))
 	for idx := range values {
+		if chunk.columns[colIdx].getNull(mapping.IdxT(idx)) {
+			continue
+		}
 		refs[idx] = newStringRef(&values[idx])
 	}
 

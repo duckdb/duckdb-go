@@ -203,6 +203,47 @@ func TestQueryChunksContextTypedSliceDetectsNulls(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestQueryChunksContextIsNullRejectsOutOfRangeRowIndex(t *testing.T) {
+	connector := newConnectorWrapper(t, "", nil)
+	defer closeConnectorWrapper(t, connector)
+
+	db := sql.OpenDB(connector)
+	defer closeDbWrapper(t, db)
+
+	ctx := context.Background()
+	createTable(t, db, `CREATE TABLE metrics (i INTEGER)`)
+
+	_, err := db.ExecContext(ctx, `INSERT INTO metrics VALUES (1)`)
+	require.NoError(t, err)
+
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+
+	err = conn.Raw(func(driverConn any) error {
+		duckConn := driverConn.(*Conn)
+
+		rows, err := duckConn.QueryChunksContext(ctx, `SELECT i FROM metrics`, nil)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, rows.Close())
+		}()
+
+		chunk, err := rows.NextChunk()
+		require.NoError(t, err)
+
+		_, err = chunk.IsNull(0, -1)
+		require.ErrorContains(t, err, "invalid row index")
+		require.ErrorContains(t, err, "-1")
+
+		_, err = chunk.IsNull(0, chunk.GetSize())
+		require.ErrorContains(t, err, "invalid row index")
+		require.ErrorContains(t, err, "1")
+
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestQueryChunksContextTypedSliceRejectsWrongType(t *testing.T) {
 	connector := newConnectorWrapper(t, "", nil)
 	defer closeConnectorWrapper(t, connector)

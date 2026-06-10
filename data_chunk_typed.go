@@ -13,6 +13,11 @@ func (chunk *DataChunk) IsNull(colIdx, rowIdx int) (bool, error) {
 		return false, getError(errAPI, err)
 	}
 
+	size := chunk.GetSize()
+	if rowIdx < 0 || rowIdx >= size {
+		return false, getError(errAPI, rowIndexError(rowIdx, size))
+	}
+
 	return chunk.columns[colIdx].getNull(mapping.IdxT(rowIdx)), nil
 }
 
@@ -41,7 +46,7 @@ func (chunk *DataChunk) Float64Slice(colIdx int) ([]float64, error) {
 // The returned slice is only valid until the chunk is invalidated.
 // For NULL rows, use IsNull to check whether the corresponding element is valid.
 func (chunk *DataChunk) TimestampMicrosSlice(colIdx int) ([]int64, error) {
-	values, err := typedChunkSlice[mapping.Timestamp](chunk, colIdx, TYPE_TIMESTAMP)
+	_, values, err := typedChunkSliceWithColumn[mapping.Timestamp](chunk, colIdx, TYPE_TIMESTAMP)
 	if err != nil {
 		return nil, err
 	}
@@ -55,20 +60,25 @@ func (chunk *DataChunk) TimestampMicrosSlice(colIdx int) ([]int64, error) {
 }
 
 func typedChunkSlice[T any](chunk *DataChunk, colIdx int, expected Type) ([]T, error) {
+	_, values, err := typedChunkSliceWithColumn[T](chunk, colIdx, expected)
+	return values, err
+}
+
+func typedChunkSliceWithColumn[T any](chunk *DataChunk, colIdx int, expected Type) (int, []T, error) {
 	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
 	if err != nil {
-		return nil, getError(errAPI, err)
+		return colIdx, nil, getError(errAPI, err)
 	}
 
 	column := &chunk.columns[colIdx]
 	if column.Type != expected {
-		return nil, getError(errAPI, invalidInputError(typeToStringMap[column.Type], typeToStringMap[expected]))
+		return colIdx, nil, getError(errAPI, invalidInputError(typeToStringMap[column.Type], typeToStringMap[expected]))
 	}
 
 	size := chunk.GetSize()
 	if size == 0 {
-		return []T{}, nil
+		return colIdx, []T{}, nil
 	}
 
-	return unsafe.Slice((*T)(column.dataPtr), size), nil
+	return colIdx, unsafe.Slice((*T)(column.dataPtr), size), nil
 }
