@@ -26,8 +26,26 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
-        run: |
-          go test -v
+        run: go test -v
+
+  go_race_test:
+    name: Race Tests
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        go: [1.24]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: Run Race Tests
+        run: go test -race -count=1 ./...
 
   test_examples:
     name: Test Examples
@@ -46,6 +64,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Test Examples
         run: make test.examples
+
   test-arrow:
     name: Test Arrow
     runs-on: ${{ matrix.os }}
@@ -64,6 +83,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Arrow Tests
         run: go test -v -tags=duckdb_arrow
+
   test-dynamic-lib:
     name: Dynamic Lib Tests
     runs-on: ${{ matrix.os }}
@@ -97,6 +117,7 @@ jobs:
         run: |
           make test.dynamic.lib FILENAME=${{ matrix.filename }}
           CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
+
   test-static-lib-darwin-arm64:
     name: Static Lib Tests Darwin ARM64
     runs-on: macos-latest
