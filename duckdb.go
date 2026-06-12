@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -116,10 +117,18 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
-	if c.connInitFn != nil {
-		if err := c.connInitFn(conn); err != nil {
+	if c.connInitFn == nil {
+		return conn, nil
+	}
+	if err := c.connInitFn(conn); err != nil {
+		// Close the fresh connection so a failed initializer does not leak the
+		// native handle. Return err directly when cleanup succeeds so callers
+		// that compare the initializer error by identity keep working.
+		closeErr := conn.Close()
+		if closeErr == nil || errors.Is(closeErr, errClosedCon) {
 			return nil, err
 		}
+		return nil, errors.Join(err, closeErr)
 	}
 
 	return conn, nil

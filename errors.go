@@ -13,7 +13,7 @@ func getError(errDriver, err error) error {
 	if err == nil {
 		return fmt.Errorf("%s: %w", driverErrMsg, errDriver)
 	}
-	return fmt.Errorf("%s: %w: %s", driverErrMsg, errDriver, err.Error())
+	return fmt.Errorf("%s: %w: %w", driverErrMsg, errDriver, err)
 }
 
 func castError(actual, expected string) error {
