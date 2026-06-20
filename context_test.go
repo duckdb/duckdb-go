@@ -16,11 +16,9 @@ import (
 func TestRunWithCtxInterrupt_PreCanceled(t *testing.T) {
 	// Stub Interrupt to count invocations.
 	var count atomic.Int64
-	orig := mapping.Interrupt
-	mapping.Interrupt = func(_ mapping.Connection) {
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) {
 		count.Add(1)
-	}
-	t.Cleanup(func() { mapping.Interrupt = orig })
+	})
 
 	// Pre-cancel the context.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -42,9 +40,7 @@ func TestRunWithCtxInterrupt_PreCanceled(t *testing.T) {
 // Test that when there is no cancellation, the wrapper does not call Interrupt.
 func TestRunWithCtxInterrupt_NoCancel_NoInterrupt(t *testing.T) {
 	var count atomic.Int64
-	orig := mapping.Interrupt
-	mapping.Interrupt = func(_ mapping.Connection) { count.Add(1) }
-	t.Cleanup(func() { mapping.Interrupt = orig })
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) { count.Add(1) })
 
 	ctx := context.Background()
 	called := false
@@ -62,14 +58,10 @@ func TestRunWithCtxInterrupt_NoCancel_NoInterrupt(t *testing.T) {
 // Test that after cancellation, Interrupt is invoked repeatedly until fn returns.
 func TestRunWithCtxInterrupt_Cancel_RepeatsUntilDone(t *testing.T) {
 	// Use a shorter interval for testing.
-	origInterval := interruptInterval
-	interruptInterval = 100 * time.Millisecond
-	t.Cleanup(func() { interruptInterval = origInterval })
+	patchVar(t, &interruptInterval, 100*time.Millisecond)
 
 	var count atomic.Int64
-	orig := mapping.Interrupt
-	mapping.Interrupt = func(_ mapping.Connection) { count.Add(1) }
-	t.Cleanup(func() { mapping.Interrupt = orig })
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) { count.Add(1) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -124,17 +116,13 @@ func TestRunWithCtxInterrupt_Cancel_RepeatsUntilDone(t *testing.T) {
 // Test that recursively wrapping with the same context only spawns a single interrupter goroutine.
 func TestRunWithCtxInterrupt_RecursiveOnlyOneGoroutine(t *testing.T) {
 	// Set a high interval to ensure only one call per goroutine until deadline set below
-	origInterval := interruptInterval
-	interruptInterval = 1 * time.Second
-	t.Cleanup(func() { interruptInterval = origInterval })
+	patchVar(t, &interruptInterval, 1*time.Second)
 
 	// Stub Interrupt to count calls
 	var interruptCount atomic.Int32
-	orig := mapping.Interrupt
-	mapping.Interrupt = func(_ mapping.Connection) {
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) {
 		interruptCount.Add(1)
-	}
-	t.Cleanup(func() { mapping.Interrupt = orig })
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -758,6 +758,9 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 	return s.executeBound(ctx)
 }
 
+// interruptRoutine sends at most one interrupt when ctx is canceled before
+// mainDoneCh closes. Query execution uses runWithCtxInterrupt when it needs to
+// reassert interrupts on a timer.
 func interruptRoutine(mainDoneCh, bgDoneCh *chan struct{}, ctx context.Context, conn *Conn) {
 	select {
 	// Await an interrupt on the context.
