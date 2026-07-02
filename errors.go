@@ -163,8 +163,9 @@ var (
 	errScalarUDFInputTypeIsNil  = fmt.Errorf("%w: input type is nil", errScalarUDFCreate)
 	errScalarUDFResultTypeIsNil = fmt.Errorf("%w: result type is nil", errScalarUDFCreate)
 	errScalarUDFResultTypeIsANY = fmt.Errorf("%w: result type is ANY, which is not supported", errScalarUDFCreate)
-	errScalarUDFCreateSet       = fmt.Errorf("could not create scalar UDF set")
-	errScalarUDFAddToSet        = fmt.Errorf("%w: could not add the function to the set", errScalarUDFCreateSet)
+	errScalarUDFCreateSet          = fmt.Errorf("could not create scalar UDF set")
+	errScalarUDFAddToSet           = fmt.Errorf("%w: could not add the function to the set", errScalarUDFCreateSet)
+	errScalarUDFBindGetArgument    = errors.New("could not get scalar UDF bind argument: argument cannot be copied (e.g. correlated subquery)")
 
 	errTableUDFCreate          = errors.New("could not create table UDF")
 	errTableUDFNoName          = fmt.Errorf("%w: missing name", errTableUDFCreate)
