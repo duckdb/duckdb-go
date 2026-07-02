@@ -339,6 +339,11 @@ func scalar_udf_bind_callback(bindInfoPtr unsafe.Pointer) {
 
 func getScalarUDFArg(clientCtx mapping.ClientContext, bindInfo mapping.BindInfo, index int) (ScalarUDFArg, error) {
 	expr := mapping.ScalarFunctionBindGetArgument(bindInfo, mapping.IdxT(index))
+	if expr.Ptr == nil {
+		// duckdb_scalar_function_bind_get_argument returned nullptr — Copy() threw an exception
+		// (e.g. a correlated BoundSubqueryExpression). The bind error has already been set by DuckDB.
+		return ScalarUDFArg{}, errScalarUDFBindGetArgument
+	}
 	defer mapping.DestroyExpression(&expr)
 
 	arg := ScalarUDFArg{
