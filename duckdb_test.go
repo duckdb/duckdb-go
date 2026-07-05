@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 /* ---------- Open and Close Wrappers ---------- */
@@ -133,6 +136,16 @@ func closeAppenderWrapper[T require.TestingT](t T, a *Appender) {
 
 /* ---------- Test Helpers ---------- */
 
+// patchVar temporarily sets *p to v and restores the original on test cleanup.
+// Used to swap package-level mapping hooks in tests that must not run in parallel.
+func patchVar[T any](t *testing.T, p *T, v T) {
+	t.Helper()
+
+	orig := *p
+	*p = v
+	t.Cleanup(func() { *p = orig })
+}
+
 func createTable(t *testing.T, db *sql.DB, query string) {
 	res, err := db.Exec(query)
 	require.NoError(t, err)
@@ -219,6 +232,57 @@ func TestConnector_Close(t *testing.T) {
 	// Multiple close calls must not cause panics or errors.
 	closeConnectorWrapper(t, c)
 	closeConnectorWrapper(t, c)
+}
+
+// This test patches package-level mapping hooks and must not run in parallel.
+func TestConnectCleansUpOnInitError(t *testing.T) {
+	initErr := errors.New("init failed")
+	c := newConnectorWrapper(t, ``, func(driver.ExecerContext) error {
+		return initErr
+	})
+	defer closeConnectorWrapper(t, c)
+
+	disconnectCount := countDisconnects(t)
+
+	conn, err := c.Connect(context.Background())
+	require.Nil(t, conn)
+	require.Equal(t, initErr, err)
+	require.ErrorIs(t, err, initErr)
+	require.Equal(t, 1, *disconnectCount)
+}
+
+func TestConnectKeepsInitErrorWhenInitAlreadyClosed(t *testing.T) {
+	initErr := errors.New("init failed")
+	c := newConnectorWrapper(t, ``, func(execer driver.ExecerContext) error {
+		conn, ok := execer.(driver.Conn)
+		require.True(t, ok)
+		require.NoError(t, conn.Close())
+		return initErr
+	})
+	defer closeConnectorWrapper(t, c)
+
+	disconnectCount := countDisconnects(t)
+
+	conn, err := c.Connect(context.Background())
+	require.Nil(t, conn)
+	require.Equal(t, initErr, err)
+	require.ErrorIs(t, err, initErr)
+	require.Equal(t, 1, *disconnectCount)
+}
+
+func countDisconnects(t *testing.T) *int {
+	t.Helper()
+
+	// Connect is single-goroutine, so a plain counter is enough. The stub calls
+	// through to the real Disconnect so the fresh connection is actually torn down.
+	var disconnectCount int
+	origDisconnect := mapping.Disconnect
+	patchVar(t, &mapping.Disconnect, func(conn *mapping.Connection) {
+		disconnectCount++
+		origDisconnect(conn)
+	})
+
+	return &disconnectCount
 }
 
 func ExampleNewConnector() {
