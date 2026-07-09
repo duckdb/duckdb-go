@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -768,6 +769,65 @@ func TestBlob(t *testing.T) {
 	var b []byte
 	require.NoError(t, db.QueryRow("SELECT '\\xAA'::BLOB").Scan(&b))
 	require.Equal(t, []byte{0xAA}, b)
+}
+
+// TestVarcharBoundary covers the inlined (≤12 chars) and non-inlined (>12 chars) paths
+// in getBytes, including the exact boundary and the alignment-sensitive pointer read.
+func TestVarcharBoundary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name string
+		val  string
+	}{
+		{"empty", ""},
+		{"one char", "a"},
+		{"inlined max (12)", "123456789012"},
+		{"non-inlined min (13)", "1234567890123"},
+		{"long", "this is a much longer string that is definitely not inlined"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			require.NoError(t, db.QueryRow("SELECT ?::VARCHAR", tc.val).Scan(&got))
+			require.Equal(t, tc.val, got)
+		})
+	}
+}
+
+// TestBlobBoundary mirrors TestVarcharBoundary for the BLOB type,
+// which shares the same getBytes path but returns []byte.
+func TestBlobBoundary(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE blob_boundary (data BLOB)`)
+
+	tests := []struct {
+		name string
+		val  []byte
+	}{
+		{"empty", []byte{}},
+		{"inlined max (12)", bytes.Repeat([]byte{0xFF}, 12)},
+		{"non-inlined min (13)", bytes.Repeat([]byte{0xFF}, 13)},
+		{"long", bytes.Repeat([]byte{0xAB}, 64)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := db.Exec("INSERT INTO blob_boundary VALUES (?)", tc.val)
+			require.NoError(t, err)
+
+			var got []byte
+			require.NoError(t, db.QueryRow("SELECT data FROM blob_boundary WHERE data = ?", tc.val).Scan(&got))
+			require.Equal(t, tc.val, got)
+
+			_, err = db.Exec("DELETE FROM blob_boundary")
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestList(t *testing.T) {
@@ -1641,4 +1701,61 @@ func TestGeometry(t *testing.T) {
 	// We expect Geography/Geometry to come back as a native binary BLOB map
 	require.NotEmpty(t, res)
 	require.False(t, r.Next())
+}
+
+// TestIntervalJSON checks that Interval marshals to/from {"days":N,"months":N,"micros":N}.
+func TestIntervalJSON(t *testing.T) {
+	i := Interval{Days: 5, Months: 2, Micros: 1000}
+
+	data, err := json.Marshal(i)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"days":5,"months":2,"micros":1000}`, string(data))
+
+	var got Interval
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, i, got)
+}
+
+// TestJSONNullRoundtrip checks that unmarshaling JSON null resets OrderedMap to its zero
+// state and does not error — consistent with how encoding/json handles nullable types.
+func TestJSONNullRoundtrip(t *testing.T) {
+	t.Run("OrderedMap", func(t *testing.T) {
+		om := OrderedMap{}
+		om.Set("k", float64(1))
+		require.NoError(t, json.Unmarshal([]byte("null"), &om))
+		require.Equal(t, 0, om.Len())
+	})
+}
+
+// TestUnionJSON checks that Union marshals to/from {"tag":"...","value":...}.
+func TestUnionJSON(t *testing.T) {
+	u := Union{Tag: "int32", Value: int32(42)}
+
+	data, err := json.Marshal(u)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"tag":"int32","value":42}`, string(data))
+
+	var got Union
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, u.Tag, got.Tag)
+	// JSON numbers unmarshal as float64 when the target is any/driver.Value.
+	require.Equal(t, float64(42), got.Value)
+}
+
+// TestOrderedMapJSON checks that OrderedMap marshals to a JSON object preserving
+// insertion order, not as an empty object (which would happen with unexported fields).
+func TestOrderedMapJSON(t *testing.T) {
+	om := OrderedMap{}
+	om.Set("b", float64(2))
+	om.Set("a", float64(1))
+
+	data, err := json.Marshal(om)
+	require.NoError(t, err)
+	// Keys must appear in insertion order.
+	require.Equal(t, `{"b":2,"a":1}`, string(data))
+
+	var got OrderedMap
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, om.Keys(), got.Keys())
+	require.Equal(t, om.Values(), got.Values())
 }

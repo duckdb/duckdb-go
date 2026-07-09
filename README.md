@@ -5,9 +5,9 @@
 
 The DuckDB driver conforms to the built-in `database/sql` interface.
 
-**Current DuckDB version: `v1.5.3`.**
+**Current DuckDB version: `v1.5.4`.**
 
-The first duckdb-go tag with that version is `v2.10503.0`.
+The first duckdb-go tag with that version is `v2.10504.0`.
 
 Starting with DuckDB `v1.5.0`, the duckdb-go version encodes the DuckDB version in its second semver component.
 The format is `v2.MAJOR_MINOR_PATCH.x`, e.g., DuckDB `v1.5.0` maps to duckdb-go `v2.10500.x`.
@@ -16,7 +16,8 @@ Previous DuckDB versions:
 
 | DuckDB   | duckdb-go    |
 |----------|--------------|
-| `v1.5.3` | `v2.10503.0` |
+| `v1.5.4` | `v2.10504.0` |
+| `v1.5.3` | `v2.10503.1` |
 | `v1.5.2` | `v2.10502.0` |
 | `v1.5.1` | `v2.10501.0` |
 | `v1.5.0` | `v2.10500.0` |
@@ -452,6 +453,8 @@ Any pre-built library in `duckdb-go-bindings` statically links the default exten
 Additionally, automatic extension loading is enabled.
 
 ## Releasing a New DuckDB Version
+
+Prepare normal releases from `main`. For LTS releases that stay on DuckDB 1.4 Andium, use the `v1.4-andium` branch.
 
 1. Create a new branch.
 2. Update `duckdb-go-bindings` via `go get github.com/duckdb/duckdb-go-bindings@latest`.
