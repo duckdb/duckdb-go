@@ -25,6 +25,10 @@ type vector struct {
 	setFn fnSetVectorValue
 	// The child vectors of nested data types.
 	childVectors []vector
+	// structTemplate is a pre-allocated map[string]any with all struct keys
+	// already inserted (values are nil). Cloned per row in getStruct to avoid
+	// re-computing key hashes on every row scan.
+	structTemplate map[string]any
 }
 
 //nolint:gocyclo
@@ -471,6 +475,15 @@ func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error
 			return err
 		}
 	}
+
+	// Pre-build a template map with all keys hashed once at init time.
+	// getStruct clones this per row — keys are already in the hash table,
+	// so Clone just copies bucket structure without recomputing key hashes.
+	tmpl := make(map[string]any, childCount)
+	for i := range uint64(childCount) {
+		tmpl[structEntries[i].Name()] = nil
+	}
+	vec.structTemplate = tmpl
 
 	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
 		if vec.getNull(rowIdx) {

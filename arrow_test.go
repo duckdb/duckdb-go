@@ -95,6 +95,33 @@ func TestArrow(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("query table with named args", func(t *testing.T) {
+		c := newConnectorWrapper(t, ``, nil)
+		defer closeConnectorWrapper(t, c)
+
+		innerConn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &innerConn)
+
+		ar, err := NewArrowFromConn(innerConn)
+		require.NoError(t, err)
+
+		query := `SELECT i FROM (VALUES (1), (2), (3)) t(i) WHERE i > $threshold ORDER BY i`
+		reader, err := ar.QueryContext(context.Background(), query, sql.Named("threshold", 1))
+		require.NoError(t, err)
+		defer reader.Release()
+
+		var values []string
+		for reader.Next() {
+			rec := reader.RecordBatch()
+			col := rec.Column(0)
+			for i := 0; i < col.Len(); i++ {
+				values = append(values, col.ValueStr(i))
+			}
+		}
+		require.NoError(t, reader.Err())
+		require.Equal(t, []string{"2", "3"}, values)
+	})
+
 	t.Run("query error", func(t *testing.T) {
 		err := conn.Raw(func(driverConn any) error {
 			innerConn, ok := driverConn.(driver.Conn)

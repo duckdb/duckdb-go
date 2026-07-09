@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -521,6 +522,17 @@ func (s *Stmt) bind(args []driver.NamedValue) error {
 		return fmt.Errorf("incorrect argument count for command: have %d want %d", len(args), s.NumInput())
 	}
 
+	byOrdinal := make(map[int]driver.NamedValue, len(args))
+	byName := make(map[string]driver.NamedValue, len(args))
+	for _, v := range args {
+		if v.Ordinal != 0 {
+			byOrdinal[v.Ordinal] = v
+		}
+		if v.Name != "" {
+			byName[v.Name] = v
+		}
+	}
+
 	// relaxed length check allow for unused parameters.
 	for i := range s.NumInput() {
 		name := mapping.ParameterName(*s.preparedStmt, mapping.IdxT(i+1))
@@ -529,17 +541,13 @@ func (s *Stmt) bind(args []driver.NamedValue) error {
 		arg := args[i]
 
 		// override with ordinal if set
-		for _, v := range args {
-			if v.Ordinal == i+1 {
-				arg = v
-			}
+		if v, ok := byOrdinal[i+1]; ok {
+			arg = v
 		}
 
 		// override with name if set
-		for _, v := range args {
-			if v.Name == name {
-				arg = v
-			}
+		if v, ok := byName[name]; ok {
+			arg = v
 		}
 
 		state, err := s.bindValue(arg, i)
@@ -750,6 +758,9 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 	return s.executeBound(ctx)
 }
 
+// interruptRoutine sends at most one interrupt when ctx is canceled before
+// mainDoneCh closes. Query execution uses runWithCtxInterrupt when it needs to
+// reassert interrupts on a timer.
 func interruptRoutine(mainDoneCh, bgDoneCh *chan struct{}, ctx context.Context, conn *Conn) {
 	select {
 	// Await an interrupt on the context.
@@ -794,6 +805,10 @@ func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
 func argsToNamedArgs(values []driver.Value) []driver.NamedValue {
 	args := make([]driver.NamedValue, len(values))
 	for n, param := range values {
+		if np, ok := param.(sql.NamedArg); ok {
+			args[n].Name = np.Name
+			param = np.Value
+		}
 		args[n].Value = param
 		args[n].Ordinal = n + 1
 	}
