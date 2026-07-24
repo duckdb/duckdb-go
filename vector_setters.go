@@ -501,9 +501,10 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return vec.setFn(vec, rowIdx, val)
 	}
 
-	// Keep numeric conversions allocation-free. The default remains the setter
-	// selected during vector initialization, so this optimization cannot reject
-	// vector types it does not recognize.
+	// Keep numeric conversions allocation-free. Only types whose setFn adds an
+	// interface-nil guard before the same generic setter belong here. Types with
+	// typed-nil semantics and distinct logical types that share a vector Type
+	// (notably JSON and VARCHAR) must fall back to the vector-installed setFn.
 	switch vec.Type {
 	case TYPE_TINYINT:
 		return setNumeric[S, int8](vec, rowIdx, val)
@@ -525,12 +526,6 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setNumeric[S, float32](vec, rowIdx, val)
 	case TYPE_DOUBLE:
 		return setNumeric[S, float64](vec, rowIdx, val)
-	case TYPE_HUGEINT:
-		return setHugeint(vec, rowIdx, val)
-	case TYPE_UHUGEINT:
-		return setUhugeint(vec, rowIdx, val)
-	case TYPE_BIGNUM:
-		return setBignum(vec, rowIdx, val)
 	case TYPE_DECIMAL:
 		return setDecimal(vec, rowIdx, val)
 	default:

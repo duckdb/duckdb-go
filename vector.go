@@ -23,7 +23,9 @@ type vector struct {
 	getFn fnGetVectorValue
 	// A callback function to write to this vector.
 	setFn fnSetVectorValue
-	// An optional exact-type setter that avoids boxing generic writes.
+	// An optional exact-type setter that avoids boxing generic writes. It
+	// bypasses setFn's nil handling, so pointer types with typed-nil semantics
+	// must use setFn instead.
 	setTypedFn any
 	// The child vectors of nested data types.
 	childVectors []vector
@@ -436,9 +438,9 @@ func (vec *vector) initEnum(logicalType mapping.LogicalType, colIdx int) error {
 		return addIndexToError(unsupportedTypeError(typeToStringMap[t]), colIdx)
 	}
 
+	vec.setTypedFn = fnSetVectorValueTyped[string](setEnum[string])
 	vec.Type = TYPE_ENUM
 	vec.internalType = t
-	vec.setTypedFn = fnSetVectorValueTyped[string](setEnum[string])
 	return nil
 }
 

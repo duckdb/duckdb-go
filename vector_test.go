@@ -3,6 +3,7 @@ package duckdb
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"math/big"
 	"testing"
 	"unsafe"
 
@@ -143,6 +144,34 @@ func TestSetChunkValueNilSetsNull(t *testing.T) {
 	got, err := chunk.GetValue(0, 0)
 	require.NoError(t, err)
 	require.Nil(t, got)
+}
+
+func TestSetChunkValueTypedNilBigIntSetsNull(t *testing.T) {
+	types := []struct {
+		name string
+		typ  Type
+	}{
+		{"HUGEINT", TYPE_HUGEINT},
+		{"UHUGEINT", TYPE_UHUGEINT},
+		{"BIGNUM", TYPE_BIGNUM},
+	}
+
+	for _, tc := range types {
+		t.Run(tc.name, func(t *testing.T) {
+			logicalType := mapping.CreateLogicalType(tc.typ)
+			defer mapping.DestroyLogicalType(&logicalType)
+
+			var chunk DataChunk
+			require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+			defer chunk.close()
+
+			var value *big.Int
+			require.NoError(t, SetChunkValue(chunk, 0, 0, value))
+			got, err := chunk.GetValue(0, 0)
+			require.NoError(t, err)
+			require.Nil(t, got)
+		})
+	}
 }
 
 func TestDataChunkGetValueBubblesGetterErrors(t *testing.T) {
