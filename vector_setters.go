@@ -75,9 +75,9 @@ func setNumeric[S any, T numericType](vec *vector, rowIdx mapping.IdxT, val S) e
 	return nil
 }
 
-func setBool[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setBool(vec *vector, rowIdx mapping.IdxT, val any) error {
 	var b bool
-	switch v := any(val).(type) {
+	switch v := val.(type) {
 	case bool:
 		b = v
 	default:
@@ -119,7 +119,7 @@ func setTS(vec *vector, rowIdx mapping.IdxT, val any) error {
 	return nil
 }
 
-func setDate[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setDate(vec *vector, rowIdx mapping.IdxT, val any) error {
 	date, err := inferDate(val)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func setDate[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setTime[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setTime(vec *vector, rowIdx mapping.IdxT, val any) error {
 	switch vec.Type {
 	case TYPE_TIME:
 		ti, err := inferTime(val)
@@ -146,7 +146,7 @@ func setTime[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setInterval[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setInterval(vec *vector, rowIdx mapping.IdxT, val any) error {
 	i, err := inferInterval(val)
 	if err != nil {
 		return err
@@ -155,7 +155,7 @@ func setInterval[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setHugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setHugeint(vec *vector, rowIdx mapping.IdxT, val any) error {
 	hi, err := inferHugeInt(val)
 	if err != nil {
 		return err
@@ -164,7 +164,7 @@ func setHugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setUhugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setUhugeint(vec *vector, rowIdx mapping.IdxT, val any) error {
 	uhi, err := inferUHugeInt(val)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func setUhugeint[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setBignum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setBignum(vec *vector, rowIdx mapping.IdxT, val any) error {
 	i, err := numToBigInt(val)
 	if err != nil {
 		return err
@@ -217,8 +217,8 @@ func setBignum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	switch v := any(val).(type) {
+func setBytes(vec *vector, rowIdx mapping.IdxT, val any) error {
+	switch v := val.(type) {
 	case string:
 		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, []byte(v))
 	case []byte:
@@ -229,9 +229,9 @@ func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setBit(vec *vector, rowIdx mapping.IdxT, val any) error {
 	var bit Bit
-	switch v := any(val).(type) {
+	switch v := val.(type) {
 	case Bit:
 		bit = v
 	case *Bit:
@@ -258,7 +258,7 @@ func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setJSON(vec *vector, rowIdx mapping.IdxT, val any) error {
 	bytes, err := json.Marshal(val)
 	if err != nil {
 		return err
@@ -266,14 +266,14 @@ func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return setBytes(vec, rowIdx, bytes)
 }
 
-func setDecimal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setDecimal(vec *vector, rowIdx mapping.IdxT, val any) error {
 	switch vec.internalType {
 	case TYPE_SMALLINT:
-		return setNumeric[S, int16](vec, rowIdx, val)
+		return setNumeric[any, int16](vec, rowIdx, val)
 	case TYPE_INTEGER:
-		return setNumeric[S, int32](vec, rowIdx, val)
+		return setNumeric[any, int32](vec, rowIdx, val)
 	case TYPE_BIGINT:
-		return setNumeric[S, int64](vec, rowIdx, val)
+		return setNumeric[any, int64](vec, rowIdx, val)
 	case TYPE_HUGEINT:
 		return setHugeint(vec, rowIdx, val)
 	default:
@@ -281,9 +281,9 @@ func setDecimal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	}
 }
 
-func setEnum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setEnum(vec *vector, rowIdx mapping.IdxT, val any) error {
 	var str string
-	switch v := any(val).(type) {
+	switch v := val.(type) {
 	case string:
 		str = v
 	default:
@@ -307,7 +307,7 @@ func setEnum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return invalidInputError(str, "value in enum dictionary")
 }
 
-func setList[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setList(vec *vector, rowIdx mapping.IdxT, val any) error {
 	list, err := extractSlice(val)
 	if err != nil {
 		return err
@@ -323,9 +323,9 @@ func setList[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return setSliceChildren(vec, list, childVectorSize)
 }
 
-func setStruct[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setStruct(vec *vector, rowIdx mapping.IdxT, val any) error {
 	var m map[string]any
-	switch v := any(val).(type) {
+	switch v := val.(type) {
 	case map[string]any:
 		m = v
 	default:
@@ -371,10 +371,10 @@ func setStruct[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setMap(vec *vector, rowIdx mapping.IdxT, val any) error {
 	var m OrderedMap
 
-	switch v := any(val).(type) {
+	switch v := val.(type) {
 	case OrderedMap:
 		m = v
 	case Map:
@@ -397,7 +397,7 @@ func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return setList(vec, rowIdx, list)
 }
 
-func setArray[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setArray(vec *vector, rowIdx mapping.IdxT, val any) error {
 	array, err := extractSlice(val)
 	if err != nil {
 		return err
@@ -420,7 +420,7 @@ func setSliceChildren(vec *vector, s []any, offset mapping.IdxT) error {
 	return nil
 }
 
-func setUUID[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+func setUUID(vec *vector, rowIdx mapping.IdxT, val any) error {
 	id, err := inferUUID(val)
 	if err != nil {
 		return err
@@ -429,8 +429,8 @@ func setUUID[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	switch v := any(val).(type) {
+func setUnion(vec *vector, rowIdx mapping.IdxT, val any) error {
+	switch v := val.(type) {
 	case Union:
 		// Get the tag index.
 		tag, found := vec.namesDict[v.Tag]
@@ -458,14 +458,11 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return nil
 
 	default:
-		// Try to match the type with a UNION member.
-		anyVal := any(val)
-
 		// Try each member until we find one accepting the value.
 		match := 0
 		for i := 1; i < len(vec.childVectors); i++ {
 			childVec := &vec.childVectors[i]
-			err := childVec.setFn(childVec, rowIdx, anyVal)
+			err := childVec.setFn(childVec, rowIdx, val)
 			if err == nil {
 				// The member accepted the value.
 				match = i
@@ -490,77 +487,5 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 
 		// No member accepted the value.
 		return castError(reflect.TypeOf(val).String(), "UNION member")
-	}
-}
-
-//nolint:gocyclo
-func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	name, inMap := unsupportedValueTypeToStringMap[vec.Type]
-	if inMap {
-		return unsupportedTypeError(name)
-	}
-
-	switch vec.Type {
-	case TYPE_BOOLEAN:
-		return setBool(vec, rowIdx, val)
-	case TYPE_TINYINT:
-		return setNumeric[S, int8](vec, rowIdx, val)
-	case TYPE_SMALLINT:
-		return setNumeric[S, int16](vec, rowIdx, val)
-	case TYPE_INTEGER:
-		return setNumeric[S, int32](vec, rowIdx, val)
-	case TYPE_BIGINT:
-		return setNumeric[S, int64](vec, rowIdx, val)
-	case TYPE_UTINYINT:
-		return setNumeric[S, uint8](vec, rowIdx, val)
-	case TYPE_USMALLINT:
-		return setNumeric[S, uint16](vec, rowIdx, val)
-	case TYPE_UINTEGER:
-		return setNumeric[S, uint32](vec, rowIdx, val)
-	case TYPE_UBIGINT:
-		return setNumeric[S, uint64](vec, rowIdx, val)
-	case TYPE_FLOAT:
-		return setNumeric[S, float32](vec, rowIdx, val)
-	case TYPE_DOUBLE:
-		return setNumeric[S, float64](vec, rowIdx, val)
-	case TYPE_TIMESTAMP, TYPE_TIMESTAMP_S, TYPE_TIMESTAMP_MS, TYPE_TIMESTAMP_NS, TYPE_TIMESTAMP_TZ:
-		return setTS(vec, rowIdx, val)
-	case TYPE_DATE:
-		return setDate(vec, rowIdx, val)
-	case TYPE_TIME, TYPE_TIME_TZ:
-		return setTime(vec, rowIdx, val)
-	case TYPE_INTERVAL:
-		return setInterval(vec, rowIdx, val)
-	case TYPE_HUGEINT:
-		return setHugeint(vec, rowIdx, val)
-	case TYPE_UHUGEINT:
-		return setUhugeint(vec, rowIdx, val)
-	case TYPE_BIGNUM:
-		return setBignum(vec, rowIdx, val)
-	case TYPE_VARCHAR:
-		return setBytes(vec, rowIdx, val)
-	case TYPE_BLOB, TYPE_GEOMETRY:
-		return setBytes(vec, rowIdx, val)
-	case TYPE_BIT:
-		return setBit(vec, rowIdx, val)
-	case TYPE_DECIMAL:
-		return setDecimal(vec, rowIdx, val)
-	case TYPE_ENUM:
-		return setEnum(vec, rowIdx, val)
-	case TYPE_LIST:
-		return setList(vec, rowIdx, val)
-	case TYPE_STRUCT:
-		return setStruct(vec, rowIdx, val)
-	case TYPE_MAP:
-		return setMap(vec, rowIdx, val)
-	case TYPE_ARRAY:
-		// FIXME: Is this already supported? And tested?
-		return unsupportedTypeError(typeToStringMap[vec.Type])
-	case TYPE_UUID:
-		return setUUID(vec, rowIdx, val)
-	case TYPE_UNION:
-		return setUnion(vec, rowIdx, val)
-	default:
-		return unsupportedTypeError(unknownTypeErrMsg)
 	}
 }

@@ -84,6 +84,67 @@ func TestSetGetPrimitiveLargeIndex(t *testing.T) {
 	}
 }
 
+func TestSetChunkValueArray(t *testing.T) {
+	childInfo, err := NewTypeInfo(TYPE_INTEGER)
+	require.NoError(t, err)
+	arrayInfo, err := NewArrayInfo(childInfo, 3)
+	require.NoError(t, err)
+
+	logicalType := arrayInfo.logicalType()
+	defer mapping.DestroyLogicalType(&logicalType)
+
+	var chunk DataChunk
+	require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+	defer chunk.close()
+
+	require.NoError(t, SetChunkValue(chunk, 0, 0, [3]int32{1, 2, 3}))
+	got, err := chunk.GetValue(0, 0)
+	require.NoError(t, err)
+	require.Equal(t, []any{int32(1), int32(2), int32(3)}, got)
+}
+
+func TestSetChunkValueJSON(t *testing.T) {
+	logicalType := mapping.CreateLogicalType(TYPE_VARCHAR)
+	mapping.LogicalTypeSetAlias(logicalType, aliasJSON)
+	defer mapping.DestroyLogicalType(&logicalType)
+
+	var chunk DataChunk
+	require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+	defer chunk.close()
+
+	// Strings are JSON values, not pre-serialized JSON documents.
+	require.NoError(t, SetChunkValue(chunk, 0, 0, `{"a":1}`))
+	got, err := chunk.GetValue(0, 0)
+	require.NoError(t, err)
+	require.Equal(t, `{"a":1}`, got)
+
+	require.NoError(t, SetChunkValue(chunk, 0, 1, map[string]any{"a": 1}))
+	got, err = chunk.GetValue(0, 1)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"a": float64(1)}, got)
+
+	require.NoError(t, SetChunkValue(chunk, 0, 2, json.RawMessage(`{"a":2}`)))
+	got, err = chunk.GetValue(0, 2)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"a": float64(2)}, got)
+}
+
+func TestSetChunkValueNilSetsNull(t *testing.T) {
+	logicalType := mapping.CreateLogicalType(TYPE_INTEGER)
+	defer mapping.DestroyLogicalType(&logicalType)
+
+	var chunk DataChunk
+	require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+	defer chunk.close()
+
+	require.NoError(t, SetChunkValue(chunk, 0, 0, int32(42)))
+	var value any
+	require.NoError(t, SetChunkValue(chunk, 0, 0, value))
+	got, err := chunk.GetValue(0, 0)
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
 func TestDataChunkGetValueBubblesGetterErrors(t *testing.T) {
 	tests := []struct {
 		name  string
