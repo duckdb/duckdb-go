@@ -96,7 +96,7 @@ func SetChunkValue[T any](chunk DataChunk, colIdx, rowIdx int, val T) error {
 		return getError(errAPI, err)
 	}
 
-	return chunk.columns[colIdx].SetValue(rowIdx, val)
+	return setVectorVal(&chunk.columns[colIdx], mapping.IdxT(rowIdx), val)
 }
 
 func inBounds[T any](s []T, idx int) bool {
