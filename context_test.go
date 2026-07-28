@@ -163,3 +163,33 @@ func TestRunWithCtxInterrupt_RecursiveOnlyOneGoroutine(t *testing.T) {
 	close(allowReturn)
 	require.NoError(t, <-doneErrCh)
 }
+
+// Test that a panic out of fn still joins the interrupter goroutine. An
+// interrupter that outlives the call interrupts the next query on the
+// connection, or dereferences a connection that has since been closed.
+func TestRunWithCtxInterrupt_PanicJoinsInterrupter(t *testing.T) {
+	patchVar(t, &interruptInterval, time.Millisecond)
+
+	var count atomic.Int64
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) { count.Add(1) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dummyConn mapping.Connection
+	require.PanicsWithValue(t, "fn", func() {
+		_ = runWithCtxInterrupt(ctx, dummyConn, func(_ context.Context) error {
+			cancel()
+			// Let the interrupter observe the cancellation and start looping.
+			for count.Load() == 0 {
+				time.Sleep(100 * time.Microsecond)
+			}
+			panic("fn")
+		})
+	})
+
+	// The interrupter has been joined, so the count must not grow any further.
+	settled := count.Load()
+	time.Sleep(20 * time.Millisecond)
+	require.Equal(t, settled, count.Load(), "interrupter should not outlive a panicking fn")
+}
