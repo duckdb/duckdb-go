@@ -20,6 +20,22 @@ type DataChunk struct {
 	size int
 	// projection mapping of projected columns, when known (otherwise empty)
 	projection []int
+	// closed is true after close released the underlying C-allocated memory.
+	closed bool
+}
+
+// checkValid guards against reading or writing a data chunk whose C-allocated
+// memory has already been freed.
+//
+// NOTE: This only covers the chunks that this package owns and closes itself.
+// Chunks passed to scalar and table UDF callbacks are owned by DuckDB, which
+// frees them once the callback returns: retaining one past its callback stays
+// unsafe and undetectable here.
+func (chunk *DataChunk) checkValid() error {
+	if chunk.closed {
+		return errClosedChunk
+	}
+	return nil
 }
 
 // GetDataChunkCapacity returns the capacity of a data chunk.
@@ -29,6 +45,9 @@ func GetDataChunkCapacity() int {
 
 // GetSize returns the internal size of the data chunk.
 func (chunk *DataChunk) GetSize() int {
+	if chunk.closed {
+		return 0
+	}
 	chunk.size = int(mapping.DataChunkGetSize(chunk.chunk))
 	return chunk.size
 }
@@ -40,6 +59,9 @@ func (chunk *DataChunk) ColumnCount() int {
 
 // SetSize sets the internal size of the data chunk. Cannot exceed GetCapacity().
 func (chunk *DataChunk) SetSize(size int) error {
+	if err := chunk.checkValid(); err != nil {
+		return getError(errAPI, err)
+	}
 	if size > GetDataChunkCapacity() {
 		return getError(errAPI, errVectorSize)
 	}
@@ -49,6 +71,9 @@ func (chunk *DataChunk) SetSize(size int) error {
 
 // GetValue returns a single value of a column.
 func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
+	if err := chunk.checkValid(); err != nil {
+		return nil, getError(errAPI, err)
+	}
 	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
 	if err != nil {
 		return nil, getError(errAPI, err)
@@ -67,6 +92,9 @@ func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
 // If the column is not projected, the value is ignored.
 // NOTE: Custom ENUM types must be passed as string.
 func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
+	if err := chunk.checkValid(); err != nil {
+		return getError(errAPI, err)
+	}
 	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
 	if err != nil && errors.Is(err, errUnprojectedColumn) {
 		return nil
@@ -88,6 +116,9 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 // If the column is not projected, the value is ignored.
 // NOTE: Custom ENUM types must be passed as string.
 func SetChunkValue[T any](chunk DataChunk, colIdx, rowIdx int, val T) error {
+	if err := chunk.checkValid(); err != nil {
+		return getError(errAPI, err)
+	}
 	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
 	if err != nil && errors.Is(err, errUnprojectedColumn) {
 		return nil
@@ -141,6 +172,7 @@ func (chunk *DataChunk) initFromTypes(types []mapping.LogicalType, writable bool
 
 	chunk.chunk = mapping.CreateDataChunk(types)
 	chunk.initVectors(writable)
+	chunk.closed = false
 
 	return nil
 }
@@ -163,6 +195,7 @@ func (chunk *DataChunk) initFromDuckDataChunk(inputChunk mapping.DataChunk, writ
 	columnCount := mapping.DataChunkGetColumnCount(inputChunk)
 	chunk.columns = make([]vector, columnCount)
 	chunk.chunk = inputChunk
+	chunk.closed = false
 
 	var err error
 	for i := range len(chunk.columns) {
@@ -178,9 +211,12 @@ func (chunk *DataChunk) initFromDuckDataChunk(inputChunk mapping.DataChunk, writ
 		// Initialize the vector and its child vectors.
 		chunk.columns[i].initVectors(vec, writable)
 	}
+	if err != nil {
+		return err
+	}
 	chunk.GetSize()
 
-	return err
+	return nil
 }
 
 func (chunk *DataChunk) initFromDuckVector(vec mapping.Vector, writable bool) error {
@@ -197,10 +233,17 @@ func (chunk *DataChunk) initFromDuckVector(vec mapping.Vector, writable bool) er
 
 	// Initialize the vector and its child vectors.
 	chunk.columns[0].initVectors(vec, writable)
+	chunk.closed = false
 
 	return nil
 }
 
+// close releases the C-allocated memory of the data chunk.
 func (chunk *DataChunk) close() {
 	mapping.DestroyDataChunk(&chunk.chunk)
+	chunk.closed = true
+	chunk.columns = nil
+	// NOTE: size stays as it was. rows.Next infers the end of a result from
+	// rowCount == size, so zeroing it here makes Next skip its fetch loop and
+	// return nil instead of io.EOF once the result is exhausted.
 }

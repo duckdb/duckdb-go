@@ -127,6 +127,8 @@ var (
 	errClosedStmt        = errors.New("closed statement")
 	errUninitializedStmt = errors.New("uninitialized statement")
 
+	errClosedChunk = errors.New("closed data chunk")
+
 	errPrepare                    = errors.New("could not prepare query")
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")
 	errEmptyQuery                 = errors.New("empty query")
