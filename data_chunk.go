@@ -57,6 +57,33 @@ func (chunk *DataChunk) ColumnCount() int {
 	return len(chunk.columns)
 }
 
+// ColumnNames returns the column names of the data chunk, indexed positionally.
+// It returns nil when column names are not available, and once the data chunk
+// has been closed. The returned slice belongs to the data chunk, and every chunk
+// of a result shares it: modifying it changes what ColumnName reports.
+func (chunk *DataChunk) ColumnNames() []string {
+	if chunk.closed {
+		return nil
+	}
+	return chunk.columnNames
+}
+
+// ColumnName returns the name of the column at colIdx (0-based). It returns an
+// error if colIdx is out of range, or if column names are not available.
+func (chunk *DataChunk) ColumnName(colIdx int) (string, error) {
+	if err := chunk.checkValid(); err != nil {
+		return "", getError(errAPI, err)
+	}
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil {
+		return "", getError(errAPI, err)
+	}
+	if colIdx < 0 || colIdx >= len(chunk.columnNames) {
+		return "", getError(errAPI, errUnknownColumnNames)
+	}
+	return chunk.columnNames[colIdx], nil
+}
+
 // SetSize sets the internal size of the data chunk. Cannot exceed GetCapacity().
 func (chunk *DataChunk) SetSize(size int) error {
 	if err := chunk.checkValid(); err != nil {
