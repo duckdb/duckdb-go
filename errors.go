@@ -64,6 +64,10 @@ func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
 }
 
+func invalidConnError(driverConn any) error {
+	return fmt.Errorf("%w: %T", errInvalidCon, driverConn)
+}
+
 func unexpectedTypeError(actual, expected Type) error {
 	return fmt.Errorf("%s: expected %s, got %s", unexpectedTypeErrMsg, typeName(expected), typeName(actual))
 }
@@ -139,6 +143,8 @@ var (
 
 	errClosedChunk        = errors.New("closed data chunk")
 	errUnknownColumnNames = errors.New("column names are not available for this data chunk")
+	errNilConn            = errors.New("nil sql.Conn")
+	errNilChunkConsumer   = errors.New("nil data chunk consumer")
 
 	errPrepare                    = errors.New("could not prepare query")
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")
