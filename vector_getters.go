@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"math/big"
@@ -174,6 +175,14 @@ func (vec *vector) getBigNum(rowIdx mapping.IdxT) *big.Int {
 }
 
 func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
+	view := vec.getBytesView(rowIdx)
+	if vec.Type == TYPE_VARCHAR {
+		return strings.Clone(unsafe.String(unsafe.SliceData(view), len(view)))
+	}
+	return bytes.Clone(view)
+}
+
+func (vec *vector) getBytesView(rowIdx mapping.IdxT) []byte {
 	// Use a pointer directly into C-allocated vector memory rather than a stack copy.
 	// cgo declares duckdb_string_t with alignment 1, so a stack copy (via getPrimitive)
 	// may land at an odd address. Reading the out-of-line pointer field at offset 8
@@ -186,18 +195,13 @@ func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
 	// at offset 4, otherwise a pointer at offset 8 (see duckdb.h string_t::INLINE_LENGTH).
 	// NOTE: INLINE_LENGTH (12) is not exposed via the C API and could change in a future
 	// DuckDB version. If string tests start failing after a DuckDB upgrade, check here first.
-	var data string
+	var dataPtr unsafe.Pointer
 	if length <= 12 {
-		ptr := unsafe.Add(unsafe.Pointer(strTPtr), 4)
-		data = unsafe.String((*byte)(ptr), int(length))
+		dataPtr = unsafe.Add(unsafe.Pointer(strTPtr), 4)
 	} else {
-		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), 8))
-		data = unsafe.String((*byte)(dataPtr), int(length))
+		dataPtr = *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), 8))
 	}
-	if vec.Type == TYPE_VARCHAR {
-		return strings.Clone(data)
-	}
-	return []byte(data)
+	return unsafe.Slice((*byte)(dataPtr), int(length))
 }
 
 func (vec *vector) getBit(rowIdx mapping.IdxT) Bit {

@@ -56,8 +56,20 @@ func columnIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [0, %d)", columnIndexErrMsg, idx, max)
 }
 
+func rowIndexError(idx, max int) error {
+	return fmt.Errorf("%s: %d is out of range [0, %d)", rowIndexErrMsg, idx, max)
+}
+
 func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
+}
+
+func invalidConnError(driverConn any) error {
+	return fmt.Errorf("%w: %T", errInvalidCon, driverConn)
+}
+
+func unexpectedTypeError(actual, expected Type) error {
+	return fmt.Errorf("%s: expected %s, got %s", unexpectedTypeErrMsg, typeName(expected), typeName(actual))
 }
 
 func invalidatedAppenderError(err error) error {
@@ -109,6 +121,8 @@ const (
 	duplicateNameErrMsg         = "duplicate name"
 	paramIndexErrMsg            = "invalid parameter index"
 	columnIndexErrMsg           = "invalid column index"
+	rowIndexErrMsg              = "invalid row index"
+	unexpectedTypeErrMsg        = "unexpected column type"
 )
 
 var (
@@ -126,6 +140,11 @@ var (
 
 	errClosedStmt        = errors.New("closed statement")
 	errUninitializedStmt = errors.New("uninitialized statement")
+
+	errClosedChunk        = errors.New("closed data chunk")
+	errUnknownColumnNames = errors.New("column names are not available for this data chunk")
+	errNilConn            = errors.New("nil sql.Conn")
+	errNilChunkConsumer   = errors.New("nil data chunk consumer")
 
 	errPrepare                    = errors.New("could not prepare query")
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")

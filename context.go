@@ -93,17 +93,21 @@ func runWithCtxInterrupt(ctx context.Context, conn mapping.Connection, fn func(c
 
 	go interrupterRoutine(ctx, conn, done, bgDoneCh)
 
+	// Join the interrupter on every exit path, including a panic out of fn.
+	// An interrupter that outlives this call interrupts whatever runs on conn
+	// next, and dereferences conn even after the connection has been closed.
+	defer func() {
+		close(done)
+
+		// Wait for interrupter goroutine to finish
+		// Sometimes the go-routine is not scheduled immediately.
+		// By the time it is scheduled, another query might be running on this connection.
+		// If we don't wait for the go-routine to finish, it can cancel that new query.
+		<-bgDoneCh
+	}()
+
 	// We pass `ctx` to keep that "enriched" context with the mark that we've already spawned a go-routine
-	err := fn(ctx)
-
-	close(done)
-
-	// Wait for interrupter goroutine to finish
-	// Sometimes the go-routine is not scheduled immediately.
-	// By the time it is scheduled, another query might be running on this connection.
-	// If we don't wait for the go-routine to finish, it can cancel that new query.
-	<-bgDoneCh
-	return err
+	return fn(ctx)
 }
 
 func interrupterRoutine(ctx context.Context, conn mapping.Connection, done <-chan struct{}, bgDoneCh chan<- struct{}) {

@@ -383,6 +383,53 @@ defer appender.Close()
 err = appender.AppendRow(...)
 ```
 
+## DuckDB Data Chunk API
+
+`QueryChunksContext` executes a query and passes DuckDB's native data chunks to a
+callback, one at a time. It exists for results that are forwarded rather than
+scanned into Go values, e.g., serialized to NDJSON and written to a socket. On
+such path, `database/sql` copies and boxes every value only for it to be
+discarded. Reading the chunks directly avoids that. `GetVarcharView` and
+`GetBlobView` return the bytes where DuckDB already holds them, instead of copying
+them out. They report whether the value is non-NULL, which distinguishes SQL NULL
+from the empty string.
+
+```go
+db, err := sql.Open("duckdb", "")
+defer db.Close()
+
+conn, err := db.Conn(context.Background())
+defer conn.Close()
+
+buf := make([]byte, 0, 64*1024)
+err = duckdb.QueryChunksContext(context.Background(), conn,
+	`SELECT to_json(t)::VARCHAR FROM my_table AS t`,
+	func(chunk *duckdb.DataChunk) error {
+		for row := range chunk.GetSize() {
+			value, notNull, err := chunk.GetVarcharView(0, row)
+			if err != nil {
+				return err
+			}
+			if notNull {
+				buf = append(buf, value...)
+				buf = append(buf, '\n')
+			}
+		}
+		return nil
+	})
+```
+
+The views alias DuckDB's memory and stay valid only until the chunk is released,
+which is when the callback returns. Copy what you need to keep, and neither
+retain the `*DataChunk` nor modify a view. This is the contract of
+`driver.Rows.Next`, whose `[]byte` values are likewise only valid until the next
+call. Returning an error from the callback stops the iteration and returns that
+error unchanged, so a sentinel error can stop it early.
+
+The connection is occupied for the whole call, so the callback must not issue
+queries on it. DuckDB materializes the result before the first chunk is fetched,
+so this bounds what the caller allocates, not what DuckDB does.
+
 ## DuckDB Profiling API
 
 This section describes using the [DuckDB Profiling API](https://duckdb.org/docs/dev/profiling.html).
