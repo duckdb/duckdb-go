@@ -114,6 +114,47 @@ func (chunk *DataChunk) GetValue(colIdx, rowIdx int) (any, error) {
 	return value, nil
 }
 
+// GetVarcharView returns the raw bytes of a VARCHAR value without copying them.
+// The second return value reports whether the value is non-NULL.
+//
+// The returned slice aliases DuckDB's internal memory and stays valid only until
+// the data chunk is released, which for QueryChunksContext is when the consume
+// callback returns. Callers must neither retain nor modify it: copy the bytes to
+// keep them. This mirrors the contract of driver.Rows.Next, whose []byte values
+// are only valid until the next call.
+func (chunk *DataChunk) GetVarcharView(colIdx, rowIdx int) ([]byte, bool, error) {
+	return chunk.getBytesView(colIdx, rowIdx, TYPE_VARCHAR)
+}
+
+// GetBlobView returns the raw bytes of a BLOB value without copying them.
+// The second return value reports whether the value is non-NULL.
+// The same aliasing rules as for GetVarcharView apply to the returned slice.
+func (chunk *DataChunk) GetBlobView(colIdx, rowIdx int) ([]byte, bool, error) {
+	return chunk.getBytesView(colIdx, rowIdx, TYPE_BLOB)
+}
+
+func (chunk *DataChunk) getBytesView(colIdx, rowIdx int, expected Type) ([]byte, bool, error) {
+	if err := chunk.checkValid(); err != nil {
+		return nil, false, getError(errAPI, err)
+	}
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil {
+		return nil, false, getError(errAPI, err)
+	}
+	if rowIdx < 0 || rowIdx >= chunk.size {
+		return nil, false, getError(errAPI, rowIndexError(rowIdx, chunk.size))
+	}
+
+	column := &chunk.columns[colIdx]
+	if column.Type != expected {
+		return nil, false, getError(errAPI, unexpectedTypeError(column.Type, expected))
+	}
+	if column.getNull(mapping.IdxT(rowIdx)) {
+		return nil, false, nil
+	}
+	return column.getBytesView(mapping.IdxT(rowIdx)), true, nil
+}
+
 // SetValue writes a single value to a column in a data chunk.
 // Note that this requires casting the type for each invocation.
 // If the column is not projected, the value is ignored.
