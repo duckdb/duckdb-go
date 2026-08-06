@@ -276,8 +276,9 @@ func setDecimal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setNumeric[S, int64](vec, rowIdx, val)
 	case TYPE_HUGEINT:
 		return setHugeint(vec, rowIdx, val)
+	default:
+		return unsupportedTypeError(typeName(vec.internalType))
 	}
-	return nil
 }
 
 func setEnum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
@@ -292,18 +293,18 @@ func setEnum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	if v, ok := vec.namesDict[str]; ok {
 		switch vec.internalType {
 		case TYPE_UTINYINT:
-			return setNumeric[uint32, int8](vec, rowIdx, v)
-		case TYPE_SMALLINT:
-			return setNumeric[uint32, int16](vec, rowIdx, v)
-		case TYPE_INTEGER:
-			return setNumeric[uint32, int32](vec, rowIdx, v)
-		case TYPE_BIGINT:
-			return setNumeric[uint32, int64](vec, rowIdx, v)
+			return setNumeric[uint32, uint8](vec, rowIdx, v)
+		case TYPE_USMALLINT:
+			return setNumeric[uint32, uint16](vec, rowIdx, v)
+		case TYPE_UINTEGER:
+			return setNumeric[uint32, uint32](vec, rowIdx, v)
+		case TYPE_UBIGINT:
+			return setNumeric[uint32, uint64](vec, rowIdx, v)
+		default:
+			return unsupportedTypeError(typeName(vec.internalType))
 		}
-	} else {
-		return castError(reflect.TypeOf(val).String(), reflectTypeString.String())
 	}
-	return nil
+	return invalidInputError(str, "value in enum dictionary")
 }
 
 func setList[S any](vec *vector, rowIdx mapping.IdxT, val S) error {

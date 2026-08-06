@@ -113,7 +113,8 @@ func benchEnumVector(b *testing.B, rowCount int, useCGO bool) {
 				}
 			} else {
 				for rowIdx := range chunk.size {
-					benchmarkEnumSink = vec.getEnum(mapping.IdxT(rowIdx))
+					benchmarkEnumSink, e = vec.getEnum(mapping.IdxT(rowIdx))
+					require.NoError(b, e)
 				}
 			}
 			count += chunk.size

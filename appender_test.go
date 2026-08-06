@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -568,6 +569,56 @@ func TestAppenderUUID(t *testing.T) {
 		}
 		i++
 	}
+}
+
+func testAppenderEnum(t *testing.T, dictSize int) {
+	enumVal := func(i int) string {
+		return fmt.Sprintf("enum_%04d", i)
+	}
+
+	values := make([]string, dictSize)
+	for i := range values {
+		values[i] = fmt.Sprintf(`'%s'`, enumVal(i))
+	}
+	ddl := fmt.Sprintf(`CREATE TABLE test (val ENUM(%s))`, strings.Join(values, ","))
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, ddl)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	first := enumVal(0)
+	last := enumVal(dictSize - 1)
+	require.NoError(t, a.AppendRow(first))
+	require.NoError(t, a.AppendRow(last))
+	require.NoError(t, a.AppendRow(nil))
+	err := a.AppendRow("not_in_enum")
+	require.ErrorContains(
+		t,
+		err,
+		"invalid input: expected value in enum dictionary, got not_in_enum",
+	)
+	require.NoError(t, a.Flush())
+
+	res, err := db.QueryContext(context.Background(), `SELECT val FROM test ORDER BY val NULLS LAST`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var rows []*string
+	for res.Next() {
+		var r *string
+		require.NoError(t, res.Scan(&r))
+		rows = append(rows, r)
+	}
+	require.Len(t, rows, 3)
+	require.Equal(t, first, *rows[0])
+	require.Equal(t, last, *rows[1])
+	require.Nil(t, rows[2])
+}
+
+func TestAppenderEnum(t *testing.T) {
+	t.Run("utinyint_dict", func(t *testing.T) { testAppenderEnum(t, 4) })
+	// More than 256 dictionary entries force a USMALLINT internal type.
+	t.Run("usmallint_dict", func(t *testing.T) { testAppenderEnum(t, 300) })
+	// More than 65536 dictionary entries force a UINTEGER internal type.
+	t.Run("uinteger_dict", func(t *testing.T) { testAppenderEnum(t, 65540) })
 }
 
 func newAppenderHugeIntTest[T numericType](val T, expected *big.Int, db *sql.DB, a *Appender) func(t *testing.T) {

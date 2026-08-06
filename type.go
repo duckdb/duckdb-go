@@ -1,6 +1,8 @@
 package duckdb
 
 import (
+	"fmt"
+
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
@@ -102,6 +104,13 @@ var typeToStringMap = map[Type]string{
 	TYPE_SQLNULL:      "SQLNULL",
 	TYPE_GEOMETRY:     "GEOMETRY",
 	TYPE_VARIANT:      "VARIANT",
+}
+
+func typeName(t Type) string {
+	if name, ok := typeToStringMap[t]; ok {
+		return name
+	}
+	return fmt.Sprintf("%s (%d)", unknownTypeErrMsg, t)
 }
 
 const aliasJSON = "JSON"
