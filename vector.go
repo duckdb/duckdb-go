@@ -31,6 +31,10 @@ type vector struct {
 	structTemplate map[string]any
 }
 
+func (vec *vector) SetValue(rowIdx int, val any) error {
+	return vec.setFn(vec, mapping.IdxT(rowIdx), val)
+}
+
 //nolint:gocyclo
 func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	t := mapping.GetTypeId(logicalType)

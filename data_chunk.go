@@ -33,6 +33,11 @@ func (chunk *DataChunk) GetSize() int {
 	return chunk.size
 }
 
+// ColumnCount returns the number of columns in the data chunk.
+func (chunk *DataChunk) ColumnCount() int {
+	return len(chunk.columns)
+}
+
 // SetSize sets the internal size of the data chunk. Cannot exceed GetCapacity().
 func (chunk *DataChunk) SetSize(size int) error {
 	if size > GetDataChunkCapacity() {
@@ -66,9 +71,7 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 	}
 
 	column := &chunk.columns[colIdx]
-
-	err = column.setFn(column, mapping.IdxT(rowIdx), val)
-	if err != nil {
+	if err = column.SetValue(rowIdx, val); err != nil {
 		return setValueError(colIdx, rowIdx, val, err)
 	}
 
