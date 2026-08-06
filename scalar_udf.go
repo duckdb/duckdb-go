@@ -239,7 +239,7 @@ func scalar_udf_callback(functionInfoPtr, inputPtr, outputPtr unsafe.Pointer) {
 	// Check if using chunk executor.
 	executor := funcCtx.f.Executor()
 	if executor.ChunkContextExecutor != nil {
-		executeChunk(funcCtx, pinnedBindData, &inputChunk, &outputChunk, functionInfo, nullInNullOut)
+		executeChunk(executor, funcCtx, pinnedBindData, &inputChunk, &outputChunk, functionInfo, nullInNullOut)
 		return
 	}
 
@@ -293,7 +293,7 @@ func scalar_udf_callback(functionInfoPtr, inputPtr, outputPtr unsafe.Pointer) {
 }
 
 // executeChunk handles chunk-based execution of scalar UDFs.
-func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
+func executeChunk(executor ScalarFuncExecutor, funcCtx *scalarFuncContext, bindInfo *bindData,
 	inputChunk, outputChunk *DataChunk,
 	functionInfo mapping.FunctionInfo, nullInNullOut bool,
 ) {
@@ -317,7 +317,7 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	}
 
 	// Execute - user iterates over rows, each row has pre-fetched Args.
-	if err := funcCtx.f.Executor().ChunkContextExecutor(bindInfo.ctx, chunk); err != nil {
+	if err := executor.ChunkContextExecutor(bindInfo.ctx, chunk); err != nil {
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return
 	}
