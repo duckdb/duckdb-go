@@ -288,7 +288,13 @@ func TestErrAppendEnum(t *testing.T) {
 	defer cleanupAppender(t, c, db, conn, a)
 
 	err := a.AppendRow("3")
-	testError(t, err, errAppenderAppendRow.Error(), castErrMsg)
+	testError(
+		t,
+		err,
+		errAppenderAppendRow.Error(),
+		invalidInputErrMsg,
+		"expected value in enum dictionary, got 3",
+	)
 }
 
 func TestErrAppendSimpleStruct(t *testing.T) {

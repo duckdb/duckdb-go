@@ -278,7 +278,7 @@ func TestTypedValidation(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				var got any
 				err := db.QueryRow(`SELECT ?`, Typed(tc.value, tc.typ)).Scan(&got)
-				require.ErrorContains(t, err, "unsupported data type: "+typedValueTypeName(tc.typ))
+				require.ErrorContains(t, err, "unsupported data type: "+typeName(tc.typ))
 				require.ErrorContains(t, err, "index: 1")
 			})
 		}

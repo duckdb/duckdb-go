@@ -77,7 +77,11 @@ func (r *rows) Next(dst []driver.Value) error {
 	// always valid here since we control the chunk lifecycle.
 	rowIdx := mapping.IdxT(r.rowCount)
 	for colIdx := range r.chunk.columns {
-		dst[colIdx] = r.chunk.columns[colIdx].getFn(&r.chunk.columns[colIdx], rowIdx)
+		value, err := r.chunk.columns[colIdx].getFn(&r.chunk.columns[colIdx], rowIdx)
+		if err != nil {
+			return getError(errAPI, addIndexToError(err, colIdx))
+		}
+		dst[colIdx] = value
 		if bit, ok := dst[colIdx].(Bit); ok {
 			dst[colIdx] = bit.String()
 		}

@@ -1,6 +1,8 @@
 package duckdb
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"testing"
 	"unsafe"
 
@@ -80,4 +82,88 @@ func TestSetGetPrimitiveLargeIndex(t *testing.T) {
 		got := getPrimitive[int32](vec, tc.idx)
 		require.Equal(t, tc.val, got, "value at index %d", tc.idx)
 	}
+}
+
+func TestDataChunkGetValueBubblesGetterErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*vector)
+	}{
+		{
+			name: "decimal",
+			setup: func(vec *vector) {
+				vec.Type = TYPE_DECIMAL
+				vec.internalType = TYPE_VARCHAR
+				vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
+					return vec.getDecimal(rowIdx)
+				}
+			},
+		},
+		{
+			name: "enum",
+			setup: func(vec *vector) {
+				vec.Type = TYPE_ENUM
+				vec.internalType = TYPE_VARCHAR
+				vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
+					return vec.getEnum(rowIdx)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var column vector
+			tc.setup(&column)
+			chunk := DataChunk{columns: []vector{column}}
+
+			var err error
+			require.NotPanics(t, func() {
+				_, err = chunk.GetValue(0, 0)
+			})
+			require.ErrorIs(t, err, errAPI)
+			require.ErrorContains(t, err, unsupportedTypeErrMsg)
+		})
+	}
+}
+
+func TestDataChunkGetValueReturnsJSONDecodeError(t *testing.T) {
+	logicalType := mapping.CreateLogicalType(TYPE_VARCHAR)
+	mapping.LogicalTypeSetAlias(logicalType, aliasJSON)
+	defer mapping.DestroyLogicalType(&logicalType)
+
+	var chunk DataChunk
+	require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+	defer chunk.close()
+
+	require.NoError(t, setBytes(&chunk.columns[0], 0, "invalid"))
+	got, err := chunk.GetValue(0, 0)
+	require.Nil(t, got)
+	require.ErrorIs(t, err, errAPI)
+	var syntaxErr *json.SyntaxError
+	require.ErrorAs(t, err, &syntaxErr)
+}
+
+func TestRowsNextBubblesGetterErrors(t *testing.T) {
+	var column vector
+	column.Type = TYPE_DECIMAL
+	column.internalType = TYPE_VARCHAR
+	column.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
+		return vec.getDecimal(rowIdx)
+	}
+
+	r := rows{
+		chunk: DataChunk{
+			columns: []vector{column},
+			size:    1,
+		},
+	}
+	dst := make([]driver.Value, 1)
+
+	var err error
+	require.NotPanics(t, func() {
+		err = r.Next(dst)
+	})
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, unsupportedTypeErrMsg)
 }

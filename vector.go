@@ -31,6 +31,10 @@ type vector struct {
 	structTemplate map[string]any
 }
 
+func (vec *vector) SetValue(rowIdx int, val any) error {
+	return vec.setFn(vec, mapping.IdxT(rowIdx), val)
+}
+
 //nolint:gocyclo
 func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	t := mapping.GetTypeId(logicalType)
@@ -151,11 +155,11 @@ func (vec *vector) initChildVectors(v mapping.Vector, writable bool) {
 }
 
 func initBool(vec *vector) {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return getPrimitive[bool](vec, rowIdx)
+		return getPrimitive[bool](vec, rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil {
@@ -168,11 +172,11 @@ func initBool(vec *vector) {
 }
 
 func initNumeric[T numericType](vec *vector, t Type) {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return getPrimitive[T](vec, rowIdx)
+		return getPrimitive[T](vec, rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil {
@@ -185,11 +189,11 @@ func initNumeric[T numericType](vec *vector, t Type) {
 }
 
 func (vec *vector) initTS(t Type) {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getTS(t, rowIdx)
+		return vec.getTS(t, rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*time.Time)(nil) {
@@ -202,11 +206,11 @@ func (vec *vector) initTS(t Type) {
 }
 
 func (vec *vector) initDate() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getDate(rowIdx)
+		return vec.getDate(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*time.Time)(nil) {
@@ -219,11 +223,11 @@ func (vec *vector) initDate() {
 }
 
 func (vec *vector) initTime(t Type) {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getTime(rowIdx)
+		return vec.getTime(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*time.Time)(nil) {
@@ -236,11 +240,11 @@ func (vec *vector) initTime(t Type) {
 }
 
 func (vec *vector) initInterval() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getInterval(rowIdx)
+		return vec.getInterval(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*Interval)(nil) {
@@ -253,11 +257,11 @@ func (vec *vector) initInterval() {
 }
 
 func (vec *vector) initHugeint() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getHugeint(rowIdx)
+		return vec.getHugeint(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*big.Int)(nil) {
@@ -270,11 +274,11 @@ func (vec *vector) initHugeint() {
 }
 
 func (vec *vector) initUhugeint() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getUhugeint(rowIdx)
+		return vec.getUhugeint(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*big.Int)(nil) {
@@ -287,11 +291,11 @@ func (vec *vector) initUhugeint() {
 }
 
 func (vec *vector) initBignum() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getBigNum(rowIdx)
+		return vec.getBigNum(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*big.Int)(nil) {
@@ -304,11 +308,11 @@ func (vec *vector) initBignum() {
 }
 
 func (vec *vector) initBytes(t Type) {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getBytes(rowIdx)
+		return vec.getBytes(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil {
@@ -321,11 +325,11 @@ func (vec *vector) initBytes(t Type) {
 }
 
 func (vec *vector) initBit() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
-		return vec.getBit(rowIdx)
+		return vec.getBit(rowIdx), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*Bit)(nil) {
@@ -338,9 +342,9 @@ func (vec *vector) initBit() {
 }
 
 func (vec *vector) initJSON() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getJSON(rowIdx)
 	}
@@ -361,9 +365,9 @@ func (vec *vector) initDecimal(logicalType mapping.LogicalType, colIdx int) erro
 	t := mapping.DecimalInternalType(logicalType)
 	switch t {
 	case TYPE_SMALLINT, TYPE_INTEGER, TYPE_BIGINT, TYPE_HUGEINT:
-		vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+		vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 			if vec.getNull(rowIdx) {
-				return nil
+				return nil, nil
 			}
 			return vec.getDecimal(rowIdx)
 		}
@@ -400,9 +404,9 @@ func (vec *vector) initEnum(logicalType mapping.LogicalType, colIdx int) error {
 	t := mapping.EnumInternalType(logicalType)
 	switch t {
 	case TYPE_UTINYINT, TYPE_USMALLINT, TYPE_UINTEGER, TYPE_UBIGINT:
-		vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+		vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 			if vec.getNull(rowIdx) {
-				return nil
+				return nil, nil
 			}
 			return vec.getEnum(rowIdx)
 		}
@@ -434,9 +438,9 @@ func (vec *vector) initList(logicalType mapping.LogicalType, colIdx int) error {
 		return err
 	}
 
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getList(rowIdx)
 	}
@@ -485,9 +489,9 @@ func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error
 	}
 	vec.structTemplate = tmpl
 
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getStruct(rowIdx)
 	}
@@ -527,9 +531,9 @@ func (vec *vector) initMap(logicalType mapping.LogicalType, colIdx int) error {
 		return addIndexToError(errUnsupportedMapKeyType, colIdx)
 	}
 
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getMap(rowIdx)
 	}
@@ -558,9 +562,9 @@ func (vec *vector) initArray(logicalType mapping.LogicalType, colIdx int) error 
 		return err
 	}
 
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getArray(rowIdx)
 	}
@@ -604,9 +608,9 @@ func (vec *vector) initUnion(logicalType mapping.LogicalType, colIdx int) error 
 		vec.tagDict[uint32(i)] = name
 	}
 
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		return vec.getUnion(rowIdx)
 	}
@@ -622,12 +626,12 @@ func (vec *vector) initUnion(logicalType mapping.LogicalType, colIdx int) error 
 }
 
 func (vec *vector) initUUID() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
 		if vec.getNull(rowIdx) {
-			return nil
+			return nil, nil
 		}
 		hugeInt := getPrimitive[mapping.HugeInt](vec, rowIdx)
-		return hugeIntToUUID(&hugeInt)
+		return hugeIntToUUID(&hugeInt), nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil || val == (*UUID)(nil) {
@@ -640,8 +644,8 @@ func (vec *vector) initUUID() {
 }
 
 func (vec *vector) initSQLNull() {
-	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) any {
-		return nil
+	vec.getFn = func(vec *vector, rowIdx mapping.IdxT) (any, error) {
+		return nil, nil
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		return errSetSQLNULLValue

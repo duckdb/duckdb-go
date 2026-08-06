@@ -41,7 +41,7 @@ func Typed(value any, typ Type) TypedValue {
 
 func coerceTypedValue(t Type, v any) (any, error) {
 	if !supportsTypedValue(t) {
-		return nil, unsupportedTypeError(typedValueTypeName(t))
+		return nil, unsupportedTypeError(typeName(t))
 	}
 
 	if t == TYPE_SQLNULL || isNil(v) {
@@ -91,7 +91,7 @@ func coerceTypedValue(t Type, v any) (any, error) {
 		TYPE_DATE, TYPE_TIME, TYPE_TIME_TZ, TYPE_INTERVAL:
 		return v, nil
 	}
-	return nil, fmt.Errorf("duckdb: internal error: missing typed value coercion for %s", typedValueTypeName(t))
+	return nil, fmt.Errorf("duckdb: internal error: missing typed value coercion for %s", typeName(t))
 }
 
 func supportsTypedValue(t Type) bool {
@@ -185,16 +185,9 @@ func coerceTypedFloat64(t Type, v any) (any, error) {
 }
 
 func typedValueCastError(t Type, v any) error {
-	return castErrorForValue(v, typedValueTypeName(t))
+	return castErrorForValue(v, typeName(t))
 }
 
 func typedValueConversionError(t Type, v any) error {
-	return fmt.Errorf("%s: cannot convert %v to %s", convertErrMsg, v, typedValueTypeName(t))
-}
-
-func typedValueTypeName(t Type) string {
-	if name, ok := typeToStringMap[t]; ok {
-		return name
-	}
-	return unknownTypeErrMsg
+	return fmt.Errorf("%s: cannot convert %v to %s", convertErrMsg, v, typeName(t))
 }
