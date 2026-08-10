@@ -71,9 +71,7 @@ type (
 	// RowContextExecutorFn accepts a row-based execution function using a context.
 	// It takes a context and the row values, and returns the row execution result, or error.
 	RowContextExecutorFn func(ctx context.Context, values []driver.Value) (any, error)
-	// ChunkContextExecutorFn processes one chunk of scalar UDF input.
-	// The callback can use Rows for row-oriented access or typed VARCHAR vector
-	// views and writers through ChunkIteratorState.
+	// ChunkContextExecutorFn processes one scalar UDF input chunk.
 	ChunkContextExecutorFn func(ctx context.Context, chunk *ChunkIteratorState) error
 	// ScalarBinderFn takes a (parent) context and the scalar function's arguments.
 	// It returns the possibly updated child context (can be the same as the parent).

@@ -133,10 +133,10 @@ func (vec *vector) resetChildData() {
 
 func (vec *vector) initVectors(v mapping.Vector, writable bool) {
 	vec.vec = v
+	vec.dataPtr = mapping.VectorGetData(v)
 	if writable {
 		mapping.VectorEnsureValidityWritable(v)
 	}
-	vec.dataPtr = mapping.VectorGetData(v)
 	vec.maskPtr = mapping.VectorGetValidity(v)
 	vec.initChildVectors(v, writable)
 }

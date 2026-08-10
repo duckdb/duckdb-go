@@ -83,15 +83,11 @@ func TestVarcharVectorWriterPreservesInvalidUTF8AsNull(t *testing.T) {
 	writer, err := GetResultVectorWriter[string](state)
 	require.NoError(t, err)
 
-	// The current C API string assignment validates VARCHAR input and makes the
-	// result NULL when the bytes are not valid UTF-8. A future direct-descriptor
-	// V2 backend must preserve this exported writer behavior.
 	require.NoError(t, writer.Set(0, string([]byte{0xff})))
 	actual, err := output.GetValue(0, 0)
 	require.NoError(t, err)
 	require.Nil(t, actual)
 
-	// A later valid assignment must restore validity as well as the value.
 	require.NoError(t, writer.Set(0, "valid UTF-8"))
 	actual, err = output.GetValue(0, 0)
 	require.NoError(t, err)

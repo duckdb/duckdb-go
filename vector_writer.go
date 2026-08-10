@@ -9,25 +9,18 @@ import (
 
 // VectorWriterValue is the set of Go values supported by VectorWriter.
 type VectorWriterValue interface {
-	VectorViewValue
+	~string
 }
 
-// VectorWriter provides typed, mutable access to one supported DuckDB result
-// vector. This first implementation supports only VectorWriter[string] for
-// VARCHAR. The writer is callback-scoped and must not be retained after the
-// ChunkContextExecutor returns.
-//
-// Set honors the scalar UDF's default NULL-in/NULL-out policy. Use
-// SpecialNullHandling when the UDF must produce a non-NULL result for a row
-// containing a NULL input.
+// VectorWriter writes a DuckDB result vector. It is valid only during the
+// scalar UDF callback.
 type VectorWriter[T VectorWriterValue] struct {
 	v            *vector
 	logicalCount int
 	iterState    *ChunkIteratorState
 }
 
-// GetResultVectorWriter returns a typed writer for the scalar UDF's result.
-// This first implementation accepts only T=string and requires VARCHAR output.
+// GetResultVectorWriter returns a VARCHAR writer for a scalar UDF result.
 func GetResultVectorWriter[T VectorWriterValue](
 	iterState *ChunkIteratorState,
 ) (VectorWriter[T], error) {
@@ -38,9 +31,6 @@ func GetResultVectorWriter[T VectorWriterValue](
 		return VectorWriter[T]{}, getError(errAPI, vectorWriterTypeError(iterState.output))
 	}
 
-	// The input chunk defines the result row count. The current callback supplies
-	// reserved flat result storage. A V2 backend must check its result size and
-	// vector form before writing.
 	return VectorWriter[T]{
 		v:            iterState.output,
 		logicalCount: iterState.r.chunk.GetSize(),
@@ -53,8 +43,8 @@ func (writer VectorWriter[T]) Len() int {
 	return writer.logicalCount
 }
 
-// Set writes a non-NULL VARCHAR at row. DuckDB's native assignment function
-// ensures any out-of-line bytes are owned by DuckDB after the callback.
+// Set writes value at row. DuckDB copies valid values. Default NULL handling
+// or invalid UTF-8 can produce SQL NULL.
 func (writer VectorWriter[T]) Set(row int, value T) error {
 	if err := writer.checkRow(row); err != nil {
 		return getError(errAPI, err)
@@ -66,8 +56,6 @@ func (writer VectorWriter[T]) Set(row int, value T) error {
 		return nil
 	}
 
-	// The current C API changes invalid UTF-8 to SQL NULL. A V2 implementation
-	// must preserve this behavior.
 	mapping.ValiditySetRowValidity(writer.v.maskPtr, rowIdx, true)
 	mapping.VectorAssignStringElement(writer.v.vec, rowIdx, string(value))
 	return nil

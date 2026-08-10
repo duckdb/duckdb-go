@@ -12,24 +12,13 @@ type VectorViewValue interface {
 	~string
 }
 
-// VectorView provides typed, read-only access to one supported DuckDB vector.
-// This first implementation supports only VectorView[string] for VARCHAR.
-//
-// The view is valid only while its parent DataChunk and native vector storage
-// remain alive and unchanged. In a scalar UDF, that means only for the duration
-// of the ChunkContextExecutor callback. The zero value is not usable.
+// VectorView gives read-only access to a DuckDB vector. It is valid only during
+// the scalar UDF callback.
 type VectorView[T VectorViewValue] struct {
 	v            *vector
 	logicalCount int
 }
 
-// getVectorView returns a typed view over column in chunk. This first
-// implementation accepts only T=string and validates that the column is an
-// ordinary DuckDB VARCHAR before values are read.
-//
-// FIXME: Export this function when the native adapter can supply selection
-// metadata for every DataChunk source. The current scalar UDF path is safe
-// because DuckDB flattens its input before it invokes the C API callback.
 func getVectorView[T VectorViewValue](chunk *DataChunk, column int) (VectorView[T], error) {
 	if chunk == nil {
 		return VectorView[T]{}, getError(errAPI, errNilDataChunk)
@@ -64,8 +53,7 @@ func (view VectorView[T]) Len() int {
 }
 
 // GetValueBorrowed returns the value at row and whether it is non-NULL. The
-// returned string uses DuckDB vector memory. It must not remain in use after
-// the view's lifetime ends.
+// value is valid only during the scalar UDF callback.
 func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
 	var zero T
 	if err := view.checkRow(row); err != nil {
