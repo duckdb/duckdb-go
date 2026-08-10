@@ -7,21 +7,16 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// VectorWriterValue is the set of Go values supported by VectorWriter.
-type VectorWriterValue interface {
-	~string
-}
-
 // VectorWriter writes a DuckDB result vector. It is valid only during the
 // scalar UDF callback.
-type VectorWriter[T VectorWriterValue] struct {
+type VectorWriter[T VectorValue] struct {
 	v            *vector
 	logicalCount int
 	iterState    *ChunkIteratorState
 }
 
 // GetResultVectorWriter returns a VARCHAR writer for a scalar UDF result.
-func GetResultVectorWriter[T VectorWriterValue](
+func GetResultVectorWriter[T VectorValue](
 	iterState *ChunkIteratorState,
 ) (VectorWriter[T], error) {
 	if iterState == nil || iterState.r.chunk == nil || iterState.output == nil {

@@ -7,19 +7,19 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// VectorViewValue is the set of Go values supported by VectorView.
-type VectorViewValue interface {
+// VectorValue is the set of Go values supported by vector access.
+type VectorValue interface {
 	~string
 }
 
 // VectorView gives read-only access to a DuckDB vector. It is valid only during
 // the scalar UDF callback.
-type VectorView[T VectorViewValue] struct {
+type VectorView[T VectorValue] struct {
 	v            *vector
 	logicalCount int
 }
 
-func getVectorView[T VectorViewValue](chunk *DataChunk, column int) (VectorView[T], error) {
+func getVectorView[T VectorValue](chunk *DataChunk, column int) (VectorView[T], error) {
 	if chunk == nil {
 		return VectorView[T]{}, getError(errAPI, errNilDataChunk)
 	}
@@ -37,7 +37,7 @@ func getVectorView[T VectorViewValue](chunk *DataChunk, column int) (VectorView[
 }
 
 // GetInputVectorView returns a typed view over a scalar UDF input column.
-func GetInputVectorView[T VectorViewValue](
+func GetInputVectorView[T VectorValue](
 	iterState *ChunkIteratorState,
 	column int,
 ) (VectorView[T], error) {
@@ -78,7 +78,7 @@ func (view VectorView[T]) checkRow(row int) error {
 	return nil
 }
 
-func newVectorView[T VectorViewValue](vec *vector, size int) (VectorView[T], error) {
+func newVectorView[T VectorValue](vec *vector, size int) (VectorView[T], error) {
 	if vec.Type != TYPE_VARCHAR || vec.isJSON {
 		return VectorView[T]{}, vectorViewTypeError(vec)
 	}

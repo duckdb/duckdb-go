@@ -12,6 +12,7 @@ import (
 type vector struct {
 	// The vector's type information.
 	vectorTypeInfo
+
 	// isJSON distinguishes JSON from ordinary VARCHAR storage.
 	isJSON bool
 
