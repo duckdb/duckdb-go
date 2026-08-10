@@ -24,7 +24,7 @@ func (iterState *ChunkIteratorState) SetResult(val any) error {
 
 func (iterState *ChunkIteratorState) inputRowIsNull(row mapping.IdxT) bool {
 	for i := range iterState.r.chunk.columns {
-		if iterState.r.chunk.columns[i].readRowIsNull(row) {
+		if iterState.r.chunk.columns[i].getNull(row) {
 			return true
 		}
 	}

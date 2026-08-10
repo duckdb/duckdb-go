@@ -72,12 +72,11 @@ func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
 		return zero, false, getError(errAPI, err)
 	}
 
-	physicalRow, isNull := view.v.resolveReadRow(mapping.IdxT(row))
-	if isNull {
+	if view.v.getNull(mapping.IdxT(row)) {
 		return zero, false, nil
 	}
 
-	value := getBorrowedStringAt(view.v.dataPtr, physicalRow)
+	value := getBorrowedStringAt(view.v.dataPtr, mapping.IdxT(row))
 	return T(value), true, nil
 }
 

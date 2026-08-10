@@ -141,17 +141,6 @@ func (vec *vector) initVectors(v mapping.Vector, writable bool) {
 	vec.initChildVectors(v, writable)
 }
 
-func (vec *vector) resolveReadRow(logical mapping.IdxT) (mapping.IdxT, bool) {
-	// FIXME: Resolve logical rows through selection metadata when the C API
-	// provides non-flat vector views.
-	return logical, vec.getNull(logical)
-}
-
-func (vec *vector) readRowIsNull(logical mapping.IdxT) bool {
-	_, isNull := vec.resolveReadRow(logical)
-	return isNull
-}
-
 func (vec *vector) initChildVectors(v mapping.Vector, writable bool) {
 	switch vec.Type {
 	case TYPE_LIST, TYPE_MAP:

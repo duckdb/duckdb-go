@@ -180,18 +180,11 @@ func (vec *vector) getBigNum(rowIdx mapping.IdxT) *big.Int {
 }
 
 func (vec *vector) getBytes(rowIdx mapping.IdxT) any {
-	data := vec.getBorrowedString(rowIdx)
+	data := getBorrowedStringAt(vec.dataPtr, rowIdx)
 	if vec.Type == TYPE_VARCHAR {
 		return strings.Clone(data)
 	}
 	return []byte(data)
-}
-
-// getBorrowedString returns a string backed by DuckDB's vector storage. The
-// result is valid only while the parent vector storage remains alive and
-// unchanged. Callers that let the value escape that lifetime must clone it.
-func (vec *vector) getBorrowedString(rowIdx mapping.IdxT) string {
-	return getBorrowedStringAt(vec.dataPtr, rowIdx)
 }
 
 func getBorrowedStringAt(dataPtr unsafe.Pointer, rowIdx mapping.IdxT) string {
