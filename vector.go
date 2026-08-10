@@ -12,6 +12,8 @@ import (
 type vector struct {
 	// The vector's type information.
 	vectorTypeInfo
+	// isJSON distinguishes JSON from ordinary VARCHAR storage.
+	isJSON bool
 
 	// The underlying DuckDB vector.
 	vec mapping.Vector
@@ -44,6 +46,7 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	}
 
 	alias := mapping.LogicalTypeGetAlias(logicalType)
+	vec.isJSON = alias == aliasJSON
 	if alias == aliasJSON {
 		vec.initJSON()
 		return nil
@@ -130,12 +133,23 @@ func (vec *vector) resetChildData() {
 
 func (vec *vector) initVectors(v mapping.Vector, writable bool) {
 	vec.vec = v
-	vec.dataPtr = mapping.VectorGetData(v)
 	if writable {
 		mapping.VectorEnsureValidityWritable(v)
 	}
+	vec.dataPtr = mapping.VectorGetData(v)
 	vec.maskPtr = mapping.VectorGetValidity(v)
 	vec.initChildVectors(v, writable)
+}
+
+func (vec *vector) resolveReadRow(logical mapping.IdxT) (mapping.IdxT, bool) {
+	// FIXME: Resolve logical rows through selection metadata when the C API
+	// provides non-flat vector views.
+	return logical, vec.getNull(logical)
+}
+
+func (vec *vector) readRowIsNull(logical mapping.IdxT) bool {
+	_, isNull := vec.resolveReadRow(logical)
+	return isNull
 }
 
 func (vec *vector) initChildVectors(v mapping.Vector, writable bool) {

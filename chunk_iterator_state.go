@@ -22,6 +22,15 @@ func (iterState *ChunkIteratorState) SetResult(val any) error {
 	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
 }
 
+func (iterState *ChunkIteratorState) inputRowIsNull(row mapping.IdxT) bool {
+	for i := range iterState.r.chunk.columns {
+		if iterState.r.chunk.columns[i].readRowIsNull(row) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetValuePtr returns a pointer to the current row value for a column.
 // Copy the value if you need to, as it is not retained between loop iterations.
 func (iterState *ChunkIteratorState) GetValuePtr(colIdx int) *driver.Value {

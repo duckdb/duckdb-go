@@ -71,11 +71,9 @@ type (
 	// RowContextExecutorFn accepts a row-based execution function using a context.
 	// It takes a context and the row values, and returns the row execution result, or error.
 	RowContextExecutorFn func(ctx context.Context, values []driver.Value) (any, error)
-	// ChunkContextExecutorFn accepts a chunk-based execution function using a context.
-	// It takes a context and the chunk-batched input, and sets the execution result for that chunk.
-	// FIXME: It currently still operates row-by-row within one callback, meaning that it still fetches each row
-	// FIXME: via GetValue per column, and the result is also set on a per-row basis.
-	// FIXME: A genuinely vectorized API requires additional work on the data chunk setter and getter interfaces.
+	// ChunkContextExecutorFn processes one chunk of scalar UDF input.
+	// The callback can use Rows for row-oriented access or typed VARCHAR vector
+	// views and writers through ChunkIteratorState.
 	ChunkContextExecutorFn func(ctx context.Context, chunk *ChunkIteratorState) error
 	// ScalarBinderFn takes a (parent) context and the scalar function's arguments.
 	// It returns the possibly updated child context (can be the same as the parent).
