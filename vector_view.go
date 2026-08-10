@@ -63,10 +63,10 @@ func (view VectorView[T]) Len() int {
 	return view.logicalCount
 }
 
-// GetValue returns the value at row and whether it is non-NULL. A returned
-// string aliases DuckDB vector memory and must not escape the view's lifetime.
-// Future fixed-size values, such as integers, will be independent Go values.
-func (view VectorView[T]) GetValue(row int) (T, bool, error) {
+// GetValueBorrowed returns the value at row and whether it is non-NULL. The
+// returned string uses DuckDB vector memory. It must not remain in use after
+// the view's lifetime ends.
+func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
 	var zero T
 	if err := view.checkRow(row); err != nil {
 		return zero, false, getError(errAPI, err)

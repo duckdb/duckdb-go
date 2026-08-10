@@ -61,7 +61,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.Equal(t, len(values)+1, view.Len())
 
 	for i := range values {
-		value, valid, getErr := view.GetValue(i)
+		value, valid, getErr := view.GetValueBorrowed(i)
 		require.NoError(t, getErr)
 		require.True(t, valid)
 		require.Equal(t, values[i], value)
@@ -74,14 +74,14 @@ func TestVarcharVectorView(t *testing.T) {
 		}
 	}
 
-	value, valid, err := view.GetValue(nullRow)
+	value, valid, err := view.GetValueBorrowed(nullRow)
 	require.NoError(t, err)
 	require.False(t, valid)
 	require.Empty(t, value)
 
 	namedView, err := getVectorView[namedVarchar](chunk, 0)
 	require.NoError(t, err)
-	namedValue, valid, err := namedView.GetValue(1)
+	namedValue, valid, err := namedView.GetValueBorrowed(1)
 	require.NoError(t, err)
 	require.True(t, valid)
 	require.Equal(t, namedVarchar(values[1]), namedValue)
@@ -109,7 +109,7 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	require.ErrorIs(t, err, errNilDataChunk)
 
 	var zeroView VectorView[string]
-	_, _, err = zeroView.GetValue(0)
+	_, _, err = zeroView.GetValueBorrowed(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
 	var nilState *ChunkIteratorState
 	_, err = GetInputVectorView[string](nilState, 0)
@@ -117,9 +117,9 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 
 	view, err := getVectorView[string](chunk, 1)
 	require.NoError(t, err)
-	_, _, err = view.GetValue(-1)
+	_, _, err = view.GetValueBorrowed(-1)
 	require.ErrorContains(t, err, rowIndexErrMsg)
-	_, _, err = view.GetValue(view.Len())
+	_, _, err = view.GetValueBorrowed(view.Len())
 	require.ErrorContains(t, err, rowIndexErrMsg)
 
 	chunk.projection = []int{1}
@@ -173,7 +173,7 @@ func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
 				return err
 			}
 			for row := range input.Len() {
-				value, valid, err := input.GetValue(row)
+				value, valid, err := input.GetValueBorrowed(row)
 				if err != nil {
 					return err
 				}
