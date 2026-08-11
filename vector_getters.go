@@ -15,9 +15,9 @@ import (
 type fnGetVectorValue func(vec *vector, rowIdx mapping.IdxT) (any, error)
 
 const (
-	duckdbStringInlineLength  = 12
-	duckdbStringInlineOffset  = 4
-	duckdbStringPointerOffset = 8
+	StringInlineLength  = 12
+	StringInlineOffset  = 4
+	StringPointerOffset = 8
 )
 
 // getNull checks DuckDB's validity bitfield: one bit per row packed into uint64 entries.
@@ -201,11 +201,11 @@ func getBorrowedStringAt(dataPtr unsafe.Pointer, rowIdx mapping.IdxT) string {
 	// NOTE: INLINE_LENGTH (12) is not exposed via the C API and could change in a future
 	// DuckDB version. If string tests start failing after a DuckDB upgrade, check here first.
 	var data string
-	if length <= duckdbStringInlineLength {
-		ptr := unsafe.Add(unsafe.Pointer(strTPtr), duckdbStringInlineOffset)
+	if length <= StringInlineLength {
+		ptr := unsafe.Add(unsafe.Pointer(strTPtr), StringInlineOffset)
 		data = unsafe.String((*byte)(ptr), int(length))
 	} else {
-		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), duckdbStringPointerOffset))
+		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), StringPointerOffset))
 		data = unsafe.String((*byte)(dataPtr), int(length))
 	}
 	return data
