@@ -19,32 +19,23 @@ type VectorView[T VectorValue] struct {
 	logicalCount int
 }
 
-func getVectorView[T VectorValue](chunk *DataChunk, column int) (VectorView[T], error) {
-	if chunk == nil {
+// GetVectorView returns a typed view over a data chunk column.
+func GetVectorView[T VectorValue](chunk DataChunkView, column int) (VectorView[T], error) {
+	dataChunk := chunk.dataChunk
+	if dataChunk == nil {
 		return VectorView[T]{}, getError(errAPI, errNilDataChunk)
 	}
 
-	column, err := chunk.verifyAndRewriteColIdx(column)
+	column, err := dataChunk.verifyAndRewriteColIdx(column)
 	if err != nil {
 		return VectorView[T]{}, getError(errAPI, err)
 	}
 
-	view, err := newVectorView[T](&chunk.columns[column], chunk.GetSize())
+	view, err := newVectorView[T](&dataChunk.columns[column], dataChunk.GetSize())
 	if err != nil {
 		return VectorView[T]{}, getError(errAPI, err)
 	}
 	return view, nil
-}
-
-// GetInputVectorView returns a typed view over a scalar UDF input column.
-func GetInputVectorView[T VectorValue](
-	iterState *ChunkIteratorState,
-	column int,
-) (VectorView[T], error) {
-	if iterState == nil || iterState.r.chunk == nil {
-		return VectorView[T]{}, getError(errAPI, errUninitializedChunkIterator)
-	}
-	return getVectorView[T](iterState.r.chunk, column)
 }
 
 // Len returns the vector's logical row count.
@@ -53,7 +44,7 @@ func (view VectorView[T]) Len() int {
 }
 
 // GetValueBorrowed returns the value at row and whether it is non-NULL. The
-// value is valid only during the scalar UDF callback.
+// value is valid as long as the underlying vector is valid and unchanged.
 func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
 	var zero T
 	if err := view.checkRow(row); err != nil {

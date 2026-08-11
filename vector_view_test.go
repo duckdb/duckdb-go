@@ -56,7 +56,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.NoError(t, chunk.SetValue(0, nullRow, nil))
 	require.NoError(t, chunk.SetSize(nullRow+1))
 
-	view, err := getVectorView[string](chunk, 0)
+	view, err := GetVectorView[string](chunk.View(), 0)
 	require.NoError(t, err)
 	require.Equal(t, len(values)+1, view.Len())
 
@@ -79,7 +79,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.False(t, valid)
 	require.Empty(t, value)
 
-	namedView, err := getVectorView[namedVarchar](chunk, 0)
+	namedView, err := GetVectorView[namedVarchar](chunk.View(), 0)
 	require.NoError(t, err)
 	namedValue, valid, err := namedView.GetValueBorrowed(1)
 	require.NoError(t, err)
@@ -93,18 +93,18 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	chunk := newVectorViewTestChunk(t, intInfo, stringInfo)
 	require.NoError(t, chunk.SetSize(1))
 
-	_, err := getVectorView[string](chunk, 0)
+	_, err := GetVectorView[string](chunk.View(), 0)
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be read as Go string")
 
-	_, err = getVectorView[string](chunk, -1)
+	_, err = GetVectorView[string](chunk.View(), -1)
 	require.ErrorIs(t, err, errAPI)
 
-	_, err = getVectorView[string](chunk, 2)
+	_, err = GetVectorView[string](chunk.View(), 2)
 	require.ErrorIs(t, err, errAPI)
 
 	var nilChunk *DataChunk
-	_, err = getVectorView[string](nilChunk, 0)
+	_, err = GetVectorView[string](nilChunk.View(), 0)
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorIs(t, err, errNilDataChunk)
 
@@ -112,10 +112,14 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	_, _, err = zeroView.GetValueBorrowed(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
 	var nilState *ChunkIteratorState
-	_, err = GetInputVectorView[string](nilState, 0)
-	require.ErrorIs(t, err, errUninitializedChunkIterator)
+	require.Zero(t, nilState.GetDataChunk().GetSize())
+	require.Zero(t, nilState.GetDataChunk().ColumnCount())
+	_, err = GetVectorView[string](nilState.GetDataChunk(), 0)
+	require.ErrorIs(t, err, errNilDataChunk)
+	_, err = nilState.GetDataChunk().GetValue(0, 0)
+	require.ErrorIs(t, err, errNilDataChunk)
 
-	view, err := getVectorView[string](chunk, 1)
+	view, err := GetVectorView[string](chunk.View(), 1)
 	require.NoError(t, err)
 	_, _, err = view.GetValueBorrowed(-1)
 	require.ErrorContains(t, err, rowIndexErrMsg)
@@ -123,9 +127,31 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	require.ErrorContains(t, err, rowIndexErrMsg)
 
 	chunk.projection = []int{1}
-	projected, err := getVectorView[string](chunk, 0)
+	projected, err := GetVectorView[string](chunk.View(), 0)
 	require.NoError(t, err)
 	require.Equal(t, 1, projected.Len())
+}
+
+func TestScalarUDFInputDataChunkView(t *testing.T) {
+	chunk := newVectorViewTestChunk(t, mustVectorViewTypeInfo(t, TYPE_VARCHAR))
+	require.NoError(t, chunk.SetValue(0, 0, "input"))
+	require.NoError(t, chunk.SetSize(1))
+
+	state := &ChunkIteratorState{r: Row{chunk: chunk}}
+	chunkView := state.GetDataChunk()
+	require.Equal(t, 1, chunkView.GetSize())
+	require.Equal(t, 1, chunkView.ColumnCount())
+
+	value, err := chunkView.GetValue(0, 0)
+	require.NoError(t, err)
+	require.Equal(t, "input", value)
+
+	view, err := GetVectorView[string](chunkView, 0)
+	require.NoError(t, err)
+	borrowedValue, valid, err := view.GetValueBorrowed(0)
+	require.NoError(t, err)
+	require.True(t, valid)
+	require.Equal(t, "input", borrowedValue)
 }
 
 func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
@@ -139,7 +165,7 @@ func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
 	require.NoError(t, SetChunkValue(*chunk, 0, 0, `{"answer":42}`))
 	require.NoError(t, chunk.SetSize(1))
 
-	_, err := getVectorView[string](chunk, 0)
+	_, err := GetVectorView[string](chunk.View(), 0)
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorContains(t, err, "DuckDB JSON cannot be read as Go string")
 
@@ -164,7 +190,7 @@ func (udf *vectorViewIdentityUDF) Config() ScalarFuncConfig {
 func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{
 		ChunkContextExecutor: func(_ context.Context, chunk *ChunkIteratorState) error {
-			input, err := GetInputVectorView[string](chunk, 0)
+			input, err := GetVectorView[string](chunk.GetDataChunk(), 0)
 			if err != nil {
 				return err
 			}

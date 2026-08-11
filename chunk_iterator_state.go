@@ -22,6 +22,15 @@ func (iterState *ChunkIteratorState) SetResult(val any) error {
 	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
 }
 
+// GetDataChunk returns a read-only view of the input data chunk. It is valid as
+// long as the underlying data chunk is valid.
+func (iterState *ChunkIteratorState) GetDataChunk() DataChunkView {
+	if iterState == nil {
+		return DataChunkView{}
+	}
+	return newDataChunkView(iterState.r.chunk)
+}
+
 // GetValuePtr returns a pointer to the current row value for a column.
 // Copy the value if you need to, as it is not retained between loop iterations.
 func (iterState *ChunkIteratorState) GetValuePtr(colIdx int) *driver.Value {
