@@ -12,8 +12,8 @@ type VectorValue interface {
 	~string
 }
 
-// VectorView gives read-only access to a DuckDB vector. It is valid only during
-// the scalar UDF callback.
+// VectorView gives read-only access to a DuckDB vector. It is valid as long as
+// the underlying vector is valid.
 type VectorView[T VectorValue] struct {
 	v            *vector
 	logicalCount int
