@@ -107,7 +107,9 @@ func TestVectorWriterDefaultNullHandling(t *testing.T) {
 	writer, err := GetResultVectorWriter[string](state)
 	require.NoError(t, err)
 	require.NoError(t, writer.Set(0, "first"))
-	require.NoError(t, writer.Set(1, "hidden by default NULL handling"))
+	require.NoError(t, writer.Set(1, "written before default NULL handling"))
+
+	applyDefaultNullHandling(input, output)
 
 	first, err := output.GetValue(0, 0)
 	require.NoError(t, err)
@@ -115,12 +117,6 @@ func TestVectorWriterDefaultNullHandling(t *testing.T) {
 	second, err := output.GetValue(0, 1)
 	require.NoError(t, err)
 	require.Nil(t, second)
-
-	state.nullInNullOut = false
-	require.NoError(t, writer.Set(1, "written with special NULL handling"))
-	second, err = output.GetValue(0, 1)
-	require.NoError(t, err)
-	require.Equal(t, "written with special NULL handling", second)
 }
 
 func TestVarcharVectorWriterValidation(t *testing.T) {

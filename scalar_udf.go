@@ -318,6 +318,22 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return
 	}
+
+	if nullInNullOut {
+		applyDefaultNullHandling(inputChunk, outputChunk)
+	}
+}
+
+func applyDefaultNullHandling(inputChunk, outputChunk *DataChunk) {
+	for row := range inputChunk.GetSize() {
+		rowIdx := mapping.IdxT(row)
+		for column := range inputChunk.columns {
+			if inputChunk.columns[column].getNull(rowIdx) {
+				outputChunk.columns[0].setNull(rowIdx)
+				break
+			}
+		}
+	}
 }
 
 //export scalar_udf_delete_callback
