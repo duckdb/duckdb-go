@@ -22,9 +22,9 @@ func (iterState *ChunkIteratorState) SetResult(val any) error {
 	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
 }
 
-// GetDataChunk returns a read-only view of the input data chunk. It is valid as
-// long as the underlying data chunk is valid.
-func (iterState *ChunkIteratorState) GetDataChunk() DataChunkView {
+// GetDataChunkView returns a read-only view of the input data chunk. It is valid
+// as long as the underlying data chunk is valid.
+func (iterState *ChunkIteratorState) GetDataChunkView() DataChunkView {
 	if iterState == nil {
 		return DataChunkView{}
 	}

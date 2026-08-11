@@ -105,11 +105,11 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	_, _, err = zeroView.GetValueBorrowed(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
 	var nilState *ChunkIteratorState
-	require.Zero(t, nilState.GetDataChunk().GetSize())
-	require.Zero(t, nilState.GetDataChunk().ColumnCount())
-	_, err = GetVectorView[string](nilState.GetDataChunk(), 0)
+	require.Zero(t, nilState.GetDataChunkView().GetSize())
+	require.Zero(t, nilState.GetDataChunkView().ColumnCount())
+	_, err = GetVectorView[string](nilState.GetDataChunkView(), 0)
 	require.ErrorIs(t, err, errNilDataChunk)
-	_, err = nilState.GetDataChunk().GetValue(0, 0)
+	_, err = nilState.GetDataChunkView().GetValue(0, 0)
 	require.ErrorIs(t, err, errNilDataChunk)
 
 	view, err := GetVectorView[string](chunk.View(), 1)
@@ -131,7 +131,7 @@ func TestScalarUDFInputDataChunkView(t *testing.T) {
 	require.NoError(t, chunk.SetSize(1))
 
 	state := &ChunkIteratorState{r: Row{chunk: chunk}}
-	chunkView := state.GetDataChunk()
+	chunkView := state.GetDataChunkView()
 	require.Equal(t, 1, chunkView.GetSize())
 	require.Equal(t, 1, chunkView.ColumnCount())
 
@@ -183,7 +183,7 @@ func (udf *vectorViewIdentityUDF) Config() ScalarFuncConfig {
 func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{
 		ChunkContextExecutor: func(_ context.Context, chunk *ChunkIteratorState) error {
-			input, err := GetVectorView[string](chunk.GetDataChunk(), 0)
+			input, err := GetVectorView[string](chunk.GetDataChunkView(), 0)
 			if err != nil {
 				return err
 			}
