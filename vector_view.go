@@ -49,12 +49,13 @@ func (view VectorView[T]) Len() int {
 // GetValueBorrowed returns the value at row and whether it is non-NULL. The
 // value is valid as long as the underlying vector is valid and unchanged.
 func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
-	var zero T
 	if err := view.checkRow(row); err != nil {
+		var zero T
 		return zero, false, getError(errAPI, err)
 	}
 
 	if view.v.getNull(mapping.IdxT(row)) {
+		var zero T
 		return zero, false, nil
 	}
 

@@ -30,19 +30,12 @@ func newVectorViewTestChunk(t testing.TB, infos ...TypeInfo) *DataChunk {
 	return chunk
 }
 
-func mustVectorViewTypeInfo(t testing.TB, typ Type) TypeInfo {
-	t.Helper()
-	info, err := NewTypeInfo(typ)
-	require.NoError(t, err)
-	return info
-}
-
 func TestDuckDBStringTViewLayout(t *testing.T) {
 	require.Equal(t, uintptr(16), unsafe.Sizeof(mapping.StringT{}))
 }
 
 func TestVarcharVectorView(t *testing.T) {
-	chunk := newVectorViewTestChunk(t, mustVectorViewTypeInfo(t, TYPE_VARCHAR))
+	chunk := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_VARCHAR))
 	values := []string{
 		"",
 		"twelve-bytes",
@@ -88,8 +81,8 @@ func TestVarcharVectorView(t *testing.T) {
 }
 
 func TestVarcharVectorViewValidation(t *testing.T) {
-	intInfo := mustVectorViewTypeInfo(t, TYPE_INTEGER)
-	stringInfo := mustVectorViewTypeInfo(t, TYPE_VARCHAR)
+	intInfo := mustTypeInfo(t, TYPE_INTEGER)
+	stringInfo := mustTypeInfo(t, TYPE_VARCHAR)
 	chunk := newVectorViewTestChunk(t, intInfo, stringInfo)
 	require.NoError(t, chunk.SetSize(1))
 
@@ -133,7 +126,7 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 }
 
 func TestScalarUDFInputDataChunkView(t *testing.T) {
-	chunk := newVectorViewTestChunk(t, mustVectorViewTypeInfo(t, TYPE_VARCHAR))
+	chunk := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_VARCHAR))
 	require.NoError(t, chunk.SetValue(0, 0, "input"))
 	require.NoError(t, chunk.SetSize(1))
 
@@ -221,7 +214,7 @@ func TestVectorViewScalarUDF(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	udf := &vectorViewIdentityUDF{info: mustVectorViewTypeInfo(t, TYPE_VARCHAR)}
+	udf := &vectorViewIdentityUDF{info: mustTypeInfo(t, TYPE_VARCHAR)}
 	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity", udf))
 
 	rows, err := db.Query(`
@@ -252,7 +245,7 @@ func TestVectorViewScalarUDFMultipleChunks(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	udf := &vectorViewIdentityUDF{info: mustVectorViewTypeInfo(t, TYPE_VARCHAR)}
+	udf := &vectorViewIdentityUDF{info: mustTypeInfo(t, TYPE_VARCHAR)}
 	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity_multiple_chunks", udf))
 
 	rowCount := GetDataChunkCapacity()*2 + 17
@@ -285,7 +278,7 @@ func TestVectorViewScalarUDFSpecialNullHandling(t *testing.T) {
 	defer closeConnWrapper(t, conn)
 
 	udf := &vectorViewIdentityUDF{
-		info:                mustVectorViewTypeInfo(t, TYPE_VARCHAR),
+		info:                mustTypeInfo(t, TYPE_VARCHAR),
 		specialNullHandling: true,
 	}
 	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity_special", udf))

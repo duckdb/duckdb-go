@@ -125,6 +125,8 @@ func (chunk *DataChunk) verifyAndRewriteColIdx(colIdx int) (int, error) {
 
 func (chunk *DataChunk) initFromTypes(types []mapping.LogicalType, writable bool) error {
 	// NOTE: initFromTypes does not initialize the column names.
+	// NOTE: duckdb_create_data_chunk allocates each vector with DuckDB's standard
+	// capacity, the current C API does not accept a smaller chunk capacity.
 	columnCount := len(types)
 
 	// Initialize the callback functions to read and write values.
