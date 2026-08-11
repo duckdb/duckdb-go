@@ -15,7 +15,10 @@ type VectorValue interface {
 // VectorView gives read-only access to a DuckDB vector. It is valid as long as
 // the underlying vector is valid.
 type VectorView[T VectorValue] struct {
-	v            *vector
+	v *vector
+
+	// logicalCount is the number of rows visible through the view.
+	// The view copies this count from the data chunk when it is created.
 	logicalCount int
 }
 
