@@ -3,6 +3,7 @@ package duckdb
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode"
@@ -72,6 +73,8 @@ func transformBenchmarkVarchar(value string) string {
 
 var varcharTransformBenchmarkSink int64
 
+const varcharTransformBenchmarkRowCount = 2_000_000
+
 func BenchmarkVarcharTransformUDF(b *testing.B) {
 	db := openDbWrapper(b, ``)
 	defer closeDbWrapper(b, db)
@@ -89,9 +92,9 @@ func BenchmarkVarcharTransformUDF(b *testing.B) {
 		useVector: true,
 	}))
 
-	_, err = conn.ExecContext(context.Background(), `
+	_, err = conn.ExecContext(context.Background(), fmt.Sprintf(`
 		CREATE TABLE varchar_transform_benchmark AS
-		SELECT CASE i % 6
+		SELECT CASE i %% 6
 			WHEN 0 THEN NULL::VARCHAR
 			WHEN 1 THEN ''
 			WHEN 2 THEN '  customer-' || i::VARCHAR || '-alpha  '
@@ -99,8 +102,8 @@ func BenchmarkVarcharTransformUDF(b *testing.B) {
 			WHEN 4 THEN '  München-' || i::VARCHAR || '-straße  '
 			ELSE repeat('long-varchar-value-', 8) || i::VARCHAR
 		END AS value
-		FROM range(16384) values(i)
-	`)
+		FROM range(%d) values(i)
+	`, varcharTransformBenchmarkRowCount))
 	require.NoError(b, err)
 
 	benchmarks := []struct {
@@ -121,17 +124,16 @@ func BenchmarkVarcharTransformUDF(b *testing.B) {
 				require.NoError(b, stmt.Close())
 			}()
 
-			// Run once before timing so both interfaces use a prepared and warm query.
 			require.NoError(b, stmt.QueryRowContext(context.Background()).Scan(&varcharTransformBenchmarkSink))
 
 			b.ReportAllocs()
-			b.ReportMetric(16384, "rows/op")
 			b.ResetTimer()
 			for b.Loop() {
 				if err := stmt.QueryRowContext(context.Background()).Scan(&varcharTransformBenchmarkSink); err != nil {
 					b.Fatal(err)
 				}
 			}
+			b.ReportMetric(varcharTransformBenchmarkRowCount, "rows/op")
 		})
 	}
 }
