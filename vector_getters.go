@@ -14,10 +14,12 @@ import (
 // fnGetVectorValue is the getter callback function for any (nested) vector.
 type fnGetVectorValue func(vec *vector, rowIdx mapping.IdxT) (any, error)
 
+// NOTE: INLINE_LENGTH (12) is not exposed via the C API and could change in a future
+// DuckDB version. If string tests start failing after a DuckDB upgrade, check here first.
 const (
-	StringInlineLength  = 12
-	StringInlineOffset  = 4
-	StringPointerOffset = 8
+	stringInlineLength  = 12
+	stringInlineOffset  = 4
+	stringPointerOffset = 8
 )
 
 // getNull checks DuckDB's validity bitfield: one bit per row packed into uint64 entries.
@@ -198,14 +200,12 @@ func getBorrowedStringAt(dataPtr unsafe.Pointer, rowIdx mapping.IdxT) string {
 	length := *(*uint32)(unsafe.Pointer(strTPtr))
 	// duckdb_string_t layout: uint32 length at offset 0; if length <= 12 data is inlined
 	// at offset 4, otherwise a pointer at offset 8 (see duckdb.h string_t::INLINE_LENGTH).
-	// NOTE: INLINE_LENGTH (12) is not exposed via the C API and could change in a future
-	// DuckDB version. If string tests start failing after a DuckDB upgrade, check here first.
 	var data string
-	if length <= StringInlineLength {
-		ptr := unsafe.Add(unsafe.Pointer(strTPtr), StringInlineOffset)
+	if length <= stringInlineLength {
+		ptr := unsafe.Add(unsafe.Pointer(strTPtr), stringInlineOffset)
 		data = unsafe.String((*byte)(ptr), int(length))
 	} else {
-		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), StringPointerOffset))
+		dataPtr := *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(strTPtr), stringPointerOffset))
 		data = unsafe.String((*byte)(dataPtr), int(length))
 	}
 	return data
