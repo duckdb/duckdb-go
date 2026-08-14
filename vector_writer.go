@@ -1,7 +1,6 @@
 package duckdb
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -86,5 +85,3 @@ func vectorWriterTypeError(vec *vector) error {
 	}
 	return fmt.Errorf("vector writer type mismatch: DuckDB %s cannot be written as Go string", actual)
 }
-
-var errUninitializedVectorWriter = errors.New("uninitialized vector writer")
