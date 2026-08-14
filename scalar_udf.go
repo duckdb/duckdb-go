@@ -301,8 +301,8 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	}
 
 	// Create chunk wrapper.
-	// When nullInNullOut is enabled, the Rows() iterator automatically skips
-	// rows with NULL inputs and sets their result to NULL.
+	// When nullInNullOut is enabled, the Rows() iterator skips rows with NULL
+	// inputs. Default NULL results are applied after the callback.
 	chunk := &ChunkIteratorState{
 		r: Row{
 			chunk:  inputChunk,
