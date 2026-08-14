@@ -121,6 +121,8 @@ var (
 	errAPI                        = errors.New("API error")
 	errVectorSize                 = errors.New("data chunks cannot exceed duckdb's internal vector size")
 	errUninitializedChunkIterator = errors.New("uninitialized chunk iterator")
+	errNilDataChunk               = errors.New("nil data chunk")
+	errUninitializedVectorView    = errors.New("uninitialized vector view")
 	errUninitializedVectorWriter  = errors.New("uninitialized vector writer")
 
 	errConnect      = errors.New("could not connect to database")

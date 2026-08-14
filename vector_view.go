@@ -1,7 +1,6 @@
 package duckdb
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -87,8 +86,3 @@ func vectorViewTypeError(vec *vector) error {
 	}
 	return fmt.Errorf("vector view type mismatch: DuckDB %s cannot be read as Go string", actual)
 }
-
-var (
-	errNilDataChunk            = errors.New("nil data chunk")
-	errUninitializedVectorView = errors.New("uninitialized vector view")
-)
