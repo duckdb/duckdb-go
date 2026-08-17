@@ -522,12 +522,15 @@ func (vec *vector) initMap(logicalType mapping.LogicalType, colIdx int) error {
 
 	// DuckDB supports more MAP key types than Go, which only supports comparable types.
 	// We ensure that the key type itself is comparable.
+	// BLOB and GEOMETRY scan to []byte (getBytes), and BIT scans to Bit, which wraps a
+	// []byte. None of them can be compared with ==, which OrderedMap.Set does via Delete.
 	keyType := mapping.MapTypeKeyType(logicalType)
 	defer mapping.DestroyLogicalType(&keyType)
 
 	t := mapping.GetTypeId(keyType)
 	switch t {
-	case TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION:
+	case TYPE_LIST, TYPE_STRUCT, TYPE_MAP, TYPE_ARRAY, TYPE_UNION,
+		TYPE_BLOB, TYPE_BIT, TYPE_GEOMETRY:
 		return addIndexToError(errUnsupportedMapKeyType, colIdx)
 	}
 

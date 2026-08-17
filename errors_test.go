@@ -67,6 +67,72 @@ func TestErrNestedMap(t *testing.T) {
 	testError(t, err, errUnsupportedMapKeyType.Error())
 }
 
+func TestErrUncomparableMapKey(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name    string
+		query   string
+		wantErr bool
+	}{
+		// These scan to []byte, or to a struct wrapping one, so they used to panic in
+		// OrderedMap.Set once the map held a second key to compare against.
+		{
+			name:    "BLOB key",
+			query:   `SELECT MAP{'\x01'::BLOB: 'x', '\x02'::BLOB: 'y'}`,
+			wantErr: true,
+		},
+		{
+			name:    "BLOB key, single entry",
+			query:   `SELECT MAP{'\x01'::BLOB: 'x'}`,
+			wantErr: true,
+		},
+		{
+			name:    "BIT key",
+			query:   `SELECT MAP{'101'::BIT: 'x', '110'::BIT: 'y'}`,
+			wantErr: true,
+		},
+		{
+			name:    "GEOMETRY key",
+			query:   `SELECT MAP{'POINT(1 2)'::GEOMETRY: 'x', 'POINT(3 4)'::GEOMETRY: 'y'}`,
+			wantErr: true,
+		},
+		{
+			name:    "LIST key",
+			query:   `SELECT MAP{[1]: 'x', [2]: 'y'}`,
+			wantErr: true,
+		},
+		// Comparable key types must keep working; the guard must not over-reject.
+		{
+			name:  "VARCHAR key",
+			query: `SELECT MAP{'a': 'x', 'b': 'y'}`,
+		},
+		{
+			name:  "INTEGER key",
+			query: `SELECT MAP{1: 'x', 2: 'y'}`,
+		},
+		{
+			name:  "UUID key",
+			query: `SELECT MAP{'80000000-0000-0000-0000-000000000000'::UUID: 'x'}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var m OrderedMap
+			err := db.QueryRow(test.query).Scan(&m)
+
+			if test.wantErr {
+				testError(t, err, errUnsupportedMapKeyType.Error())
+				return
+			}
+			require.NoError(t, err)
+			require.NotZero(t, m.Len())
+		})
+	}
+}
+
 func TestErrAppender(t *testing.T) {
 	t.Run(errInvalidCon.Error(), func(t *testing.T) {
 		var conn driver.Conn
