@@ -23,12 +23,12 @@ type VectorView[T VectorValue] struct {
 
 // GetVectorView returns a typed view over a data chunk column.
 func GetVectorView[T VectorValue](chunk DataChunkView, column int) (VectorView[T], error) {
-	dataChunk := chunk.dataChunk
-	if dataChunk == nil {
-		return VectorView[T]{}, getError(errAPI, errNilDataChunk)
+	dataChunk, err := chunk.getDataChunk()
+	if err != nil {
+		return VectorView[T]{}, err
 	}
 
-	column, err := dataChunk.verifyAndRewriteColIdx(column)
+	column, err = dataChunk.verifyAndRewriteColIdx(column)
 	if err != nil {
 		return VectorView[T]{}, getError(errAPI, err)
 	}

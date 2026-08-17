@@ -105,8 +105,10 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	_, _, err = zeroView.GetValueBorrowed(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
 	var nilState *ChunkIteratorState
-	require.Zero(t, nilState.GetDataChunkView().GetSize())
-	require.Zero(t, nilState.GetDataChunkView().ColumnCount())
+	_, err = nilState.GetDataChunkView().GetSize()
+	require.ErrorIs(t, err, errNilDataChunk)
+	_, err = nilState.GetDataChunkView().ColumnCount()
+	require.ErrorIs(t, err, errNilDataChunk)
 	_, err = GetVectorView[string](nilState.GetDataChunkView(), 0)
 	require.ErrorIs(t, err, errNilDataChunk)
 	_, err = nilState.GetDataChunkView().GetValue(0, 0)
@@ -132,8 +134,12 @@ func TestScalarUDFInputDataChunkView(t *testing.T) {
 
 	state := &ChunkIteratorState{r: Row{chunk: chunk}}
 	chunkView := state.GetDataChunkView()
-	require.Equal(t, 1, chunkView.GetSize())
-	require.Equal(t, 1, chunkView.ColumnCount())
+	size, err := chunkView.GetSize()
+	require.NoError(t, err)
+	require.Equal(t, 1, size)
+	columnCount, err := chunkView.ColumnCount()
+	require.NoError(t, err)
+	require.Equal(t, 1, columnCount)
 
 	value, err := chunkView.GetValue(0, 0)
 	require.NoError(t, err)
