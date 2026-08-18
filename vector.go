@@ -15,7 +15,7 @@ type Vector struct {
 
 	// logicalCount is the logical vector size captured when this borrowed handle
 	// is created. The current C API cannot read this size from a vector directly.
-	// FIXME: Use duckdb_v2_vector_get_size when C API V2 is available.
+	// FIXME: Revisit logicalCount when C API v2 is finalized.
 	logicalCount int
 }
 
