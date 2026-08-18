@@ -33,27 +33,27 @@ func (view VectorView[T]) Len() int {
 
 // GetValueBorrowed returns the value at row and whether it is non-NULL. The
 // value is valid as long as the underlying vector is valid and unchanged.
-func (view VectorView[T]) GetValueBorrowed(row int) (T, bool, error) {
-	if err := view.checkRow(row); err != nil {
+func (view VectorView[T]) GetValueBorrowed(rowIdx int) (T, bool, error) {
+	if err := view.checkRow(rowIdx); err != nil {
 		var zero T
 		return zero, false, getError(errAPI, err)
 	}
 
-	if view.vector.v.getNull(mapping.IdxT(row)) {
+	if view.vector.v.getNull(mapping.IdxT(rowIdx)) {
 		var zero T
 		return zero, false, nil
 	}
 
-	value := getBorrowedStringAt(view.vector.v.dataPtr, mapping.IdxT(row))
+	value := getBorrowedStringAt(view.vector.v.dataPtr, mapping.IdxT(rowIdx))
 	return T(value), true, nil
 }
 
-func (view VectorView[T]) checkRow(row int) error {
+func (view VectorView[T]) checkRow(rowIdx int) error {
 	if view.vector.v == nil {
 		return errUninitializedVectorView
 	}
-	if row < 0 || row >= view.Len() {
-		return rowIndexError(row, view.Len())
+	if rowIdx < 0 || rowIdx >= view.Len() {
+		return rowIndexError(rowIdx, view.Len())
 	}
 	return nil
 }
