@@ -22,6 +22,24 @@ func (iterState *ChunkIteratorState) SetResult(val any) error {
 	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
 }
 
+// GetInputChunk returns the borrowed scalar UDF input chunk. Treat the chunk as
+// read-only, and do not retain it after the scalar UDF callback returns.
+func (iterState *ChunkIteratorState) GetInputChunk() *DataChunk {
+	if iterState == nil {
+		return nil
+	}
+	return iterState.r.chunk
+}
+
+// GetResultVector returns the borrowed writable scalar UDF result vector. Do
+// not retain it after the scalar UDF callback returns.
+func (iterState *ChunkIteratorState) GetResultVector() Vector {
+	if iterState == nil || iterState.r.chunk == nil || iterState.output == nil {
+		return Vector{}
+	}
+	return newVector(iterState.output, iterState.r.chunk.GetSize())
+}
+
 // GetDataChunkView returns a read-only view of the input data chunk. It is valid
 // as long as the underlying data chunk is valid.
 func (iterState *ChunkIteratorState) GetDataChunkView() DataChunkView {

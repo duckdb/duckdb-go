@@ -8,6 +8,20 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
+// Vector is a borrowed handle to a DuckDB vector. It is valid as long as the
+// underlying vector is valid.
+type Vector struct {
+	v            *vector
+	logicalCount int
+}
+
+func newVector(v *vector, logicalCount int) Vector {
+	return Vector{
+		v:            v,
+		logicalCount: logicalCount,
+	}
+}
+
 // vector storage of a DuckDB column.
 type vector struct {
 	// The vector's type information.

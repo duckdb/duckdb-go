@@ -38,6 +38,21 @@ func (chunk *DataChunk) ColumnCount() int {
 	return len(chunk.columns)
 }
 
+// GetVector returns a borrowed vector for a column. It is valid as long as the
+// data chunk is valid.
+func (chunk *DataChunk) GetVector(column int) (Vector, error) {
+	if chunk == nil {
+		return Vector{}, getError(errAPI, errNilDataChunk)
+	}
+
+	column, err := chunk.verifyAndRewriteColIdx(column)
+	if err != nil {
+		return Vector{}, getError(errAPI, err)
+	}
+
+	return newVector(&chunk.columns[column], chunk.GetSize()), nil
+}
+
 // SetSize sets the internal size of the data chunk. Cannot exceed GetCapacity().
 func (chunk *DataChunk) SetSize(size int) error {
 	if size > GetDataChunkCapacity() {
