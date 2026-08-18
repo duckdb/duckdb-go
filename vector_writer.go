@@ -6,44 +6,35 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// VectorWriter writes a DuckDB result vector. It is valid as long as the
+// VectorWriter writes a DuckDB vector. It is valid as long as the
 // underlying vector is valid and writable.
 type VectorWriter[T VectorValue] struct {
-	v            *vector
-	logicalCount int
+	vector Vector
 }
 
-// GetResultVectorWriter returns a VARCHAR writer for a scalar UDF result.
-func GetResultVectorWriter[T VectorValue](
-	iterState *ChunkIteratorState,
-) (VectorWriter[T], error) {
-	if iterState == nil || iterState.r.chunk == nil || iterState.output == nil {
-		return VectorWriter[T]{}, getError(errAPI, errUninitializedChunkIterator)
-	}
-
-	writer, err := newVectorWriter[T](iterState.output, iterState.r.chunk.GetSize())
+// GetVectorWriter returns a typed writer for a writable DuckDB vector. The
+// caller must get the vector from a writable source.
+func GetVectorWriter[T VectorValue](vector Vector) (VectorWriter[T], error) {
+	writer, err := newVectorWriter[T](vector)
 	if err != nil {
 		return VectorWriter[T]{}, getError(errAPI, err)
 	}
 	return writer, nil
 }
 
-func newVectorWriter[T VectorValue](vec *vector, logicalCount int) (VectorWriter[T], error) {
-	if vec == nil {
+func newVectorWriter[T VectorValue](vector Vector) (VectorWriter[T], error) {
+	if vector.v == nil {
 		return VectorWriter[T]{}, errUninitializedVectorWriter
 	}
-	if vec.Type != TYPE_VARCHAR || vec.isJSON {
-		return VectorWriter[T]{}, vectorWriterTypeError(vec)
+	if vector.v.Type != TYPE_VARCHAR || vector.v.isJSON {
+		return VectorWriter[T]{}, vectorWriterTypeError(vector.v)
 	}
-	return VectorWriter[T]{
-		v:            vec,
-		logicalCount: logicalCount,
-	}, nil
+	return VectorWriter[T]{vector: vector}, nil
 }
 
-// Len returns the result vector's logical row count.
+// Len returns the vector's logical row count.
 func (writer VectorWriter[T]) Len() int {
-	return writer.logicalCount
+	return writer.vector.logicalCount
 }
 
 // Set writes value at row. DuckDB copies valid values. Invalid UTF-8 can
@@ -54,8 +45,8 @@ func (writer VectorWriter[T]) Set(row int, value T) error {
 	}
 
 	rowIdx := mapping.IdxT(row)
-	mapping.ValiditySetRowValidity(writer.v.maskPtr, rowIdx, true)
-	mapping.VectorAssignStringElement(writer.v.vec, rowIdx, string(value))
+	mapping.ValiditySetRowValidity(writer.vector.v.maskPtr, rowIdx, true)
+	mapping.VectorAssignStringElement(writer.vector.v.vec, rowIdx, string(value))
 	return nil
 }
 
@@ -64,12 +55,12 @@ func (writer VectorWriter[T]) SetNull(row int) error {
 	if err := writer.checkRow(row); err != nil {
 		return getError(errAPI, err)
 	}
-	writer.v.setNull(mapping.IdxT(row))
+	writer.vector.v.setNull(mapping.IdxT(row))
 	return nil
 }
 
 func (writer VectorWriter[T]) checkRow(row int) error {
-	if writer.v == nil {
+	if writer.vector.v == nil {
 		return errUninitializedVectorWriter
 	}
 	if row < 0 || row >= writer.Len() {

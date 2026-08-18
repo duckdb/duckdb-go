@@ -11,7 +11,11 @@ import (
 // Vector is a borrowed handle to a DuckDB vector. It is valid as long as the
 // underlying vector is valid.
 type Vector struct {
-	v            *vector
+	v *vector
+
+	// logicalCount is the logical vector size captured when this borrowed handle
+	// is created. The current C API cannot read this size from a vector directly.
+	// FIXME: Use duckdb_v2_vector_get_size when C API V2 is available.
 	logicalCount int
 }
 

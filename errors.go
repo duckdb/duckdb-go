@@ -117,13 +117,12 @@ const (
 )
 
 var (
-	errInternal                   = errors.New("internal error: please file a bug report at duckdb-go")
-	errAPI                        = errors.New("API error")
-	errVectorSize                 = errors.New("data chunks cannot exceed duckdb's internal vector size")
-	errUninitializedChunkIterator = errors.New("uninitialized chunk iterator")
-	errNilDataChunk               = errors.New("nil data chunk")
-	errUninitializedVectorView    = errors.New("uninitialized vector view")
-	errUninitializedVectorWriter  = errors.New("uninitialized vector writer")
+	errInternal                  = errors.New("internal error: please file a bug report at duckdb-go")
+	errAPI                       = errors.New("API error")
+	errVectorSize                = errors.New("data chunks cannot exceed duckdb's internal vector size")
+	errNilDataChunk              = errors.New("nil data chunk")
+	errUninitializedVectorView   = errors.New("uninitialized vector view")
+	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
 
 	errConnect      = errors.New("could not connect to database")
 	errParseDSN     = errors.New("could not parse DSN for database")

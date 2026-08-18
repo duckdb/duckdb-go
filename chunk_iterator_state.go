@@ -40,15 +40,6 @@ func (iterState *ChunkIteratorState) GetResultVector() Vector {
 	return newVector(iterState.output, iterState.r.chunk.GetSize())
 }
 
-// GetDataChunkView returns a read-only view of the input data chunk. It is valid
-// as long as the underlying data chunk is valid.
-func (iterState *ChunkIteratorState) GetDataChunkView() DataChunkView {
-	if iterState == nil {
-		return DataChunkView{}
-	}
-	return newDataChunkView(iterState.r.chunk)
-}
-
 // GetValuePtr returns a pointer to the current row value for a column.
 // Copy the value if you need to, as it is not retained between loop iterations.
 func (iterState *ChunkIteratorState) GetValuePtr(colIdx int) *driver.Value {

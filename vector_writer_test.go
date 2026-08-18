@@ -42,7 +42,7 @@ func TestVarcharVectorWriter(t *testing.T) {
 		len(values)+1,
 		false,
 	)
-	writer, err := GetResultVectorWriter[string](state)
+	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 
 	for row, value := range values {
@@ -65,7 +65,7 @@ func TestVarcharVectorWriter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "restored with a long VARCHAR value", actual)
 
-	namedWriter, err := GetResultVectorWriter[namedVarchar](state)
+	namedWriter, err := GetVectorWriter[namedVarchar](state.GetResultVector())
 	require.NoError(t, err)
 	require.NoError(t, namedWriter.Set(1, namedVarchar("named string type")))
 	actual, err = output.GetValue(0, 1)
@@ -80,7 +80,7 @@ func TestVarcharVectorWriterPreservesInvalidUTF8AsNull(t *testing.T) {
 		1,
 		false,
 	)
-	writer, err := GetResultVectorWriter[string](state)
+	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 
 	require.NoError(t, writer.Set(0, string([]byte{0xff})))
@@ -104,7 +104,7 @@ func TestVectorWriterDefaultNullHandling(t *testing.T) {
 	require.NoError(t, input.SetValue(0, 0, int32(1)))
 	require.NoError(t, input.SetValue(0, 1, nil))
 
-	writer, err := GetResultVectorWriter[string](state)
+	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 	require.NoError(t, writer.Set(0, "first"))
 	require.NoError(t, writer.Set(1, "written before default NULL handling"))
@@ -124,16 +124,16 @@ func TestVarcharVectorWriterValidation(t *testing.T) {
 	require.ErrorIs(t, zero.Set(0, "x"), errUninitializedVectorWriter)
 	require.ErrorIs(t, zero.SetNull(0), errUninitializedVectorWriter)
 
-	var nilState *ChunkIteratorState
-	_, err := GetResultVectorWriter[string](nilState)
-	require.ErrorIs(t, err, errUninitializedChunkIterator)
+	_, err := GetVectorWriter[string](Vector{})
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorIs(t, err, errUninitializedVectorWriter)
 
 	integerState, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_INTEGER), 1, false)
-	_, err = GetResultVectorWriter[string](integerState)
+	_, err = GetVectorWriter[string](integerState.GetResultVector())
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be written as Go string")
 
 	state, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_VARCHAR), 1, false)
-	writer, err := GetResultVectorWriter[string](state)
+	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 	require.ErrorContains(t, writer.Set(-1, "x"), rowIndexErrMsg)
 	require.ErrorContains(t, writer.Set(writer.Len(), "x"), rowIndexErrMsg)
@@ -141,7 +141,7 @@ func TestVarcharVectorWriterValidation(t *testing.T) {
 
 func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {
 	state, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_BOOLEAN), 1, false)
-	_, err := GetResultVectorWriter[string](state)
+	_, err := GetVectorWriter[string](state.GetResultVector())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "DuckDB BOOLEAN cannot be written as Go string")
 
@@ -155,7 +155,7 @@ func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {
 	input := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_INTEGER))
 	require.NoError(t, input.SetSize(1))
 	jsonState := &ChunkIteratorState{r: Row{chunk: input}, output: &jsonOutput.columns[0]}
-	_, err = GetResultVectorWriter[string](jsonState)
+	_, err = GetVectorWriter[string](jsonState.GetResultVector())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "DuckDB JSON cannot be written as Go string")
 }

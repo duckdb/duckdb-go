@@ -33,12 +33,16 @@ func (udf *varcharTransformBenchmarkUDF) Executor() ScalarFuncExecutor {
 	}
 
 	return ScalarFuncExecutor{
-		ChunkContextExecutor: func(_ context.Context, chunk *ChunkIteratorState) error {
-			input, err := GetVectorView[string](chunk.GetDataChunkView(), 0)
+		ChunkContextExecutor: func(_ context.Context, state *ChunkIteratorState) error {
+			inputVector, err := state.GetInputChunk().GetVector(0)
 			if err != nil {
 				return err
 			}
-			output, err := GetResultVectorWriter[string](chunk)
+			input, err := GetVectorView[string](inputVector)
+			if err != nil {
+				return err
+			}
+			output, err := GetVectorWriter[string](state.GetResultVector())
 			if err != nil {
 				return err
 			}

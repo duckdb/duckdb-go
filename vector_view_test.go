@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"unsafe"
 
@@ -30,6 +31,14 @@ func newVectorViewTestChunk(t testing.TB, infos ...TypeInfo) *DataChunk {
 	return chunk
 }
 
+func mustGetVector(t testing.TB, chunk *DataChunk, column int) Vector {
+	t.Helper()
+
+	vector, err := chunk.GetVector(column)
+	require.NoError(t, err)
+	return vector
+}
+
 func TestDuckDBStringTViewLayout(t *testing.T) {
 	require.Equal(t, uintptr(16), unsafe.Sizeof(mapping.StringT{}))
 }
@@ -49,7 +58,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.NoError(t, chunk.SetValue(0, nullRow, nil))
 	require.NoError(t, chunk.SetSize(nullRow+1))
 
-	view, err := GetVectorView[string](chunk.View(), 0)
+	view, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.NoError(t, err)
 	require.Equal(t, len(values)+1, view.Len())
 
@@ -72,7 +81,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.False(t, valid)
 	require.Empty(t, value)
 
-	namedView, err := GetVectorView[namedVarchar](chunk.View(), 0)
+	namedView, err := GetVectorView[namedVarchar](mustGetVector(t, chunk, 0))
 	require.NoError(t, err)
 	namedValue, valid, err := namedView.GetValueBorrowed(1)
 	require.NoError(t, err)
@@ -86,35 +95,34 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	chunk := newVectorViewTestChunk(t, intInfo, stringInfo)
 	require.NoError(t, chunk.SetSize(1))
 
-	_, err := GetVectorView[string](chunk.View(), 0)
+	_, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be read as Go string")
 
-	_, err = GetVectorView[string](chunk.View(), -1)
+	_, err = chunk.GetVector(-1)
 	require.ErrorIs(t, err, errAPI)
 
-	_, err = GetVectorView[string](chunk.View(), 2)
+	_, err = chunk.GetVector(2)
 	require.ErrorIs(t, err, errAPI)
 
 	var nilChunk *DataChunk
-	_, err = GetVectorView[string](nilChunk.View(), 0)
+	_, err = nilChunk.GetVector(0)
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorIs(t, err, errNilDataChunk)
+
+	_, err = GetVectorView[string](Vector{})
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorIs(t, err, errUninitializedVectorView)
 
 	var zeroView VectorView[string]
 	_, _, err = zeroView.GetValueBorrowed(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
+
 	var nilState *ChunkIteratorState
-	_, err = nilState.GetDataChunkView().GetSize()
-	require.ErrorIs(t, err, errNilDataChunk)
-	_, err = nilState.GetDataChunkView().ColumnCount()
-	require.ErrorIs(t, err, errNilDataChunk)
-	_, err = GetVectorView[string](nilState.GetDataChunkView(), 0)
-	require.ErrorIs(t, err, errNilDataChunk)
-	_, err = nilState.GetDataChunkView().GetValue(0, 0)
+	_, err = nilState.GetInputChunk().GetVector(0)
 	require.ErrorIs(t, err, errNilDataChunk)
 
-	view, err := GetVectorView[string](chunk.View(), 1)
+	view, err := GetVectorView[string](mustGetVector(t, chunk, 1))
 	require.NoError(t, err)
 	_, _, err = view.GetValueBorrowed(-1)
 	require.ErrorContains(t, err, rowIndexErrMsg)
@@ -122,30 +130,27 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	require.ErrorContains(t, err, rowIndexErrMsg)
 
 	chunk.projection = []int{1}
-	projected, err := GetVectorView[string](chunk.View(), 0)
+	projected, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.NoError(t, err)
 	require.Equal(t, 1, projected.Len())
 }
 
-func TestScalarUDFInputDataChunkView(t *testing.T) {
+func TestScalarUDFInputChunk(t *testing.T) {
 	chunk := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_VARCHAR))
 	require.NoError(t, chunk.SetValue(0, 0, "input"))
 	require.NoError(t, chunk.SetSize(1))
 
 	state := &ChunkIteratorState{r: Row{chunk: chunk}}
-	chunkView := state.GetDataChunkView()
-	size, err := chunkView.GetSize()
-	require.NoError(t, err)
-	require.Equal(t, 1, size)
-	columnCount, err := chunkView.ColumnCount()
-	require.NoError(t, err)
-	require.Equal(t, 1, columnCount)
+	inputChunk := state.GetInputChunk()
+	require.Same(t, chunk, inputChunk)
+	require.Equal(t, 1, inputChunk.GetSize())
+	require.Equal(t, 1, inputChunk.ColumnCount())
 
-	value, err := chunkView.GetValue(0, 0)
+	value, err := inputChunk.GetValue(0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "input", value)
 
-	view, err := GetVectorView[string](chunkView, 0)
+	view, err := GetVectorView[string](mustGetVector(t, inputChunk, 0))
 	require.NoError(t, err)
 	borrowedValue, valid, err := view.GetValueBorrowed(0)
 	require.NoError(t, err)
@@ -164,7 +169,7 @@ func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
 	require.NoError(t, SetChunkValue(*chunk, 0, 0, `{"answer":42}`))
 	require.NoError(t, chunk.SetSize(1))
 
-	_, err := GetVectorView[string](chunk.View(), 0)
+	_, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorContains(t, err, "DuckDB JSON cannot be read as Go string")
 
@@ -188,12 +193,16 @@ func (udf *vectorViewIdentityUDF) Config() ScalarFuncConfig {
 
 func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{
-		ChunkContextExecutor: func(_ context.Context, chunk *ChunkIteratorState) error {
-			input, err := GetVectorView[string](chunk.GetDataChunkView(), 0)
+		ChunkContextExecutor: func(_ context.Context, state *ChunkIteratorState) error {
+			inputVector, err := state.GetInputChunk().GetVector(0)
 			if err != nil {
 				return err
 			}
-			output, err := GetResultVectorWriter[string](chunk)
+			input, err := GetVectorView[string](inputVector)
+			if err != nil {
+				return err
+			}
+			output, err := GetVectorWriter[string](state.GetResultVector())
 			if err != nil {
 				return err
 			}
@@ -295,6 +304,119 @@ func TestVectorViewScalarUDFSpecialNullHandling(t *testing.T) {
 		db.QueryRow(`SELECT vector_view_identity_special(NULL)`).Scan(&result),
 	)
 	require.Equal(t, "handled NULL", result)
+}
+
+type mixedVectorAccessUDF struct {
+	varcharInfo TypeInfo
+	integerInfo TypeInfo
+	structInfo  TypeInfo
+}
+
+func (udf *mixedVectorAccessUDF) Config() ScalarFuncConfig {
+	return ScalarFuncConfig{
+		InputTypeInfos: []TypeInfo{
+			udf.varcharInfo,
+			udf.integerInfo,
+			udf.structInfo,
+		},
+		ResultTypeInfo: udf.varcharInfo,
+	}
+}
+
+func (*mixedVectorAccessUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{
+		ChunkContextExecutor: func(_ context.Context, state *ChunkIteratorState) error {
+			inputChunk := state.GetInputChunk()
+			inputVector, err := inputChunk.GetVector(0)
+			if err != nil {
+				return err
+			}
+			varcharView, err := GetVectorView[string](inputVector)
+			if err != nil {
+				return err
+			}
+
+			output, err := GetVectorWriter[string](state.GetResultVector())
+			if err != nil {
+				return err
+			}
+
+			for row := range varcharView.Len() {
+				varcharValue, valid, err := varcharView.GetValueBorrowed(row)
+				if err != nil {
+					return err
+				}
+				if !valid {
+					// Default NULL handling sets the result to NULL.
+					continue
+				}
+
+				integerValue, err := inputChunk.GetValue(1, row)
+				if err != nil {
+					return err
+				}
+				structValue, err := inputChunk.GetValue(2, row)
+				if err != nil {
+					return err
+				}
+				if integerValue == nil || structValue == nil {
+					// Default NULL handling sets the result to NULL.
+					continue
+				}
+
+				fields := structValue.(map[string]any)
+				result := fmt.Sprintf(
+					"%s:%d:%s",
+					varcharValue,
+					integerValue.(int32),
+					fields["suffix"].(string),
+				)
+				if err = output.Set(row, result); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func TestScalarUDFMixedVectorAndValueAccess(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+
+	varcharInfo := mustTypeInfo(t, TYPE_VARCHAR)
+	integerInfo := mustTypeInfo(t, TYPE_INTEGER)
+	suffixEntry, err := NewStructEntry(varcharInfo, "suffix")
+	require.NoError(t, err)
+	structInfo, err := NewStructInfo(suffixEntry)
+	require.NoError(t, err)
+
+	udf := &mixedVectorAccessUDF{
+		varcharInfo: varcharInfo,
+		integerInfo: integerInfo,
+		structInfo:  structInfo,
+	}
+	require.NoError(t, RegisterScalarUDF(conn, "mixed_vector_access", udf))
+
+	const varcharValue = "a VARCHAR value longer than twelve bytes"
+	var result string
+	err = conn.QueryRowContext(ctx, `
+		SELECT mixed_vector_access(
+			?,
+			7::INTEGER,
+			{'suffix': 'legacy struct value'}
+		)
+	`, varcharValue).Scan(&result)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"a VARCHAR value longer than twelve bytes:7:legacy struct value",
+		result,
+	)
 }
 
 func ptr[T any](value T) *T {
