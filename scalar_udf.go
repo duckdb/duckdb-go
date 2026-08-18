@@ -301,8 +301,9 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	}
 
 	// Create chunk wrapper.
-	// When nullInNullOut is enabled, the Rows() iterator skips rows with NULL
-	// inputs. Default NULL results are applied after the callback.
+	// With default NULL handling, Rows() skips rows with any NULL input. Vector access
+	// receives all rows in the chunk. After the chunk callback returns, output rows
+	// with any NULL input are set to NULL.
 	chunk := &ChunkIteratorState{
 		r: Row{
 			chunk:  inputChunk,
@@ -313,7 +314,7 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 		args:          make([]driver.Value, inputChunk.ColumnCount()),
 	}
 
-	// Execute - user iterates over rows, each row has pre-fetched Args.
+	// Execute the callback. It can use vector access or Rows.
 	if err := funcCtx.f.Executor().ChunkContextExecutor(bindInfo.ctx, chunk); err != nil {
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return

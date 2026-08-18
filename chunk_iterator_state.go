@@ -7,8 +7,8 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// ChunkIteratorState is the chunk-based iterator passed to a ChunkContextExecutorFn.
-// It iterates over its rows via Rows().
+// ChunkIteratorState provides access to the input chunk and result vector of a
+// ChunkContextExecutorFn. Rows supports row-by-row iteration.
 type ChunkIteratorState struct {
 	r             Row
 	output        *vector
