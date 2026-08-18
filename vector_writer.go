@@ -8,13 +8,13 @@ import (
 
 // VectorWriter writes a DuckDB vector. It is valid as long as the
 // underlying vector is valid and writable.
-type VectorWriter[T VectorValue] struct {
+type VectorWriter[T vectorValue] struct {
 	vector Vector
 }
 
 // GetVectorWriter returns a typed writer for a writable DuckDB vector. The
 // caller must get the vector from a writable source.
-func GetVectorWriter[T VectorValue](vector Vector) (VectorWriter[T], error) {
+func GetVectorWriter[T vectorValue](vector Vector) (VectorWriter[T], error) {
 	writer, err := newVectorWriter[T](vector)
 	if err != nil {
 		return VectorWriter[T]{}, getError(errAPI, err)
@@ -22,7 +22,7 @@ func GetVectorWriter[T VectorValue](vector Vector) (VectorWriter[T], error) {
 	return writer, nil
 }
 
-func newVectorWriter[T VectorValue](vector Vector) (VectorWriter[T], error) {
+func newVectorWriter[T vectorValue](vector Vector) (VectorWriter[T], error) {
 	if vector.v == nil {
 		return VectorWriter[T]{}, errUninitializedVectorWriter
 	}

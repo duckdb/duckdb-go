@@ -6,19 +6,19 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// VectorValue is the set of Go values supported by vector access.
-type VectorValue interface {
+// vectorValue is the set of Go values supported by vector access.
+type vectorValue interface {
 	~string
 }
 
 // VectorView gives read-only access to a DuckDB vector. It is valid as long as
 // the underlying vector is valid.
-type VectorView[T VectorValue] struct {
+type VectorView[T vectorValue] struct {
 	vector Vector
 }
 
 // GetVectorView returns a typed read-only view of a DuckDB vector.
-func GetVectorView[T VectorValue](vector Vector) (VectorView[T], error) {
+func GetVectorView[T vectorValue](vector Vector) (VectorView[T], error) {
 	view, err := newVectorView[T](vector)
 	if err != nil {
 		return VectorView[T]{}, getError(errAPI, err)
@@ -58,7 +58,7 @@ func (view VectorView[T]) checkRow(row int) error {
 	return nil
 }
 
-func newVectorView[T VectorValue](vector Vector) (VectorView[T], error) {
+func newVectorView[T vectorValue](vector Vector) (VectorView[T], error) {
 	if vector.v == nil {
 		return VectorView[T]{}, errUninitializedVectorView
 	}
