@@ -8,10 +8,31 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
+// Vector is a borrowed handle to a DuckDB vector. It is valid as long as the
+// underlying vector is valid.
+type Vector struct {
+	v *vector
+
+	// logicalCount is the logical vector size captured when this borrowed handle
+	// is created. The current C API cannot read this size from a vector directly.
+	// FIXME: Revisit logicalCount when C API v2 is finalized.
+	logicalCount int
+}
+
+func newVector(v *vector, logicalCount int) Vector {
+	return Vector{
+		v:            v,
+		logicalCount: logicalCount,
+	}
+}
+
 // vector storage of a DuckDB column.
 type vector struct {
 	// The vector's type information.
 	vectorTypeInfo
+
+	// isJSON distinguishes JSON from ordinary VARCHAR storage.
+	isJSON bool
 
 	// The underlying DuckDB vector.
 	vec mapping.Vector
@@ -44,6 +65,7 @@ func (vec *vector) init(logicalType mapping.LogicalType, colIdx int) error {
 	}
 
 	alias := mapping.LogicalTypeGetAlias(logicalType)
+	vec.isJSON = alias == aliasJSON
 	if alias == aliasJSON {
 		vec.initJSON()
 		return nil
