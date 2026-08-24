@@ -119,6 +119,17 @@ func TestVectorWriterDefaultNullHandling(t *testing.T) {
 	require.Nil(t, second)
 }
 
+func TestVectorWriterRejectsReadOnlyVector(t *testing.T) {
+	source := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_VARCHAR))
+	require.NoError(t, source.SetSize(1))
+
+	var readOnly DataChunk
+	require.NoError(t, readOnly.initFromDuckDataChunk(source.chunk, false))
+	_, err := GetVectorWriter[string](mustGetVector(t, &readOnly, 0))
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorIs(t, err, errVectorNotWritable)
+}
+
 func TestVarcharVectorWriterValidation(t *testing.T) {
 	var zero VectorWriter[string]
 	require.ErrorIs(t, zero.Set(0, "x"), errUninitializedVectorWriter)

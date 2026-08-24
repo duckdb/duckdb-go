@@ -76,6 +76,7 @@ func (iterState *ChunkIteratorState) Rows() iter.Seq2[*ChunkIteratorState, error
 			}
 
 			if iterState.nullInNullOut && hasNull {
+				// applyDefaultNullHandling sets the result to NULL after the callback.
 				continue
 			}
 

@@ -33,6 +33,8 @@ type vector struct {
 
 	// isJSON distinguishes JSON from ordinary VARCHAR storage.
 	isJSON bool
+	// writable reports whether this borrowed vector came from a writable source.
+	writable bool
 
 	// The underlying DuckDB vector.
 	vec mapping.Vector
@@ -152,6 +154,7 @@ func (vec *vector) resetChildData() {
 
 func (vec *vector) initVectors(v mapping.Vector, writable bool) {
 	vec.vec = v
+	vec.writable = writable
 	vec.dataPtr = mapping.VectorGetData(v)
 	if writable {
 		mapping.VectorEnsureValidityWritable(v)
