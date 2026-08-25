@@ -107,23 +107,31 @@ func runWithCtxInterrupt(ctx context.Context, conn mapping.Connection, fn func(c
 }
 
 func interrupterRoutine(ctx context.Context, conn mapping.Connection, done <-chan struct{}, bgDoneCh chan<- struct{}) {
+	defer close(bgDoneCh)
+
 	select {
 	case <-ctx.Done():
 	case <-done:
 		// finished before cancellation
-		close(bgDoneCh)
 		return
 	}
 
 	// Re-assert interruption until the wrapped function finishes.
+	ticker := time.NewTicker(interruptInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-done:
-			close(bgDoneCh)
 			return
 		default:
 			mapping.Interrupt(conn)
-			time.Sleep(interruptInterval)
+		}
+
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
 		}
 	}
 }

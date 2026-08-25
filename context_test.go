@@ -113,6 +113,46 @@ func TestRunWithCtxInterrupt_Cancel_RepeatsUntilDone(t *testing.T) {
 	require.Equal(t, finalCount, count.Load(), "Interrupt should not be called after fn returns")
 }
 
+func TestRunWithCtxInterrupt_Cancel_ReturnsPromptlyAfterDone(t *testing.T) {
+	patchVar(t, &interruptInterval, time.Hour)
+
+	interrupted := make(chan struct{}, 1)
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) {
+		select {
+		case interrupted <- struct{}{}:
+		default:
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{})
+	allowReturn := make(chan struct{})
+	doneErrCh := make(chan error, 1)
+
+	var dummyConn mapping.Connection
+	go func() {
+		doneErrCh <- runWithCtxInterrupt(ctx, dummyConn, func(_ context.Context) error {
+			close(started)
+			<-allowReturn
+			return nil
+		})
+	}()
+
+	<-started
+	cancel()
+	<-interrupted
+	close(allowReturn)
+
+	select {
+	case err := <-doneErrCh:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("runWithCtxInterrupt did not return promptly after fn completed")
+	}
+}
+
 // Test that recursively wrapping with the same context only spawns a single interrupter goroutine.
 func TestRunWithCtxInterrupt_RecursiveOnlyOneGoroutine(t *testing.T) {
 	// Set a high interval to ensure only one call per goroutine until deadline set below
