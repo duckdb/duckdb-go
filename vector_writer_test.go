@@ -130,7 +130,7 @@ func TestVectorWriterRejectsReadOnlyVector(t *testing.T) {
 	require.ErrorIs(t, err, errVectorNotWritable)
 }
 
-func TestVarcharVectorWriterValidation(t *testing.T) {
+func TestVectorWriterValidation(t *testing.T) {
 	var zero VectorWriter[string]
 	require.ErrorIs(t, zero.Set(0, "x"), errUninitializedVectorWriter)
 	require.ErrorIs(t, zero.SetNull(0), errUninitializedVectorWriter)
@@ -142,12 +142,22 @@ func TestVarcharVectorWriterValidation(t *testing.T) {
 	integerState, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_INTEGER), 1, false)
 	_, err = GetVectorWriter[string](integerState.GetResultVector())
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be written as Go string")
+	_, err = GetVectorWriter[uint32](integerState.GetResultVector())
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB INTEGER cannot be written as Go uint32")
 
 	state, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_VARCHAR), 1, false)
 	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 	require.ErrorContains(t, writer.Set(-1, "x"), rowIndexErrMsg)
 	require.ErrorContains(t, writer.Set(writer.Len(), "x"), rowIndexErrMsg)
+
+	decimalInfo, err := NewDecimalInfo(9, 2)
+	require.NoError(t, err)
+	decimalState, _, _ := newVectorWriterTestState(t, decimalInfo, 1, false)
+	_, err = GetVectorWriter[int32](decimalState.GetResultVector())
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB DECIMAL cannot be written as Go int32")
 }
 
 func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {

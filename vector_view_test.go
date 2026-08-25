@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"unsafe"
@@ -11,7 +12,13 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-type namedVarchar string
+type (
+	namedVarchar           string
+	namedFixedWidthBool    bool
+	namedFixedWidthInt32   int32
+	namedFixedWidthUint64  uint64
+	namedFixedWidthFloat64 float64
+)
 
 func newVectorViewTestChunk(t testing.TB, infos ...TypeInfo) *DataChunk {
 	t.Helper()
@@ -89,7 +96,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.Equal(t, namedVarchar(values[1]), namedValue)
 }
 
-func TestVarcharVectorViewValidation(t *testing.T) {
+func TestVectorViewValidation(t *testing.T) {
 	intInfo := mustTypeInfo(t, TYPE_INTEGER)
 	stringInfo := mustTypeInfo(t, TYPE_VARCHAR)
 	chunk := newVectorViewTestChunk(t, intInfo, stringInfo)
@@ -98,6 +105,10 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	_, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.ErrorIs(t, err, errAPI)
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be read as Go string")
+
+	_, err = GetVectorView[uint32](mustGetVector(t, chunk, 0))
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB INTEGER cannot be read as Go uint32")
 
 	_, err = chunk.GetVector(-1)
 	require.ErrorIs(t, err, errAPI)
@@ -133,6 +144,14 @@ func TestVarcharVectorViewValidation(t *testing.T) {
 	projected, err := GetVectorView[string](mustGetVector(t, chunk, 0))
 	require.NoError(t, err)
 	require.Equal(t, 1, projected.Len())
+
+	decimalInfo, err := NewDecimalInfo(9, 2)
+	require.NoError(t, err)
+	decimalChunk := newVectorViewTestChunk(t, decimalInfo)
+	require.NoError(t, decimalChunk.SetSize(1))
+	_, err = GetVectorView[int32](mustGetVector(t, decimalChunk, 0))
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB DECIMAL cannot be read as Go int32")
 }
 
 func TestScalarUDFInputChunk(t *testing.T) {
@@ -178,12 +197,13 @@ func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
 	require.Equal(t, map[string]any{"answer": float64(42)}, owned)
 }
 
-type vectorViewIdentityUDF struct {
+type vectorViewIdentityUDF[T vectorValue] struct {
 	info                TypeInfo
 	specialNullHandling bool
+	nullValue           T
 }
 
-func (udf *vectorViewIdentityUDF) Config() ScalarFuncConfig {
+func (udf *vectorViewIdentityUDF[T]) Config() ScalarFuncConfig {
 	return ScalarFuncConfig{
 		InputTypeInfos:      []TypeInfo{udf.info},
 		ResultTypeInfo:      udf.info,
@@ -191,18 +211,18 @@ func (udf *vectorViewIdentityUDF) Config() ScalarFuncConfig {
 	}
 }
 
-func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
+func (udf *vectorViewIdentityUDF[T]) Executor() ScalarFuncExecutor {
 	return ScalarFuncExecutor{
 		ChunkContextExecutor: func(_ context.Context, state *ChunkIteratorState) error {
 			inputVector, err := state.GetInputChunk().GetVector(0)
 			if err != nil {
 				return err
 			}
-			input, err := GetVectorView[string](inputVector)
+			input, err := GetVectorView[T](inputVector)
 			if err != nil {
 				return err
 			}
-			output, err := GetVectorWriter[string](state.GetResultVector())
+			output, err := GetVectorWriter[T](state.GetResultVector())
 			if err != nil {
 				return err
 			}
@@ -212,7 +232,10 @@ func (*vectorViewIdentityUDF) Executor() ScalarFuncExecutor {
 					return err
 				}
 				if !valid {
-					value = "handled NULL"
+					if !udf.specialNullHandling {
+						continue
+					}
+					value = udf.nullValue
 				}
 				if err = output.Set(row, value); err != nil {
 					return err
@@ -229,29 +252,84 @@ func TestVectorViewScalarUDF(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	udf := &vectorViewIdentityUDF{info: mustTypeInfo(t, TYPE_VARCHAR)}
-	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity", udf))
+	t.Run("VARCHAR", func(t *testing.T) {
+		testVectorViewScalarUDF[string](t, conn, "vector_view_varchar", TYPE_VARCHAR, `('short'::VARCHAR), ('a value longer than twelve bytes'::VARCHAR), (NULL::VARCHAR)`, 3)
+	})
+	t.Run("BOOLEAN", func(t *testing.T) {
+		testVectorViewScalarUDF[bool](t, conn, "vector_view_boolean", TYPE_BOOLEAN, `(false::BOOLEAN), (true::BOOLEAN), (NULL::BOOLEAN)`, 3)
+	})
+	t.Run("TINYINT", func(t *testing.T) {
+		testVectorViewScalarUDF[int8](t, conn, "vector_view_tinyint", TYPE_TINYINT, `(-12::TINYINT), (0::TINYINT), (34::TINYINT), (NULL::TINYINT)`, 4)
+	})
+	t.Run("SMALLINT", func(t *testing.T) {
+		testVectorViewScalarUDF[int16](t, conn, "vector_view_smallint", TYPE_SMALLINT, `(-1200::SMALLINT), (0::SMALLINT), (3400::SMALLINT), (NULL::SMALLINT)`, 4)
+	})
+	t.Run("INTEGER", func(t *testing.T) {
+		testVectorViewScalarUDF[int32](t, conn, "vector_view_integer", TYPE_INTEGER, `(-120000::INTEGER), (0::INTEGER), (340000::INTEGER), (NULL::INTEGER)`, 4)
+	})
+	t.Run("BIGINT", func(t *testing.T) {
+		testVectorViewScalarUDF[int64](t, conn, "vector_view_bigint", TYPE_BIGINT, `(-12000000000::BIGINT), (0::BIGINT), (34000000000::BIGINT), (NULL::BIGINT)`, 4)
+	})
+	t.Run("UTINYINT", func(t *testing.T) {
+		testVectorViewScalarUDF[uint8](t, conn, "vector_view_utinyint", TYPE_UTINYINT, `(0::UTINYINT), (12::UTINYINT), (34::UTINYINT), (NULL::UTINYINT)`, 4)
+	})
+	t.Run("USMALLINT", func(t *testing.T) {
+		testVectorViewScalarUDF[uint16](t, conn, "vector_view_usmallint", TYPE_USMALLINT, `(0::USMALLINT), (1200::USMALLINT), (3400::USMALLINT), (NULL::USMALLINT)`, 4)
+	})
+	t.Run("UINTEGER", func(t *testing.T) {
+		testVectorViewScalarUDF[uint32](t, conn, "vector_view_uinteger", TYPE_UINTEGER, `(0::UINTEGER), (120000::UINTEGER), (340000::UINTEGER), (NULL::UINTEGER)`, 4)
+	})
+	t.Run("UBIGINT", func(t *testing.T) {
+		testVectorViewScalarUDF[uint64](t, conn, "vector_view_ubigint", TYPE_UBIGINT, `(0::UBIGINT), (12000000000::UBIGINT), (34000000000::UBIGINT), (NULL::UBIGINT)`, 4)
+	})
+	t.Run("FLOAT", func(t *testing.T) {
+		testVectorViewScalarUDF[float32](t, conn, "vector_view_float", TYPE_FLOAT, `(-12.5::FLOAT), (0::FLOAT), (34.25::FLOAT), (NULL::FLOAT)`, 4)
+	})
+	t.Run("DOUBLE", func(t *testing.T) {
+		testVectorViewScalarUDF[float64](t, conn, "vector_view_double", TYPE_DOUBLE, `(-12.5::DOUBLE), (0::DOUBLE), (34.25::DOUBLE), (NULL::DOUBLE)`, 4)
+	})
 
-	rows, err := db.Query(`
-		SELECT vector_view_identity(value)
-		FROM (VALUES ('short'), ('a value longer than twelve bytes'), (NULL)) t(value)
-	`)
-	require.NoError(t, err)
-	defer closeRowsWrapper(t, rows)
+	t.Run("NAMED_BOOLEAN", func(t *testing.T) {
+		testVectorViewScalarUDF[namedFixedWidthBool](t, conn, "vector_view_named_boolean", TYPE_BOOLEAN, `(false::BOOLEAN), (true::BOOLEAN), (NULL::BOOLEAN)`, 3)
+	})
+	t.Run("NAMED_INTEGER", func(t *testing.T) {
+		testVectorViewScalarUDF[namedFixedWidthInt32](t, conn, "vector_view_named_integer", TYPE_INTEGER, `(-1234::INTEGER), (4321::INTEGER), (NULL::INTEGER)`, 3)
+	})
+	t.Run("NAMED_UBIGINT", func(t *testing.T) {
+		testVectorViewScalarUDF[namedFixedWidthUint64](t, conn, "vector_view_named_ubigint", TYPE_UBIGINT, `(1234::UBIGINT), (4321::UBIGINT), (NULL::UBIGINT)`, 3)
+	})
+	t.Run("NAMED_DOUBLE", func(t *testing.T) {
+		testVectorViewScalarUDF[namedFixedWidthFloat64](t, conn, "vector_view_named_double", TYPE_DOUBLE, `(12.5::DOUBLE), (-43.25::DOUBLE), (NULL::DOUBLE)`, 3)
+	})
+}
 
-	expected := []*string{
-		ptr("short"),
-		ptr("a value longer than twelve bytes"),
-		nil,
-	}
-	var actual []*string
-	for rows.Next() {
-		var value *string
-		require.NoError(t, rows.Scan(&value))
-		actual = append(actual, value)
-	}
-	require.NoError(t, rows.Err())
-	require.Equal(t, expected, actual)
+func testVectorViewScalarUDF[T vectorValue](
+	t *testing.T,
+	conn *sql.Conn,
+	name string,
+	typ Type,
+	valuesSQL string,
+	expectedCount int,
+) {
+	t.Helper()
+
+	udf := &vectorViewIdentityUDF[T]{info: mustTypeInfo(t, typ)}
+	require.NoError(t, RegisterScalarUDF(conn, name, udf))
+
+	query := fmt.Sprintf(`
+		WITH source(value) AS (VALUES %s),
+		results AS (
+			SELECT value, %s(value) AS actual
+			FROM source
+		)
+		SELECT count(*), count(*) FILTER (WHERE actual IS DISTINCT FROM value)
+		FROM results
+	`, valuesSQL, name)
+
+	var rowCount, mismatchCount int
+	require.NoError(t, conn.QueryRowContext(context.Background(), query).Scan(&rowCount, &mismatchCount))
+	require.Equal(t, expectedCount, rowCount)
+	require.Zero(t, mismatchCount)
 }
 
 func TestVectorViewScalarUDFMultipleChunks(t *testing.T) {
@@ -260,7 +338,7 @@ func TestVectorViewScalarUDFMultipleChunks(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	udf := &vectorViewIdentityUDF{info: mustTypeInfo(t, TYPE_VARCHAR)}
+	udf := &vectorViewIdentityUDF[string]{info: mustTypeInfo(t, TYPE_VARCHAR)}
 	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity_multiple_chunks", udf))
 
 	rowCount := GetDataChunkCapacity()*2 + 17
@@ -292,9 +370,10 @@ func TestVectorViewScalarUDFSpecialNullHandling(t *testing.T) {
 	conn := openConnWrapper(t, db, context.Background())
 	defer closeConnWrapper(t, conn)
 
-	udf := &vectorViewIdentityUDF{
+	udf := &vectorViewIdentityUDF[string]{
 		info:                mustTypeInfo(t, TYPE_VARCHAR),
 		specialNullHandling: true,
+		nullValue:           "handled NULL",
 	}
 	require.NoError(t, RegisterScalarUDF(conn, "vector_view_identity_special", udf))
 
@@ -417,10 +496,6 @@ func TestScalarUDFMixedVectorAndValueAccess(t *testing.T) {
 		"a VARCHAR value longer than twelve bytes:7:legacy struct value",
 		result,
 	)
-}
-
-func ptr[T any](value T) *T {
-	return &value
 }
 
 func stringDataAddress(value string) uintptr {
