@@ -71,18 +71,24 @@ func TestErrUncomparableMapKey(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
 
+	// Every query holds two entries. The panic needs a second key to compare against, so a
+	// single-entry row cannot reach the failing state and would pass on its own. The one
+	// deliberate exception is marked below, and it asserts an error rather than a scan.
 	tests := []struct {
 		name    string
 		query   string
 		wantErr bool
 	}{
-		// These scan to []byte, or to a struct wrapping one, so they used to panic in
-		// OrderedMap.Set once the map held a second key to compare against.
+		// These scan to []byte, or to a struct wrapping one.
 		{
 			name:    "BLOB key",
 			query:   `SELECT MAP{'\x01'::BLOB: 'x', '\x02'::BLOB: 'y'}`,
 			wantErr: true,
 		},
+		// The exception. A single-entry BLOB map used to scan successfully, because Delete
+		// compares nothing while the map is still empty. It is rejected now, and that size
+		// independence is a behaviour change worth pinning: a guard that only ran on the
+		// second key would let this row scan again with nothing else failing.
 		{
 			name:    "BLOB key, single entry",
 			query:   `SELECT MAP{'\x01'::BLOB: 'x'}`,
@@ -98,9 +104,36 @@ func TestErrUncomparableMapKey(t *testing.T) {
 			query:   `SELECT MAP{'POINT(1 2)'::GEOMETRY: 'x', 'POINT(3 4)'::GEOMETRY: 'y'}`,
 			wantErr: true,
 		},
+		// UUID keys scan to []byte, because hugeIntToUUID returns val[:]. The type ID says
+		// TYPE_UUID, so only a check on the scanned value catches this one.
+		{
+			name:    "UUID key",
+			query:   `SELECT MAP{'80000000-0000-0000-0000-000000000000'::UUID: 'x', '80000000-0000-0000-0000-000000000001'::UUID: 'y'}`,
+			wantErr: true,
+		},
+		// A JSON alias reports TYPE_VARCHAR, but a JSON object scans to map[string]any.
+		{
+			name:    "JSON object key",
+			query:   `SELECT MAP(['{"a":1}'::JSON, '{"b":2}'::JSON], ['x', 'y'])`,
+			wantErr: true,
+		},
 		{
 			name:    "LIST key",
 			query:   `SELECT MAP{[1]: 'x', [2]: 'y'}`,
+			wantErr: true,
+		},
+		// UNION is rejected by its type ID in initMap, and it has to be: getUnion returns a
+		// struct with a driver.Value field, which reflect reports as comparable even though
+		// == panics once that field holds a []byte. Dropping TYPE_UNION from initMap brings
+		// the panic back for the BLOB member, so both members are pinned here.
+		{
+			name:    "UNION key, uncomparable member",
+			query:   `SELECT MAP([union_value(b := 'abc'::BLOB), union_value(b := 'def'::BLOB)], ['x', 'y'])`,
+			wantErr: true,
+		},
+		{
+			name:    "UNION key, comparable member",
+			query:   `SELECT MAP([union_value(i := 1), union_value(i := 2)], ['x', 'y'])`,
 			wantErr: true,
 		},
 		// Comparable key types must keep working; the guard must not over-reject.
@@ -112,9 +145,11 @@ func TestErrUncomparableMapKey(t *testing.T) {
 			name:  "INTEGER key",
 			query: `SELECT MAP{1: 'x', 2: 'y'}`,
 		},
+		// The same alias as the rejected row above, holding scalars this time. It proves the
+		// guard follows the scanned value rather than the alias.
 		{
-			name:  "UUID key",
-			query: `SELECT MAP{'80000000-0000-0000-0000-000000000000'::UUID: 'x'}`,
+			name:  "JSON scalar key",
+			query: `SELECT MAP(['1'::JSON, '2'::JSON], ['x', 'y'])`,
 		},
 	}
 
@@ -128,7 +163,9 @@ func TestErrUncomparableMapKey(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.NotZero(t, m.Len())
+			// Both keys must survive. A collapsed length would mean the keys compared equal
+			// when they are not.
+			require.Equal(t, 2, m.Len())
 		})
 	}
 }
