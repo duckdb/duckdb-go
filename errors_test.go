@@ -159,6 +159,10 @@ func TestErrUncomparableMapKey(t *testing.T) {
 			err := db.QueryRow(test.query).Scan(&m)
 
 			if test.wantErr {
+				// testError dereferences the error, so assert it is there first. Without
+				// this, a row that starts scanning again reports a nil dereference inside
+				// the helper rather than the expectation it broke.
+				require.Error(t, err)
 				testError(t, err, errUnsupportedMapKeyType.Error())
 				return
 			}
