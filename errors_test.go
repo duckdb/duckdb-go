@@ -164,6 +164,9 @@ func TestErrUncomparableMapKey(t *testing.T) {
 				// the helper rather than the expectation it broke.
 				require.Error(t, err)
 				testError(t, err, errUnsupportedMapKeyType.Error())
+				// The column index is added once, by whoever called into the vector.
+				// A guard that adds it again reports "index: 0: index: 0".
+				require.Equal(t, 1, strings.Count(err.Error(), indexErrMsg))
 				return
 			}
 			require.NoError(t, err)

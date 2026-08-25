@@ -291,7 +291,7 @@ func (vec *vector) getStruct(rowIdx mapping.IdxT) (map[string]any, error) {
 	return m, nil
 }
 
-func (vec *vector) getMap(rowIdx mapping.IdxT, colIdx int) (OrderedMap, error) {
+func (vec *vector) getMap(rowIdx mapping.IdxT) (OrderedMap, error) {
 	list, err := vec.getList(rowIdx)
 	if err != nil {
 		return OrderedMap{}, err
@@ -303,7 +303,9 @@ func (vec *vector) getMap(rowIdx mapping.IdxT, colIdx int) (OrderedMap, error) {
 		key := mapItem[mapKeysField()]
 		val := mapItem[mapValuesField()]
 		if !comparableMapKey(key) {
-			return OrderedMap{}, addIndexToError(errUnsupportedMapKeyType, colIdx)
+			// The column index is added by the callers of getFn, so adding it here
+			// would report it twice.
+			return OrderedMap{}, errUnsupportedMapKeyType
 		}
 		m.Set(key, val)
 	}

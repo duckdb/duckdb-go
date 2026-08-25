@@ -569,7 +569,7 @@ func (vec *vector) initMap(logicalType mapping.LogicalType, colIdx int) error {
 		if vec.getNull(rowIdx) {
 			return nil, nil
 		}
-		return vec.getMap(rowIdx, colIdx)
+		return vec.getMap(rowIdx)
 	}
 	vec.setFn = func(vec *vector, rowIdx mapping.IdxT, val any) error {
 		if val == nil {
