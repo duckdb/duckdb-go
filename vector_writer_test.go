@@ -22,7 +22,7 @@ func newVectorWriterTestState(
 	require.NoError(t, output.SetSize(size))
 
 	state := &ChunkIteratorState{
-		r:             Row{chunk: input},
+		input:         input,
 		output:        &output.columns[0],
 		nullInNullOut: nullInNullOut,
 	}
@@ -165,7 +165,7 @@ func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {
 	require.NoError(t, jsonOutput.SetSize(1))
 	input := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_INTEGER))
 	require.NoError(t, input.SetSize(1))
-	jsonState := &ChunkIteratorState{r: Row{chunk: input}, output: &jsonOutput.columns[0]}
+	jsonState := &ChunkIteratorState{input: input, output: &jsonOutput.columns[0]}
 	_, err = GetVectorWriter[string](jsonState.GetResultVector())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "DuckDB JSON cannot be written as Go string")

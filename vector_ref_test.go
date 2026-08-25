@@ -56,4 +56,14 @@ func TestChunkIteratorStateVectorAccess(t *testing.T) {
 	var nilState *ChunkIteratorState
 	require.Nil(t, nilState.GetInputChunk())
 	require.Nil(t, nilState.GetResultVector().v)
+
+	emptyState := &ChunkIteratorState{}
+	require.Nil(t, emptyState.GetInputChunk())
+	require.Nil(t, emptyState.GetResultVector().v)
+
+	inputOnlyState := &ChunkIteratorState{input: input}
+	require.Nil(t, inputOnlyState.GetResultVector().v)
+
+	outputOnlyState := &ChunkIteratorState{output: &output.columns[0]}
+	require.Nil(t, outputOnlyState.GetResultVector().v)
 }

@@ -140,7 +140,7 @@ func TestScalarUDFInputChunk(t *testing.T) {
 	require.NoError(t, chunk.SetValue(0, 0, "input"))
 	require.NoError(t, chunk.SetSize(1))
 
-	state := &ChunkIteratorState{r: Row{chunk: chunk}}
+	state := &ChunkIteratorState{input: chunk}
 	inputChunk := state.GetInputChunk()
 	require.Same(t, chunk, inputChunk)
 	require.Equal(t, 1, inputChunk.GetSize())

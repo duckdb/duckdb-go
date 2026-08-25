@@ -10,8 +10,9 @@ import (
 // ChunkIteratorState provides access to the input chunk and result vector of a
 // ChunkContextExecutorFn. Rows supports row-by-row iteration.
 type ChunkIteratorState struct {
-	r             Row
+	input         *DataChunk
 	output        *vector
+	currentRowIdx mapping.IdxT
 	nullInNullOut bool
 	args          []driver.Value
 }
@@ -19,7 +20,7 @@ type ChunkIteratorState struct {
 // SetResult sets the current row's output value.
 // Call once per yielded row.
 func (iterState *ChunkIteratorState) SetResult(val any) error {
-	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
+	return iterState.output.SetValue(int(iterState.currentRowIdx), val)
 }
 
 // GetInputChunk returns the borrowed scalar UDF input chunk. Treat the chunk as
@@ -28,16 +29,16 @@ func (iterState *ChunkIteratorState) GetInputChunk() *DataChunk {
 	if iterState == nil {
 		return nil
 	}
-	return iterState.r.chunk
+	return iterState.input
 }
 
 // GetResultVector returns the borrowed writable scalar UDF result vector. Do
 // not retain it after the scalar UDF callback returns.
 func (iterState *ChunkIteratorState) GetResultVector() Vector {
-	if iterState == nil || iterState.r.chunk == nil || iterState.output == nil {
+	if iterState == nil || iterState.input == nil || iterState.output == nil {
 		return Vector{}
 	}
-	return newVector(iterState.output, iterState.r.chunk.GetSize())
+	return newVector(iterState.output, iterState.input.GetSize())
 }
 
 // GetValuePtr returns a pointer to the current row value for a column.
@@ -54,15 +55,15 @@ func (iterState *ChunkIteratorState) ColumnCount() int {
 // Rows is used to iterate over the rows of a data chunk, and to set the result of a
 // computation on a row in the output vector.
 func (iterState *ChunkIteratorState) Rows() iter.Seq2[*ChunkIteratorState, error] {
-	colCount := iterState.r.chunk.ColumnCount()
+	colCount := iterState.input.ColumnCount()
 
 	return func(yield func(*ChunkIteratorState, error) bool) {
 		var err error
-		for rowIdx := range iterState.r.chunk.GetSize() {
+		for rowIdx := range iterState.input.GetSize() {
 			hasNull := false
 			for colIdx := range colCount {
 				// FIXME: Could likely be replaced with a vectorized getter function.
-				iterState.args[colIdx], err = iterState.r.chunk.GetValue(colIdx, rowIdx)
+				iterState.args[colIdx], err = iterState.input.GetValue(colIdx, rowIdx)
 				if err != nil {
 					yield(nil, err)
 					return
@@ -80,7 +81,7 @@ func (iterState *ChunkIteratorState) Rows() iter.Seq2[*ChunkIteratorState, error
 				continue
 			}
 
-			iterState.r.rowIdx = mapping.IdxT(rowIdx)
+			iterState.currentRowIdx = mapping.IdxT(rowIdx)
 			if !yield(iterState, nil) {
 				return
 			}

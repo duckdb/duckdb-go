@@ -923,6 +923,38 @@ func TestChunkScalarUDFNullHandling(t *testing.T) {
 	row = db.QueryRow(`SELECT chunk_sum(42, NULL) AS sum`)
 	require.NoError(t, row.Scan(&sum))
 	require.Nil(t, sum)
+
+	// Check that valid rows after skipped NULL rows keep their chunk row index.
+	rows, err := db.Query(`
+		SELECT chunk_sum(a, b)
+		FROM (VALUES
+			(1::INTEGER, 2::INTEGER),
+			(NULL::INTEGER, 4::INTEGER),
+			(5::INTEGER, 6::INTEGER),
+			(7::INTEGER, NULL::INTEGER),
+			(8::INTEGER, 9::INTEGER)
+		) values_table(a, b)
+	`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+
+	expected := []sql.NullInt32{
+		{Int32: 3, Valid: true},
+		{},
+		{Int32: 11, Valid: true},
+		{},
+		{Int32: 17, Valid: true},
+	}
+	rowIdx := 0
+	for rows.Next() {
+		var actual sql.NullInt32
+		require.NoError(t, rows.Scan(&actual))
+		require.Less(t, rowIdx, len(expected))
+		require.Equal(t, expected[rowIdx], actual)
+		rowIdx++
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, len(expected), rowIdx)
 }
 
 func TestChunkScalarUDFSpecialNullHandling(t *testing.T) {

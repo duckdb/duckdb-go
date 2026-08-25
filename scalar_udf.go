@@ -305,10 +305,7 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	// receives all rows in the chunk. After the chunk callback returns, output rows
 	// with any NULL input are set to NULL.
 	chunk := &ChunkIteratorState{
-		r: Row{
-			chunk:  inputChunk,
-			rowIdx: mapping.IdxT(0),
-		},
+		input:         inputChunk,
 		output:        &outputChunk.columns[0],
 		nullInNullOut: nullInNullOut,
 		args:          make([]driver.Value, inputChunk.ColumnCount()),
