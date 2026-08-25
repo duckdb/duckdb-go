@@ -2,14 +2,10 @@ package duckdb
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
-
-// vectorValue is the set of Go values supported by vector access.
-type vectorValue interface {
-	~string
-}
 
 // VectorView gives read-only access to a DuckDB vector. It is valid as long as
 // the underlying vector is valid.
@@ -17,7 +13,10 @@ type VectorView[T vectorValue] struct {
 	vector Vector
 }
 
-// GetVectorView returns a typed read-only view of a DuckDB vector.
+// GetVectorView returns a typed read-only view of a DuckDB vector. T must match
+// the DuckDB type exactly. T can be bool, int8, int16, int32, int64, uint8,
+// uint16, uint32, uint64, float32, float64, or string. T can also be a named Go
+// type with one of these underlying types.
 func GetVectorView[T vectorValue](vector Vector) (VectorView[T], error) {
 	view, err := newVectorView[T](vector)
 	if err != nil {
@@ -31,8 +30,9 @@ func (view VectorView[T]) Len() int {
 	return view.vector.logicalCount
 }
 
-// GetValueBorrowed returns the value at row and whether it is non-NULL. The
-// value is valid as long as the underlying vector is valid and unchanged.
+// GetValueBorrowed returns the value at row and whether it is non-NULL.
+// Fixed-width values are copied. VARCHAR values borrow the underlying vector
+// storage and are valid only while the vector is valid and unchanged.
 func (view VectorView[T]) GetValueBorrowed(rowIdx int) (T, bool, error) {
 	if err := view.checkRow(rowIdx); err != nil {
 		var zero T
@@ -44,8 +44,13 @@ func (view VectorView[T]) GetValueBorrowed(rowIdx int) (T, bool, error) {
 		return zero, false, nil
 	}
 
-	value := getBorrowedStringAt(view.vector.v.dataPtr, mapping.IdxT(rowIdx))
-	return T(value), true, nil
+	if view.vector.v.Type == TYPE_VARCHAR {
+		value := getBorrowedStringAt(view.vector.v.dataPtr, mapping.IdxT(rowIdx))
+		// T has an underlying string type because newVectorView validated it.
+		return *(*T)(unsafe.Pointer(&value)), true, nil
+	}
+
+	return getPrimitive[T](view.vector.v, mapping.IdxT(rowIdx)), true, nil
 }
 
 func (view VectorView[T]) checkRow(rowIdx int) error {
@@ -62,16 +67,20 @@ func newVectorView[T vectorValue](vector Vector) (VectorView[T], error) {
 	if vector.v == nil {
 		return VectorView[T]{}, errUninitializedVectorView
 	}
-	if vector.v.Type != TYPE_VARCHAR || vector.v.isJSON {
-		return VectorView[T]{}, vectorViewTypeError(vector.v)
+	if vector.v.Type != vectorValueType[T]() || vector.v.isJSON {
+		return VectorView[T]{}, vectorViewTypeError[T](vector.v)
 	}
 	return VectorView[T]{vector: vector}, nil
 }
 
-func vectorViewTypeError(vec *vector) error {
+func vectorViewTypeError[T vectorValue](vec *vector) error {
 	actual := typeName(vec.Type)
 	if vec.isJSON {
 		actual = aliasJSON
 	}
-	return fmt.Errorf("vector view type mismatch: DuckDB %s cannot be read as Go string", actual)
+	return fmt.Errorf(
+		"vector view type mismatch: DuckDB %s cannot be read as Go %s",
+		actual,
+		vectorValueName[T](),
+	)
 }
