@@ -93,12 +93,12 @@ jobs:
     strategy:
       matrix:
         go: [1.24]
-        os: [macos-15-intel, macos-14, ubuntu-latest, ubuntu-24.04-arm]
+        os: [macos-15-intel, macos-latest, ubuntu-latest, ubuntu-24.04-arm]
         include:
           - os: "macos-15-intel"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - os: "macos-14"
+          - os: "macos-latest"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
           - os: "ubuntu-latest"
