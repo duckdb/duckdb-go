@@ -13,10 +13,7 @@ type VectorView[T vectorValue] struct {
 	vector Vector
 }
 
-// GetVectorView returns a typed read-only view of a DuckDB vector. T must match
-// the DuckDB type exactly. T can be bool, int8, int16, int32, int64, uint8,
-// uint16, uint32, uint64, float32, float64, or string. T can also be a named Go
-// type with one of these underlying types.
+// GetVectorView returns a typed read-only view of a DuckDB vector.
 func GetVectorView[T vectorValue](vector Vector) (VectorView[T], error) {
 	view, err := newVectorView[T](vector)
 	if err != nil {

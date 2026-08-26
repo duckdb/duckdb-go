@@ -13,10 +13,8 @@ type VectorWriter[T vectorValue] struct {
 	vector Vector
 }
 
-// GetVectorWriter returns a typed writer for a writable DuckDB vector. T must
-// match the DuckDB type exactly. T can be bool, int8, int16, int32, int64,
-// uint8, uint16, uint32, uint64, float32, float64, or string. T can also be a
-// named Go type with one of these underlying types.
+// GetVectorWriter returns a typed writer for a writable DuckDB vector. The
+// caller must get the vector from a writable source.
 func GetVectorWriter[T vectorValue](vector Vector) (VectorWriter[T], error) {
 	writer, err := newVectorWriter[T](vector)
 	if err != nil {
