@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 	"unsafe"
@@ -301,9 +302,31 @@ func (vec *vector) getMap(rowIdx mapping.IdxT) (OrderedMap, error) {
 		mapItem := list[i].(map[string]any)
 		key := mapItem[mapKeysField()]
 		val := mapItem[mapValuesField()]
+		if !comparableMapKey(key) {
+			// The column index is added by the callers of getFn, so adding it here
+			// would report it twice.
+			return OrderedMap{}, errUnsupportedMapKeyType
+		}
 		m.Set(key, val)
 	}
 	return m, nil
+}
+
+// comparableMapKey reports whether key can be compared with ==, which OrderedMap.Set
+// does via Delete. It asks the scanned value itself instead of the DuckDB type ID,
+// because the two do not map 1:1: UUID keys scan to []byte (hugeIntToUUID returns
+// val[:]), and JSON-aliased keys report TYPE_VARCHAR yet scan to whatever json.Unmarshal
+// produces, which is map[string]any for a JSON object.
+//
+// DuckDB rejects NULL map keys ("Map keys can not be NULL"), so key is never nil here.
+// The check stays because reflect.TypeOf(nil) returns nil, and calling Comparable on it
+// would trade one panic for another. A nil key is comparable: == on interface values
+// with different dynamic types compares the type descriptors and never reaches the data.
+func comparableMapKey(key any) bool {
+	if key == nil {
+		return true
+	}
+	return reflect.TypeOf(key).Comparable()
 }
 
 func (vec *vector) getArray(rowIdx mapping.IdxT) ([]any, error) {
