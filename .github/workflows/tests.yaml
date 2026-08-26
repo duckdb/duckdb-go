@@ -17,7 +17,12 @@ jobs:
         shell: bash
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest, macos-15-intel, ubuntu-24.04-arm]
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+          - macos-15-intel
+          - ubuntu-24.04-arm
         go: [1.24]
       fail-fast: false
     steps:
@@ -52,7 +57,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os:
+          - ubuntu-latest
+          - macos-latest
         go: [1.24]
     defaults:
       run:
@@ -73,7 +80,10 @@ jobs:
         shell: bash
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
         go: [1.24]
       fail-fast: false
     steps:
@@ -93,7 +103,11 @@ jobs:
     strategy:
       matrix:
         go: [1.24]
-        os: [macos-15-intel, macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+        os:
+          - macos-15-intel
+          - macos-latest
+          - ubuntu-latest
+          - ubuntu-24.04-arm
         include:
           - os: "macos-15-intel"
             filename: "libduckdb-osx-universal"
