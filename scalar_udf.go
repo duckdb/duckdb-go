@@ -73,9 +73,6 @@ type (
 	RowContextExecutorFn func(ctx context.Context, values []driver.Value) (any, error)
 	// ChunkContextExecutorFn accepts a chunk-based execution function using a context.
 	// It takes a context and the chunk-batched input, and sets the execution result for that chunk.
-	// FIXME: It currently still operates row-by-row within one callback, meaning that it still fetches each row
-	// FIXME: via GetValue per column, and the result is also set on a per-row basis.
-	// FIXME: A genuinely vectorized API requires additional work on the data chunk setter and getter interfaces.
 	ChunkContextExecutorFn func(ctx context.Context, chunk *ChunkIteratorState) error
 	// ScalarBinderFn takes a (parent) context and the scalar function's arguments.
 	// It returns the possibly updated child context (can be the same as the parent).
@@ -304,8 +301,9 @@ func executeChunk(executor ScalarFuncExecutor, funcCtx *scalarFuncContext, bindI
 	}
 
 	// Create chunk wrapper.
-	// When nullInNullOut is enabled, the Rows() iterator automatically skips
-	// rows with NULL inputs and sets their result to NULL.
+	// With default NULL handling, Rows() skips rows with any NULL input. Vector access
+	// receives all rows in the chunk. After the chunk callback returns, output rows
+	// with any NULL input are set to NULL.
 	chunk := &ChunkIteratorState{
 		r: Row{
 			chunk:  inputChunk,
@@ -316,10 +314,26 @@ func executeChunk(executor ScalarFuncExecutor, funcCtx *scalarFuncContext, bindI
 		args:          make([]driver.Value, inputChunk.ColumnCount()),
 	}
 
-	// Execute - user iterates over rows, each row has pre-fetched Args.
+	// Execute the callback. It can use vector access or Rows.
 	if err := executor.ChunkContextExecutor(bindInfo.ctx, chunk); err != nil {
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return
+	}
+
+	if nullInNullOut {
+		applyDefaultNullHandling(inputChunk, outputChunk)
+	}
+}
+
+func applyDefaultNullHandling(inputChunk, outputChunk *DataChunk) {
+	for row := range inputChunk.GetSize() {
+		rowIdx := mapping.IdxT(row)
+		for column := range inputChunk.columns {
+			if inputChunk.columns[column].getNull(rowIdx) {
+				outputChunk.columns[0].setNull(rowIdx)
+				break
+			}
+		}
 	}
 }
 

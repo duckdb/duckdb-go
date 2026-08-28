@@ -56,6 +56,10 @@ func columnIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [0, %d)", columnIndexErrMsg, idx, max)
 }
 
+func rowIndexError(idx, max int) error {
+	return fmt.Errorf("%s: %d is out of range [0, %d)", rowIndexErrMsg, idx, max)
+}
+
 func unsupportedTypeError(name string) error {
 	return fmt.Errorf("%s: %s", unsupportedTypeErrMsg, name)
 }
@@ -109,12 +113,16 @@ const (
 	duplicateNameErrMsg         = "duplicate name"
 	paramIndexErrMsg            = "invalid parameter index"
 	columnIndexErrMsg           = "invalid column index"
+	rowIndexErrMsg              = "invalid row index"
 )
 
 var (
-	errInternal   = errors.New("internal error: please file a bug report at duckdb-go")
-	errAPI        = errors.New("API error")
-	errVectorSize = errors.New("data chunks cannot exceed duckdb's internal vector size")
+	errInternal                  = errors.New("internal error: please file a bug report at duckdb-go")
+	errAPI                       = errors.New("API error")
+	errVectorSize                = errors.New("data chunks cannot exceed duckdb's internal vector size")
+	errNilDataChunk              = errors.New("nil data chunk")
+	errUninitializedVectorView   = errors.New("uninitialized vector view")
+	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
 
 	errConnect      = errors.New("could not connect to database")
 	errParseDSN     = errors.New("could not parse DSN for database")

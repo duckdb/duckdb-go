@@ -8,6 +8,7 @@ linters:
     - err113
     - exhaustive
     - exhaustruct
+    - exhaustruct_v5
     - forbidigo
     - funlen
     - gochecknoglobals
@@ -65,7 +66,8 @@ formatters:
         - default
         - prefix(github.com/duckdb/duckdb-go)
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
     goimports:
       local-prefixes:
         - github.com/duckdb/duckdb-go
