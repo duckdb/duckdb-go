@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"math/big"
@@ -224,7 +225,9 @@ func (vec *vector) getJSON(rowIdx mapping.IdxT) (any, error) {
 		return nil, errInternal
 	}
 	var value any
-	if err := json.Unmarshal([]byte(data), &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(data)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
 	}
 	return value, nil

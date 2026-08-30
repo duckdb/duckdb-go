@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"unsafe"
@@ -175,7 +176,7 @@ func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
 
 	owned, err := chunk.GetValue(0, 0)
 	require.NoError(t, err)
-	require.Equal(t, map[string]any{"answer": float64(42)}, owned)
+	require.Equal(t, map[string]any{"answer": json.Number("42")}, owned)
 }
 
 type vectorViewIdentityUDF struct {

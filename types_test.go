@@ -160,8 +160,8 @@ func testTypesGenerateRow[T require.TestingT](t T, i int) testTypesRow {
 	}
 	jsonMapCol := Composite[map[string]any]{
 		map[string]any{
-			"hello": float64(42),
-			"world": float64(84),
+			"hello": json.Number("42"),
+			"world": json.Number("84"),
 		},
 	}
 	jsonArrayCol := Composite[[]any]{
@@ -1337,9 +1337,20 @@ func TestJSONType(t *testing.T) {
 
 	var res Composite[map[string]any]
 	require.NoError(t, row.Scan(&res))
-	require.Equal(t, float64(1), res.Get()["1"])
-	require.Equal(t, float64(2), res.Get()["2"])
-	require.Equal(t, float64(3), res.Get()["3"])
+	require.Equal(t, json.Number("1"), res.Get()["1"])
+	require.Equal(t, json.Number("2"), res.Get()["2"])
+	require.Equal(t, json.Number("3"), res.Get()["3"])
+}
+
+func TestJSONNumberPreservesPrecision(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	var value any
+	require.NoError(t, db.QueryRow(`SELECT '{"n":50000.0000000000000001}'::JSON`).Scan(&value))
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	require.Equal(t, `{"n":50000.0000000000000001}`, string(encoded))
 }
 
 func TestJSONColType(t *testing.T) {
