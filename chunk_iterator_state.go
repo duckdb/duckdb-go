@@ -12,7 +12,7 @@ import (
 type ChunkIteratorState struct {
 	input         *DataChunk
 	output        *vector
-	currentRowIdx mapping.IdxT
+	rowIdx        mapping.IdxT
 	nullInNullOut bool
 	args          []driver.Value
 }
@@ -20,7 +20,7 @@ type ChunkIteratorState struct {
 // SetResult sets the current row's output value.
 // Call once per yielded row.
 func (iterState *ChunkIteratorState) SetResult(val any) error {
-	return iterState.output.SetValue(int(iterState.currentRowIdx), val)
+	return iterState.output.SetValue(int(iterState.rowIdx), val)
 }
 
 // GetInputChunk returns the borrowed scalar UDF input chunk. Treat the chunk as
@@ -81,7 +81,7 @@ func (iterState *ChunkIteratorState) Rows() iter.Seq2[*ChunkIteratorState, error
 				continue
 			}
 
-			iterState.currentRowIdx = mapping.IdxT(rowIdx)
+			iterState.rowIdx = mapping.IdxT(rowIdx)
 			if !yield(iterState, nil) {
 				return
 			}
