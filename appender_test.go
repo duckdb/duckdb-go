@@ -216,10 +216,8 @@ func TestAppenderRejectsVariant(t *testing.T) {
 func TestQueryAppenderVariantShredding(t *testing.T) {
 	// VARIANT shredding needs storage version >= v1.5.0 and an on-disk database:
 	// CHECKPOINT rewrites row groups into shredded (typed) segments on disk.
-	tmpDir, err := os.MkdirTemp("", "duckdb-variant-shred-*")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, os.RemoveAll(tmpDir)) }()
-	dbPath := tmpDir + "/shred.db"
+	tempDir := t.TempDir()
+	dbPath := tempDir + "/shred.db"
 
 	c := newConnectorWrapper(t, ``, nil)
 	defer closeConnectorWrapper(t, c)
@@ -228,7 +226,7 @@ func TestQueryAppenderVariantShredding(t *testing.T) {
 
 	// Ensure the bundled json extension is loaded instance-wide before any
 	// appender INSERT casts through ::JSON.
-	_, err = db.Exec(`SELECT '{}'::JSON`)
+	_, err := db.Exec(`SELECT '{}'::JSON`)
 	require.NoError(t, err)
 
 	_, err = db.Exec(fmt.Sprintf(`ATTACH '%s' AS shred (STORAGE_VERSION 'v1.5.0')`, dbPath))
@@ -293,7 +291,7 @@ func TestQueryAppenderVariantShredding(t *testing.T) {
 		return n
 	}
 	require.Equal(t, 0, valueSegs("tbl_off"), "unshredded variant must have no typed value segments")
-	require.Greater(t, valueSegs("tbl_on"), 0, "shredded variant must expose typed value segments")
+	require.Positive(t, valueSegs("tbl_on"), "shredded variant must expose typed value segments")
 
 	// Round-trip: the object is field-addressable by its dynamic keys.
 	var vtype string
