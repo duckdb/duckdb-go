@@ -41,8 +41,8 @@ func (writer VectorWriter[T]) Len() int {
 	return writer.vector.logicalCount
 }
 
-// Set writes value at row. For VARCHAR, DuckDB copies the value, and invalid
-// UTF-8 can produce SQL NULL.
+// Set writes value at row. VARCHAR bytes are copied into vector-owned storage;
+// invalid UTF-8 is stored as SQL NULL.
 func (writer VectorWriter[T]) Set(row int, value T) error {
 	if err := writer.checkRow(row); err != nil {
 		return getError(errAPI, err)
