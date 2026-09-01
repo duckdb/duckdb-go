@@ -33,6 +33,26 @@ func (chunk *DataChunk) GetSize() int {
 	return chunk.size
 }
 
+// ColumnCount returns the number of columns in the data chunk.
+func (chunk *DataChunk) ColumnCount() int {
+	return len(chunk.columns)
+}
+
+// GetVector returns a borrowed vector for a column. It is valid as long as the
+// data chunk is valid.
+func (chunk *DataChunk) GetVector(colIdx int) (Vector, error) {
+	if chunk == nil {
+		return Vector{}, getError(errAPI, errNilDataChunk)
+	}
+
+	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
+	if err != nil {
+		return Vector{}, getError(errAPI, err)
+	}
+
+	return newVector(&chunk.columns[colIdx], chunk.GetSize()), nil
+}
+
 // SetSize sets the internal size of the data chunk. Cannot exceed GetCapacity().
 func (chunk *DataChunk) SetSize(size int) error {
 	if size > GetDataChunkCapacity() {
@@ -70,9 +90,7 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 	}
 
 	column := &chunk.columns[colIdx]
-
-	err = column.setFn(column, mapping.IdxT(rowIdx), val)
-	if err != nil {
+	if err = column.SetValue(rowIdx, val); err != nil {
 		return setValueError(colIdx, rowIdx, val, err)
 	}
 
@@ -122,6 +140,8 @@ func (chunk *DataChunk) verifyAndRewriteColIdx(colIdx int) (int, error) {
 
 func (chunk *DataChunk) initFromTypes(types []mapping.LogicalType, writable bool) error {
 	// NOTE: initFromTypes does not initialize the column names.
+	// NOTE: duckdb_create_data_chunk allocates each vector with DuckDB's standard
+	// capacity, the current C API does not accept a smaller chunk capacity.
 	columnCount := len(types)
 
 	// Initialize the callback functions to read and write values.

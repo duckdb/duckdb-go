@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"testing"
 	"unsafe"
 
@@ -124,6 +125,23 @@ func TestDataChunkGetValueBubblesGetterErrors(t *testing.T) {
 			require.ErrorContains(t, err, unsupportedTypeErrMsg)
 		})
 	}
+}
+
+func TestDataChunkGetValueReturnsJSONDecodeError(t *testing.T) {
+	logicalType := mapping.CreateLogicalType(TYPE_VARCHAR)
+	mapping.LogicalTypeSetAlias(logicalType, aliasJSON)
+	defer mapping.DestroyLogicalType(&logicalType)
+
+	var chunk DataChunk
+	require.NoError(t, chunk.initFromTypes([]mapping.LogicalType{logicalType}, true))
+	defer chunk.close()
+
+	require.NoError(t, setBytes(&chunk.columns[0], 0, "invalid"))
+	got, err := chunk.GetValue(0, 0)
+	require.Nil(t, got)
+	require.ErrorIs(t, err, errAPI)
+	var syntaxErr *json.SyntaxError
+	require.ErrorAs(t, err, &syntaxErr)
 }
 
 func TestRowsNextBubblesGetterErrors(t *testing.T) {

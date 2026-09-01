@@ -302,7 +302,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 		maxSize := mapping.IdxT(GetDataChunkCapacity())
 
 		// At the end of the loop row.r must be the index of the last row.
-		for row.r = 0; row.r < maxSize; row.r++ {
+		for row.rowIdx = 0; row.rowIdx < maxSize; row.rowIdx++ {
 			next, errRow := fun.FillRow(localState, row)
 			if errRow != nil {
 				mapping.FunctionSetError(info, errRow.Error())
@@ -312,7 +312,7 @@ func table_udf_callback(infoPtr, outputPtr unsafe.Pointer) {
 				break
 			}
 		}
-		mapping.DataChunkSetSize(output, row.r)
+		mapping.DataChunkSetSize(output, row.rowIdx)
 	case ParallelChunkTableSource:
 		err = fun.FillChunk(localState, chunk)
 		if err != nil {
