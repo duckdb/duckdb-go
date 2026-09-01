@@ -70,7 +70,7 @@ func TestVarcharVectorView(t *testing.T) {
 	require.Equal(t, len(values)+1, view.Len())
 
 	for i := range values {
-		value, valid, getErr := view.GetValueBorrowed(i)
+		value, valid, getErr := view.GetValue(i)
 		require.NoError(t, getErr)
 		require.True(t, valid)
 		require.Equal(t, values[i], value)
@@ -83,14 +83,14 @@ func TestVarcharVectorView(t *testing.T) {
 		}
 	}
 
-	value, valid, err := view.GetValueBorrowed(nullRow)
+	value, valid, err := view.GetValue(nullRow)
 	require.NoError(t, err)
 	require.False(t, valid)
 	require.Empty(t, value)
 
 	namedView, err := GetVectorView[namedVarchar](mustGetVector(t, chunk, 0))
 	require.NoError(t, err)
-	namedValue, valid, err := namedView.GetValueBorrowed(1)
+	namedValue, valid, err := namedView.GetValue(1)
 	require.NoError(t, err)
 	require.True(t, valid)
 	require.Equal(t, namedVarchar(values[1]), namedValue)
@@ -126,7 +126,7 @@ func TestVectorViewValidation(t *testing.T) {
 	require.ErrorIs(t, err, errUninitializedVectorView)
 
 	var zeroView VectorView[string]
-	_, _, err = zeroView.GetValueBorrowed(0)
+	_, _, err = zeroView.GetValue(0)
 	require.ErrorIs(t, err, errUninitializedVectorView)
 
 	var nilState *ChunkIteratorState
@@ -135,9 +135,9 @@ func TestVectorViewValidation(t *testing.T) {
 
 	view, err := GetVectorView[string](mustGetVector(t, chunk, 1))
 	require.NoError(t, err)
-	_, _, err = view.GetValueBorrowed(-1)
+	_, _, err = view.GetValue(-1)
 	require.ErrorContains(t, err, rowIndexErrMsg)
-	_, _, err = view.GetValueBorrowed(view.Len())
+	_, _, err = view.GetValue(view.Len())
 	require.ErrorContains(t, err, rowIndexErrMsg)
 
 	chunk.projection = []int{1}
@@ -171,10 +171,10 @@ func TestScalarUDFInputChunk(t *testing.T) {
 
 	view, err := GetVectorView[string](mustGetVector(t, inputChunk, 0))
 	require.NoError(t, err)
-	borrowedValue, valid, err := view.GetValueBorrowed(0)
+	viewValue, valid, err := view.GetValue(0)
 	require.NoError(t, err)
 	require.True(t, valid)
-	require.Equal(t, "input", borrowedValue)
+	require.Equal(t, "input", viewValue)
 }
 
 func TestVarcharVectorViewRejectsJSONAlias(t *testing.T) {
@@ -227,7 +227,7 @@ func (udf *vectorViewIdentityUDF[T]) Executor() ScalarFuncExecutor {
 				return err
 			}
 			for row := range input.Len() {
-				value, valid, err := input.GetValueBorrowed(row)
+				value, valid, err := input.GetValue(row)
 				if err != nil {
 					return err
 				}
@@ -421,7 +421,7 @@ func (*mixedVectorAccessUDF) Executor() ScalarFuncExecutor {
 			}
 
 			for row := range varcharView.Len() {
-				varcharValue, valid, err := varcharView.GetValueBorrowed(row)
+				varcharValue, valid, err := varcharView.GetValue(row)
 				if err != nil {
 					return err
 				}

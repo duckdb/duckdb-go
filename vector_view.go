@@ -52,8 +52,10 @@ func vectorValueName[T vectorValue]() string {
 	return reflect.TypeFor[T]().Kind().String()
 }
 
-// VectorView gives read-only access to a DuckDB vector. It is valid as long as
-// the underlying vector is valid.
+// VectorView provides typed, read-only access to a DuckDB vector.
+//
+// A VectorView does not own the underlying vector or control its lifetime. It
+// must not be used after the underlying vector becomes invalid.
 type VectorView[T vectorValue] struct {
 	vector Vector
 }
@@ -72,10 +74,11 @@ func (view VectorView[T]) Len() int {
 	return view.vector.logicalCount
 }
 
-// GetValueBorrowed returns the value at row and whether it is non-NULL.
-// Fixed-width values are copied. VARCHAR values borrow the underlying vector
-// storage and are valid only while the vector is valid and unchanged.
-func (view VectorView[T]) GetValueBorrowed(rowIdx int) (T, bool, error) {
+// GetValue returns the value at row and whether it is non-NULL.
+//
+// For VARCHAR, the returned Go string references bytes owned by the underlying
+// vector and must not be retained after the vector becomes invalid or changes.
+func (view VectorView[T]) GetValue(rowIdx int) (T, bool, error) {
 	if err := view.checkRow(rowIdx); err != nil {
 		var zero T
 		return zero, false, getError(errAPI, err)
