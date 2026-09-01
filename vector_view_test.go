@@ -13,11 +13,11 @@ import (
 )
 
 type (
-	namedVarchar           string
-	namedFixedWidthBool    bool
-	namedFixedWidthInt32   int32
-	namedFixedWidthUint64  uint64
-	namedFixedWidthFloat64 float64
+	namedVarchar string
+	namedBool    bool
+	namedInt32   int32
+	namedUint64  uint64
+	namedFloat64 float64
 )
 
 func newVectorViewTestChunk(t testing.TB, infos ...TypeInfo) *DataChunk {
@@ -290,16 +290,16 @@ func TestVectorViewScalarUDF(t *testing.T) {
 	})
 
 	t.Run("NAMED_BOOLEAN", func(t *testing.T) {
-		testVectorViewScalarUDF[namedFixedWidthBool](t, conn, "vector_view_named_boolean", TYPE_BOOLEAN, `(false::BOOLEAN), (true::BOOLEAN), (NULL::BOOLEAN)`, 3)
+		testVectorViewScalarUDF[namedBool](t, conn, "vector_view_named_boolean", TYPE_BOOLEAN, `(false::BOOLEAN), (true::BOOLEAN), (NULL::BOOLEAN)`, 3)
 	})
 	t.Run("NAMED_INTEGER", func(t *testing.T) {
-		testVectorViewScalarUDF[namedFixedWidthInt32](t, conn, "vector_view_named_integer", TYPE_INTEGER, `(-1234::INTEGER), (4321::INTEGER), (NULL::INTEGER)`, 3)
+		testVectorViewScalarUDF[namedInt32](t, conn, "vector_view_named_integer", TYPE_INTEGER, `(-1234::INTEGER), (4321::INTEGER), (NULL::INTEGER)`, 3)
 	})
 	t.Run("NAMED_UBIGINT", func(t *testing.T) {
-		testVectorViewScalarUDF[namedFixedWidthUint64](t, conn, "vector_view_named_ubigint", TYPE_UBIGINT, `(1234::UBIGINT), (4321::UBIGINT), (NULL::UBIGINT)`, 3)
+		testVectorViewScalarUDF[namedUint64](t, conn, "vector_view_named_ubigint", TYPE_UBIGINT, `(1234::UBIGINT), (4321::UBIGINT), (NULL::UBIGINT)`, 3)
 	})
 	t.Run("NAMED_DOUBLE", func(t *testing.T) {
-		testVectorViewScalarUDF[namedFixedWidthFloat64](t, conn, "vector_view_named_double", TYPE_DOUBLE, `(12.5::DOUBLE), (-43.25::DOUBLE), (NULL::DOUBLE)`, 3)
+		testVectorViewScalarUDF[namedFloat64](t, conn, "vector_view_named_double", TYPE_DOUBLE, `(12.5::DOUBLE), (-43.25::DOUBLE), (NULL::DOUBLE)`, 3)
 	})
 }
 
