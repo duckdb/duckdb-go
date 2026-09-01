@@ -187,11 +187,20 @@ func udfBindTyped[T tableSource](infoPtr unsafe.Pointer) {
 	}
 
 	for name := range config.NamedArguments {
-		var err error
 		value := mapping.BindGetNamedParameter(info, name)
+		lt := mapping.GetValueType(value)
+		t := mapping.GetTypeId(lt)
+
+		if t == TYPE_INVALID {
+			// Argument was omitted; pass nil so the bind function can apply a default.
+			mapping.DestroyValue(&value)
+			namedArgs[name] = nil
+			continue
+		}
+
+		var err error
 		namedArgs[name], err = getValue(value)
 		mapping.DestroyValue(&value)
-
 		if err != nil {
 			mapping.BindSetError(info, err.Error())
 			return
