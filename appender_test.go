@@ -213,6 +213,99 @@ func TestAppenderRejectsVariant(t *testing.T) {
 	}
 }
 
+func TestQueryAppenderVariantShredding(t *testing.T) {
+	// VARIANT shredding needs storage version >= v1.5.0 and an on-disk database:
+	// CHECKPOINT rewrites row groups into shredded (typed) segments on disk.
+	tempDir := t.TempDir()
+	dbPath := tempDir + "/shred.db"
+
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+	db := sql.OpenDB(c)
+	defer closeDbWrapper(t, db)
+
+	// Ensure the bundled json extension is loaded instance-wide before any
+	// appender INSERT casts through ::JSON.
+	_, err := db.Exec(`SELECT '{}'::JSON`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(fmt.Sprintf(`ATTACH '%s' AS shred (STORAGE_VERSION 'v1.5.0')`, dbPath))
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE shred.tbl_off (id INTEGER, col VARIANT)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE shred.tbl_on (id INTEGER, col VARIANT)`)
+	require.NoError(t, err)
+
+	// Query-appender temp-table column types: INTEGER id + VARCHAR JSON document.
+	// The INSERT casts the JSON text to a VARIANT object.
+	intInfo, err := NewTypeInfo(TYPE_INTEGER)
+	require.NoError(t, err)
+	varcharInfo, err := NewTypeInfo(TYPE_VARCHAR)
+	require.NoError(t, err)
+	colTypes := []TypeInfo{intInfo, varcharInfo}
+
+	const rowCount = 2048
+	// Keys come from runtime data, not a compile-time Go struct: this is the
+	// "keys not known ahead of time" requirement. json.Marshal serializes the map.
+	fieldKeys := []string{"x", "y"}
+
+	appendRows := func(table string) {
+		conn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &conn)
+		query := fmt.Sprintf(
+			`INSERT INTO shred.%s SELECT col1, col2::JSON::VARIANT FROM appended_data`, table)
+		a := newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+		for i := range rowCount {
+			obj := map[string]any{fieldKeys[0]: i, fieldKeys[1]: i * 100}
+			payload, mErr := json.Marshal(obj)
+			require.NoError(t, mErr)
+			require.NoError(t, a.AppendRow(int32(i), string(payload)))
+		}
+		closeAppenderWrapper(t, a) // Close flushes -> runs the INSERT query
+	}
+
+	// Baseline: shredding disabled; checkpoint persists tbl_off unshredded.
+	_, err = db.Exec(`SET variant_minimum_shredding_size = -1`)
+	require.NoError(t, err)
+	appendRows("tbl_off")
+	_, err = db.Exec(`CHECKPOINT shred`)
+	require.NoError(t, err)
+
+	// Forced shredding; checkpoint rewrites tbl_on into typed value segments.
+	_, err = db.Exec(`SET variant_minimum_shredding_size = 0`)
+	require.NoError(t, err)
+	appendRows("tbl_on")
+	_, err = db.Exec(`CHECKPOINT shred`)
+	require.NoError(t, err)
+
+	// Shredded object fields surface as typed value segments in storage. The
+	// untyped variant layout only uses UINTEGER/UTINYINT metadata (excluded here),
+	// so a nonzero count of these types is direct proof of shredding.
+	valueSegs := func(table string) int {
+		var n int
+		q := fmt.Sprintf(`SELECT count(*) FROM pragma_storage_info('shred.%s')
+			WHERE column_name = 'col'
+			  AND segment_type IN ('TINYINT','SMALLINT','INTEGER','BIGINT','HUGEINT',
+			                       'USMALLINT','UBIGINT','UHUGEINT','FLOAT','DOUBLE')`, table)
+		require.NoError(t, db.QueryRow(q).Scan(&n))
+		return n
+	}
+	require.Equal(t, 0, valueSegs("tbl_off"), "unshredded variant must have no typed value segments")
+	require.Positive(t, valueSegs("tbl_on"), "shredded variant must expose typed value segments")
+
+	// Round-trip: the object is field-addressable by its dynamic keys.
+	var vtype string
+	require.NoError(t, db.QueryRow(
+		`SELECT variant_typeof(col) FROM shred.tbl_on WHERE id = 5`).Scan(&vtype))
+	require.Equal(t, "OBJECT(x, y)", vtype)
+
+	var x, y int
+	require.NoError(t, db.QueryRow(
+		`SELECT (col.x)::INTEGER, (col.y)::INTEGER FROM shred.tbl_on WHERE id = 5`).Scan(&x, &y))
+	require.Equal(t, 5, x)
+	require.Equal(t, 500, y)
+}
+
 func TestAppendChunks(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (
