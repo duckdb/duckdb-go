@@ -16,6 +16,9 @@ const secondsPerDay = 24 * 60 * 60
 // fnSetVectorValue is the setter callback function for any (nested) vector.
 type fnSetVectorValue func(vec *vector, rowIdx mapping.IdxT, val any) error
 
+// fnSetVectorValueTyped avoids converting exact-type generic writes to any.
+type fnSetVectorValueTyped[T any] func(vec *vector, rowIdx mapping.IdxT, val T) error
+
 func (vec *vector) setNull(rowIdx mapping.IdxT) {
 	mapping.ValiditySetRowInvalid(vec.maskPtr, rowIdx)
 	if vec.Type == TYPE_STRUCT || vec.Type == TYPE_UNION {
@@ -87,7 +90,7 @@ func setBool[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	return nil
 }
 
-func setTS(vec *vector, rowIdx mapping.IdxT, val any) error {
+func setTS[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	switch vec.Type {
 	case TYPE_TIMESTAMP, TYPE_TIMESTAMP_TZ:
 		ts, err := inferTimestamp(vec.Type, val)
@@ -458,14 +461,11 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return nil
 
 	default:
-		// Try to match the type with a UNION member.
-		anyVal := any(val)
-
 		// Try each member until we find one accepting the value.
 		match := 0
 		for i := 1; i < len(vec.childVectors); i++ {
 			childVec := &vec.childVectors[i]
-			err := childVec.setFn(childVec, rowIdx, anyVal)
+			err := childVec.setFn(childVec, rowIdx, val)
 			if err == nil {
 				// The member accepted the value.
 				match = i
@@ -493,16 +493,19 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	}
 }
 
-//nolint:gocyclo
 func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
-	name, inMap := unsupportedValueTypeToStringMap[vec.Type]
-	if inMap {
-		return unsupportedTypeError(name)
+	if setFn, ok := vec.setTypedFn.(fnSetVectorValueTyped[S]); ok {
+		return setFn(vec, rowIdx, val)
+	}
+	if any(val) == nil {
+		return vec.setFn(vec, rowIdx, val)
 	}
 
+	// Keep numeric conversions allocation-free. Only types whose setFn adds an
+	// interface-nil guard before the same generic setter belong here. Types with
+	// typed-nil semantics and distinct logical types that share a vector Type
+	// (notably JSON and VARCHAR) must fall back to the vector-installed setFn.
 	switch vec.Type {
-	case TYPE_BOOLEAN:
-		return setBool(vec, rowIdx, val)
 	case TYPE_TINYINT:
 		return setNumeric[S, int8](vec, rowIdx, val)
 	case TYPE_SMALLINT:
@@ -523,44 +526,9 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return setNumeric[S, float32](vec, rowIdx, val)
 	case TYPE_DOUBLE:
 		return setNumeric[S, float64](vec, rowIdx, val)
-	case TYPE_TIMESTAMP, TYPE_TIMESTAMP_S, TYPE_TIMESTAMP_MS, TYPE_TIMESTAMP_NS, TYPE_TIMESTAMP_TZ:
-		return setTS(vec, rowIdx, val)
-	case TYPE_DATE:
-		return setDate(vec, rowIdx, val)
-	case TYPE_TIME, TYPE_TIME_TZ:
-		return setTime(vec, rowIdx, val)
-	case TYPE_INTERVAL:
-		return setInterval(vec, rowIdx, val)
-	case TYPE_HUGEINT:
-		return setHugeint(vec, rowIdx, val)
-	case TYPE_UHUGEINT:
-		return setUhugeint(vec, rowIdx, val)
-	case TYPE_BIGNUM:
-		return setBignum(vec, rowIdx, val)
-	case TYPE_VARCHAR:
-		return setBytes(vec, rowIdx, val)
-	case TYPE_BLOB, TYPE_GEOMETRY:
-		return setBytes(vec, rowIdx, val)
-	case TYPE_BIT:
-		return setBit(vec, rowIdx, val)
 	case TYPE_DECIMAL:
 		return setDecimal(vec, rowIdx, val)
-	case TYPE_ENUM:
-		return setEnum(vec, rowIdx, val)
-	case TYPE_LIST:
-		return setList(vec, rowIdx, val)
-	case TYPE_STRUCT:
-		return setStruct(vec, rowIdx, val)
-	case TYPE_MAP:
-		return setMap(vec, rowIdx, val)
-	case TYPE_ARRAY:
-		// FIXME: Is this already supported? And tested?
-		return unsupportedTypeError(typeToStringMap[vec.Type])
-	case TYPE_UUID:
-		return setUUID(vec, rowIdx, val)
-	case TYPE_UNION:
-		return setUnion(vec, rowIdx, val)
 	default:
-		return unsupportedTypeError(unknownTypeErrMsg)
+		return vec.setFn(vec, rowIdx, val)
 	}
 }

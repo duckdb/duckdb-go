@@ -44,6 +44,10 @@ type vector struct {
 	getFn fnGetVectorValue
 	// A callback function to write to this vector.
 	setFn fnSetVectorValue
+	// An optional exact-type setter that avoids boxing generic writes. It
+	// bypasses setFn's nil handling, so pointer types with typed-nil semantics
+	// must use setFn instead.
+	setTypedFn any
 	// The child vectors of nested data types.
 	childVectors []vector
 	// structTemplate is a pre-allocated map[string]any with all struct keys
@@ -190,6 +194,7 @@ func initBool(vec *vector) {
 		}
 		return setBool(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[bool](setBool[bool])
 	vec.Type = TYPE_BOOLEAN
 }
 
@@ -207,6 +212,7 @@ func initNumeric[T numericType](vec *vector, t Type) {
 		}
 		return setNumeric[any, T](vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[T](setNumeric[T, T])
 	vec.Type = t
 }
 
@@ -224,6 +230,7 @@ func (vec *vector) initTS(t Type) {
 		}
 		return setTS(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[time.Time](setTS[time.Time])
 	vec.Type = t
 }
 
@@ -241,6 +248,7 @@ func (vec *vector) initDate() {
 		}
 		return setDate(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[time.Time](setDate[time.Time])
 	vec.Type = TYPE_DATE
 }
 
@@ -258,6 +266,7 @@ func (vec *vector) initTime(t Type) {
 		}
 		return setTime(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[time.Time](setTime[time.Time])
 	vec.Type = t
 }
 
@@ -275,6 +284,7 @@ func (vec *vector) initInterval() {
 		}
 		return setInterval(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[Interval](setInterval[Interval])
 	vec.Type = TYPE_INTERVAL
 }
 
@@ -343,6 +353,11 @@ func (vec *vector) initBytes(t Type) {
 		}
 		return setBytes(vec, rowIdx, val)
 	}
+	if t == TYPE_VARCHAR {
+		vec.setTypedFn = fnSetVectorValueTyped[string](setBytes[string])
+	} else {
+		vec.setTypedFn = fnSetVectorValueTyped[[]byte](setBytes[[]byte])
+	}
 	vec.Type = t
 }
 
@@ -360,6 +375,7 @@ func (vec *vector) initBit() {
 		}
 		return setBit(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[Bit](setBit[Bit])
 	vec.Type = TYPE_BIT
 }
 
@@ -377,6 +393,7 @@ func (vec *vector) initJSON() {
 		}
 		return setJSON(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[string](setJSON[string])
 	vec.Type = TYPE_VARCHAR
 }
 
@@ -443,6 +460,7 @@ func (vec *vector) initEnum(logicalType mapping.LogicalType, colIdx int) error {
 		return addIndexToError(unsupportedTypeError(typeToStringMap[t]), colIdx)
 	}
 
+	vec.setTypedFn = fnSetVectorValueTyped[string](setEnum[string])
 	vec.Type = TYPE_ENUM
 	vec.internalType = t
 	return nil
@@ -473,6 +491,7 @@ func (vec *vector) initList(logicalType mapping.LogicalType, colIdx int) error {
 		}
 		return setList(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[[]any](setList[[]any])
 	vec.Type = TYPE_LIST
 	return nil
 }
@@ -524,6 +543,7 @@ func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error
 		}
 		return setStruct(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[map[string]any](setStruct[map[string]any])
 	vec.Type = TYPE_STRUCT
 	return nil
 }
@@ -578,6 +598,7 @@ func (vec *vector) initMap(logicalType mapping.LogicalType, colIdx int) error {
 		}
 		return setMap(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[OrderedMap](setMap[OrderedMap])
 	vec.Type = TYPE_MAP
 	return nil
 }
@@ -609,6 +630,7 @@ func (vec *vector) initArray(logicalType mapping.LogicalType, colIdx int) error 
 		}
 		return setArray(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[[]any](setArray[[]any])
 	vec.Type = TYPE_ARRAY
 	return nil
 }
@@ -655,6 +677,7 @@ func (vec *vector) initUnion(logicalType mapping.LogicalType, colIdx int) error 
 		}
 		return setUnion(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[Union](setUnion[Union])
 	vec.Type = TYPE_UNION
 	return nil
 }
@@ -674,6 +697,7 @@ func (vec *vector) initUUID() {
 		}
 		return setUUID(vec, rowIdx, val)
 	}
+	vec.setTypedFn = fnSetVectorValueTyped[UUID](setUUID[UUID])
 	vec.Type = TYPE_UUID
 }
 

@@ -98,9 +98,11 @@ func (chunk *DataChunk) SetValue(colIdx, rowIdx int, val any) error {
 }
 
 // SetChunkValue writes a single value to a column in a data chunk.
-// The difference with `chunk.SetValue` is that `SetChunkValue` does not
-// require casting the value to `any` (implicitly).
+// Its generic signature lets callers forward type parameters without boxing
+// them to any. Exact canonical-type values can avoid an extra boxing allocation.
 // If the column is not projected, the value is ignored.
+// JSON strings are written as JSON string values, not raw JSON documents.
+// Use json.RawMessage to write a pre-serialized JSON document.
 // NOTE: Custom ENUM types must be passed as string.
 func SetChunkValue[T any](chunk DataChunk, colIdx, rowIdx int, val T) error {
 	colIdx, err := chunk.verifyAndRewriteColIdx(colIdx)
