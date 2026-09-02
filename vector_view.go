@@ -124,7 +124,7 @@ func (view VectorView[T]) Get(rowIdx int) (T, bool, error) {
 		return zero, false, getError(errAPI, err)
 	}
 
-	if view.vector.v.getNull(mapping.IdxT(rowIdx)) {
+	if view.vector.isNull(mapping.IdxT(rowIdx)) {
 		var zero T
 		return zero, false, nil
 	}

@@ -17,6 +17,10 @@ type Vector struct {
 	// is created. The current C API cannot read this size from a vector directly.
 	// FIXME: Revisit logicalCount when C API v2 is finalized.
 	logicalCount int
+	// validityParents contains enclosing STRUCT vectors whose validity also
+	// applies to this vector. DuckDB stores child validity separately from the
+	// parent STRUCT validity.
+	validityParents []*vector
 }
 
 func newVector(v *vector, logicalCount int) Vector {
@@ -24,6 +28,26 @@ func newVector(v *vector, logicalCount int) Vector {
 		v:            v,
 		logicalCount: logicalCount,
 	}
+}
+
+func (vec Vector) structChild(child *vector) Vector {
+	parents := make([]*vector, len(vec.validityParents)+1)
+	copy(parents, vec.validityParents)
+	parents[len(vec.validityParents)] = vec.v
+	return Vector{
+		v:               child,
+		logicalCount:    vec.logicalCount,
+		validityParents: parents,
+	}
+}
+
+func (vec Vector) isNull(rowIdx mapping.IdxT) bool {
+	for _, parent := range vec.validityParents {
+		if parent.getNull(rowIdx) {
+			return true
+		}
+	}
+	return vec.v.getNull(rowIdx)
 }
 
 // vector storage of a DuckDB column.
