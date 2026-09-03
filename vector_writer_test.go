@@ -22,7 +22,7 @@ func newVectorWriterTestState(
 	require.NoError(t, output.SetSize(size))
 
 	state := &ChunkIteratorState{
-		r:             Row{chunk: input},
+		input:         input,
 		output:        &output.columns[0],
 		nullInNullOut: nullInNullOut,
 	}
@@ -119,7 +119,18 @@ func TestVectorWriterDefaultNullHandling(t *testing.T) {
 	require.Nil(t, second)
 }
 
-func TestVarcharVectorWriterValidation(t *testing.T) {
+func TestVectorWriterRejectsReadOnlyVector(t *testing.T) {
+	source := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_VARCHAR))
+	require.NoError(t, source.SetSize(1))
+
+	var readOnly DataChunk
+	require.NoError(t, readOnly.initFromDuckDataChunk(source.chunk, false))
+	_, err := GetVectorWriter[string](mustGetVector(t, &readOnly, 0))
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorIs(t, err, errVectorNotWritable)
+}
+
+func TestVectorWriterValidation(t *testing.T) {
 	var zero VectorWriter[string]
 	require.ErrorIs(t, zero.Set(0, "x"), errUninitializedVectorWriter)
 	require.ErrorIs(t, zero.SetNull(0), errUninitializedVectorWriter)
@@ -131,12 +142,22 @@ func TestVarcharVectorWriterValidation(t *testing.T) {
 	integerState, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_INTEGER), 1, false)
 	_, err = GetVectorWriter[string](integerState.GetResultVector())
 	require.ErrorContains(t, err, "DuckDB INTEGER cannot be written as Go string")
+	_, err = GetVectorWriter[uint32](integerState.GetResultVector())
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB INTEGER cannot be written as Go uint32")
 
 	state, _, _ := newVectorWriterTestState(t, mustTypeInfo(t, TYPE_VARCHAR), 1, false)
 	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 	require.ErrorContains(t, writer.Set(-1, "x"), rowIndexErrMsg)
 	require.ErrorContains(t, writer.Set(writer.Len(), "x"), rowIndexErrMsg)
+
+	decimalInfo, err := NewDecimalInfo(9, 2)
+	require.NoError(t, err)
+	decimalState, _, _ := newVectorWriterTestState(t, decimalInfo, 1, false)
+	_, err = GetVectorWriter[int32](decimalState.GetResultVector())
+	require.ErrorIs(t, err, errAPI)
+	require.ErrorContains(t, err, "DuckDB DECIMAL cannot be written as Go int32")
 }
 
 func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {
@@ -154,7 +175,7 @@ func TestVarcharVectorWriterRejectsNonVarcharTypes(t *testing.T) {
 	require.NoError(t, jsonOutput.SetSize(1))
 	input := newVectorViewTestChunk(t, mustTypeInfo(t, TYPE_INTEGER))
 	require.NoError(t, input.SetSize(1))
-	jsonState := &ChunkIteratorState{r: Row{chunk: input}, output: &jsonOutput.columns[0]}
+	jsonState := &ChunkIteratorState{input: input, output: &jsonOutput.columns[0]}
 	_, err = GetVectorWriter[string](jsonState.GetResultVector())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "DuckDB JSON cannot be written as Go string")

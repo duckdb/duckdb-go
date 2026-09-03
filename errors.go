@@ -123,6 +123,7 @@ var (
 	errNilDataChunk              = errors.New("nil data chunk")
 	errUninitializedVectorView   = errors.New("uninitialized vector view")
 	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
+	errVectorNotWritable         = errors.New("vector is not writable")
 
 	errConnect      = errors.New("could not connect to database")
 	errParseDSN     = errors.New("could not parse DSN for database")
