@@ -74,7 +74,7 @@ func (udf *vectorAccessBenchmarkUDF[T]) Executor() ScalarFuncExecutor {
 				}
 
 				for rowIdx := range input.Len() {
-					value, valid, err := input.GetValue(rowIdx)
+					value, valid, err := input.Get(rowIdx)
 					if err != nil {
 						return err
 					}

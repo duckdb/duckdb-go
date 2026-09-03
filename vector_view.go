@@ -74,12 +74,12 @@ func (view VectorView[T]) Len() int {
 	return view.vector.logicalCount
 }
 
-// GetValue returns the value at row and true if it is non-NULL. If the value is
+// Get returns the value at row and true if it is non-NULL. If the value is
 // NULL, it returns the zero value of T and false.
 //
 // For VARCHAR, the returned Go string references bytes owned by the underlying
 // vector and must not be retained after the vector becomes invalid or changes.
-func (view VectorView[T]) GetValue(rowIdx int) (T, bool, error) {
+func (view VectorView[T]) Get(rowIdx int) (T, bool, error) {
 	if err := view.checkRow(rowIdx); err != nil {
 		var zero T
 		return zero, false, getError(errAPI, err)
