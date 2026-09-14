@@ -255,14 +255,14 @@ func TestRunWithCtxInterrupt_PanicBeforeCancel_NoInterrupt(t *testing.T) {
 	defer cancel()
 
 	var dummyConn mapping.Connection
-	recovered := func() (r any) {
-		defer func() { r = recover() }()
+	recoveredCh := make(chan any, 1)
+	func() {
+		defer func() { recoveredCh <- recover() }()
 		_ = runWithCtxInterrupt(ctx, dummyConn, func(_ context.Context) error {
 			panic("boom")
 		})
-		return nil
 	}()
-	require.Equal(t, "boom", recovered, "the panic should propagate to the caller")
+	require.Equal(t, "boom", <-recoveredCh, "the panic should propagate to the caller")
 
 	cancel()
 	time.Sleep(20 * interruptInterval)
