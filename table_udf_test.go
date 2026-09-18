@@ -75,6 +75,7 @@ type (
 	chunkIncTableUDF struct {
 		n     int64
 		count int64
+		err   error // return this when done. Could be nil
 	}
 
 	unionTableUDF struct {
@@ -309,8 +310,10 @@ var (
 )
 
 var (
-	typeBigintTableUDF, _ = NewTypeInfo(TYPE_BIGINT)
-	typeStructTableUDF    = makeStructTableUDF()
+	typeBigintTableUDF, _   = NewTypeInfo(TYPE_BIGINT)
+	typeUTinyintTableUDF, _ = NewTypeInfo(TYPE_UTINYINT)
+
+	typeStructTableUDF = makeStructTableUDF()
 )
 
 func makeStructTableUDF() TypeInfo {
@@ -406,7 +409,6 @@ func (udf *parallelIncTableUDF) FillRow(localState any, row Row) (bool, error) {
 		udf.claimed += remaining
 		udf.lock.Unlock()
 	}
-
 	state.start++
 	err := SetRowValue(row, 0, state.start)
 	return true, err
@@ -465,7 +467,7 @@ func (udf *parallelChunkIncTableUDF) FillChunk(localState any, chunk DataChunk) 
 	if remaining <= 0 {
 		// No more work.
 		udf.lock.Unlock()
-		return nil
+		return chunk.SetSize(int(remaining))
 	} else if remaining >= 2048 {
 		remaining = 2048
 	}
@@ -774,10 +776,13 @@ func (udf *chunkIncTableUDF) FillChunk(chunk DataChunk) error {
 	for ; i < size; i++ {
 		if udf.count >= udf.n {
 			err := chunk.SetSize(i)
-			return err
+			if err != nil {
+				return err
+			}
+			return udf.err
 		}
 		udf.count++
-		err := chunk.SetValue(0, i, udf.count)
+		err := SetChunkValue(chunk, 0, i, udf.count)
 		if err != nil {
 			return err
 		}
