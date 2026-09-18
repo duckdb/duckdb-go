@@ -7,8 +7,8 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// ChunkIteratorState is the chunk-based iterator passed to a ChunkContextExecutorFn.
-// It iterates over its rows via Rows().
+// ChunkIteratorState provides access to the input chunk and result vector of a
+// ChunkContextExecutorFn. Rows supports row-by-row iteration.
 type ChunkIteratorState struct {
 	r             Row
 	output        *vector
@@ -20,6 +20,24 @@ type ChunkIteratorState struct {
 // Call once per yielded row.
 func (iterState *ChunkIteratorState) SetResult(val any) error {
 	return iterState.output.SetValue(int(iterState.r.rowIdx), val)
+}
+
+// GetInputChunk returns the borrowed scalar UDF input chunk. Treat the chunk as
+// read-only, and do not retain it after the scalar UDF callback returns.
+func (iterState *ChunkIteratorState) GetInputChunk() *DataChunk {
+	if iterState == nil {
+		return nil
+	}
+	return iterState.r.chunk
+}
+
+// GetResultVector returns the borrowed writable scalar UDF result vector. Do
+// not retain it after the scalar UDF callback returns.
+func (iterState *ChunkIteratorState) GetResultVector() Vector {
+	if iterState == nil || iterState.r.chunk == nil || iterState.output == nil {
+		return Vector{}
+	}
+	return newVector(iterState.output, iterState.r.chunk.GetSize())
 }
 
 // GetValuePtr returns a pointer to the current row value for a column.
@@ -58,10 +76,6 @@ func (iterState *ChunkIteratorState) Rows() iter.Seq2[*ChunkIteratorState, error
 			}
 
 			if iterState.nullInNullOut && hasNull {
-				if err = iterState.output.SetValue(rowIdx, nil); err != nil {
-					yield(nil, err)
-					return
-				}
 				continue
 			}
 

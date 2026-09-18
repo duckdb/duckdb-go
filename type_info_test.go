@@ -18,6 +18,13 @@ type testTypeInfo struct {
 	testTypeValues
 }
 
+func mustTypeInfo(t testing.TB, typ Type) TypeInfo {
+	t.Helper()
+	info, err := NewTypeInfo(typ)
+	require.NoError(t, err)
+	return info
+}
+
 var testPrimitiveSQLValues = map[Type]testTypeValues{
 	TYPE_BOOLEAN:      {input: `true::BOOLEAN`, output: `true`},
 	TYPE_TINYINT:      {input: `42::TINYINT`, output: `42`},

@@ -83,6 +83,7 @@ The license is unchanged: the migrated repository keeps the original MIT license
 > [!WARNING]
 > Starting with `v2.0.0`, duckdb-go supports DuckDB `v1.2.0` and upward.
 > Moving to `v2` includes the following list of breaking changes.
+> Later `v2` releases add to the list; those entries say so.
 
 #### Dropping pre-built FreeBSD support
 
@@ -106,6 +107,17 @@ It is now possible to scan into `any`, or directly into duckdb-go's `Composite` 
 as shown in the [JSON example](https://github.com/duckdb/duckdb-go/blob/main/examples/json/main.go).
 Scanning directly into `string` or `[]byte` is no longer possible.
 A workaround is casting to `::VARCHAR` or `::BLOB` in DuckDB if you do not need to scan the result into a JSON interface.
+
+#### JSON type writing changes
+
+This change landed after `v2.0.0`, so it also affects upgrades between `v2` releases.
+
+`SetChunkValue` and `SetRowValue` previously wrote to a `JSON` column by storing the value verbatim,
+because DuckDB stores `JSON` as `VARCHAR` and the two were indistinguishable on the write path.
+They now marshal the value with `encoding/json`, matching what `DataChunk.SetValue` has always done.
+
+This changes what a `string` or a `[]byte` writes: a `string` becomes a JSON string (`hello` is stored as `"hello"`),
+and a `[]byte` becomes a base64-encoded JSON string. Use `json.RawMessage` to write a pre-serialized JSON document.
 
 ## Installation
 

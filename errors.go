@@ -44,8 +44,8 @@ func columnCountError(actual, expected int) error {
 	return fmt.Errorf("%s: expected %d, got %d", columnCountErrMsg, expected, actual)
 }
 
-func setValueError(colIdx, rowIdx int, val any, err error) error {
-	return fmt.Errorf("%s: at row %d, col %d, val: %v: %w", setValueErrMsg, rowIdx, colIdx, val, err)
+func setValueError(colIdx, rowIdx int, err error) error {
+	return fmt.Errorf("%s: at row %d, col %d: %w", setValueErrMsg, rowIdx, colIdx, err)
 }
 
 func paramIndexError(idx int, max uint64) error {
@@ -54,6 +54,10 @@ func paramIndexError(idx int, max uint64) error {
 
 func columnIndexError(idx int, max uint64) error {
 	return fmt.Errorf("%s: %d is out of range [0, %d)", columnIndexErrMsg, idx, max)
+}
+
+func rowIndexError(idx, max int) error {
+	return fmt.Errorf("%s: %d is out of range [0, %d)", rowIndexErrMsg, idx, max)
 }
 
 func unsupportedTypeError(name string) error {
@@ -109,12 +113,16 @@ const (
 	duplicateNameErrMsg         = "duplicate name"
 	paramIndexErrMsg            = "invalid parameter index"
 	columnIndexErrMsg           = "invalid column index"
+	rowIndexErrMsg              = "invalid row index"
 )
 
 var (
-	errInternal   = errors.New("internal error: please file a bug report at duckdb-go")
-	errAPI        = errors.New("API error")
-	errVectorSize = errors.New("data chunks cannot exceed duckdb's internal vector size")
+	errInternal                  = errors.New("internal error: please file a bug report at duckdb-go")
+	errAPI                       = errors.New("API error")
+	errVectorSize                = errors.New("data chunks cannot exceed duckdb's internal vector size")
+	errNilDataChunk              = errors.New("nil data chunk")
+	errUninitializedVectorView   = errors.New("uninitialized vector view")
+	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
 
 	errConnect      = errors.New("could not connect to database")
 	errParseDSN     = errors.New("could not parse DSN for database")
@@ -165,6 +173,7 @@ var (
 	errScalarUDFResultTypeIsANY = fmt.Errorf("%w: result type is ANY, which is not supported", errScalarUDFCreate)
 	errScalarUDFCreateSet       = fmt.Errorf("could not create scalar UDF set")
 	errScalarUDFAddToSet        = fmt.Errorf("%w: could not add the function to the set", errScalarUDFCreateSet)
+	errScalarUDFBindGetArgument = errors.New("could not get scalar UDF bind argument: argument cannot be copied (e.g. correlated subquery)")
 
 	errTableUDFCreate          = errors.New("could not create table UDF")
 	errTableUDFNoName          = fmt.Errorf("%w: missing name", errTableUDFCreate)

@@ -21,12 +21,14 @@ func (r Row) IsProjected(colIdx int) bool {
 
 // SetRowValue sets the value at colIdx to val.
 // Returns an error on failure, and nil for non-projected columns.
+// See SetChunkValue for JSON input semantics and typed-write behavior.
 func SetRowValue[T any](row Row, colIdx int, val T) error {
-	return SetChunkValue(*row.chunk, colIdx, int(row.rowIdx), val)
+	return setChunkVal(row.chunk, colIdx, int(row.rowIdx), val)
 }
 
 // SetRowValue sets the value at colIdx to val.
 // Returns an error on failure, and nil for non-projected columns.
+// See SetChunkValue for JSON input semantics and typed-write behavior.
 func (r Row) SetRowValue(colIdx int, val any) error {
 	return SetRowValue(r, colIdx, val)
 }
