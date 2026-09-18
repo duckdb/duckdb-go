@@ -435,7 +435,7 @@ func (a *Appender) initAppenderChunk() (*Appender, error) {
 // inserted by that call to `FillRow` or `FillChunk` is ignored. Any previous calls to either
 // of these functions will be processed and appended.
 func (a *Appender) AppendTableSource(s AppenderSource) error {
-	var runParallel = func(maxThreads int, worker func() error) error {
+	runParallel := func(maxThreads int, worker func() error) error {
 		g := errgroup.Group{}
 		for range min(maxThreads, runtime.GOMAXPROCS(-1)) {
 			g.Go(worker)
