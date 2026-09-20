@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/duckdb/duckdb-go/v2/mapping"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func TestPrepareQuery(t *testing.T) {
