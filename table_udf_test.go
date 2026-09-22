@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -1133,4 +1134,58 @@ func TestContextTableUDFPrepared(t *testing.T) {
 	require.NoError(t, res.Scan(&result))
 	require.Equal(t, uint64(222), result)
 	require.False(t, res.Next())
+}
+
+// jsonTableUDF returns a single row with a single column.
+type jsonTableUDF struct {
+	info  TypeInfo
+	value any
+	done  bool
+}
+
+func (udf *jsonTableUDF) ColumnInfos() []ColumnInfo {
+	return []ColumnInfo{{Name: "j", T: udf.info}}
+}
+
+func (udf *jsonTableUDF) Init() {}
+
+func (udf *jsonTableUDF) FillRow(row Row) (bool, error) {
+	if udf.done {
+		return false, nil
+	}
+	udf.done = true
+	return true, SetRowValue(row, 0, udf.value)
+}
+
+func (udf *jsonTableUDF) Cardinality() *CardinalityInfo {
+	return nil
+}
+
+func TestJSONTableUDF(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// The JSON TypeInfo keeps its alias, so the result column is JSON.
+	jsonInfo := columnTypeInfo(t, db, `SELECT '{}'::JSON`)
+	require.Equal(t, aliasJSON, jsonInfo.Alias())
+
+	for i, tt := range jsonWriteTests {
+		t.Run(tt.name, func(t *testing.T) {
+			name := "json_table_" + strconv.Itoa(i)
+			err := RegisterTableUDF(conn, name, RowTableFunction{
+				BindArguments: func(map[string]any, ...any) (RowTableSource, error) {
+					return &jsonTableUDF{info: jsonInfo, value: tt.value}, nil
+				},
+			})
+			require.NoError(t, err)
+
+			var got any
+			row := conn.QueryRowContext(context.Background(), `SELECT j::VARCHAR FROM `+name+`()`)
+			require.NoError(t, row.Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
 }

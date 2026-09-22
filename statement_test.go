@@ -1467,9 +1467,6 @@ func TestPreparedStatementColumnTypeInfoAliases(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
 
-	conn := openConnWrapper(t, db, context.Background())
-	defer closeConnWrapper(t, conn)
-
 	tests := []struct {
 		name  string
 		query string
@@ -1477,6 +1474,7 @@ func TestPreparedStatementColumnTypeInfoAliases(t *testing.T) {
 	}{
 		{name: "scalar", query: `SELECT '{"a":1}'::JSON`, want: []string{"VARCHAR:JSON"}},
 		{name: "list child", query: `SELECT ['{"a":1}'::JSON]`, want: []string{"LIST:", "VARCHAR:JSON"}},
+		{name: "array child", query: `SELECT ['{"a":1}'::JSON]::JSON[1]`, want: []string{"ARRAY:", "VARCHAR:JSON"}},
 		{name: "struct child", query: `SELECT {'k': '{"a":1}'::JSON}`, want: []string{"STRUCT:", "VARCHAR:JSON"}},
 		{name: "map value", query: `SELECT MAP {'k': '{"a":1}'::JSON}`, want: []string{"MAP:", "VARCHAR:", "VARCHAR:JSON"}},
 		{name: "union member", query: `SELECT union_value(a := '{"a":1}'::JSON)`, want: []string{"UNION:", "VARCHAR:JSON"}},
@@ -1486,34 +1484,38 @@ func TestPreparedStatementColumnTypeInfoAliases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var got, roundTripped []string
-			err := conn.Raw(func(driverConn any) (retErr error) {
-				stmt, err := driverConn.(*Conn).PrepareContext(context.Background(), tt.query)
-				if err != nil {
-					return err
-				}
-				defer func() { retErr = errors.Join(retErr, stmt.Close()) }()
+			info := columnTypeInfo(t, db, tt.query)
+			require.Equal(t, tt.want, typeInfoAliasTree(info))
 
-				info, err := stmt.(*Stmt).ColumnTypeInfo(0)
-				if err != nil {
-					return err
-				}
-				got = typeInfoAliasTree(info)
-
-				logicalType := info.logicalType()
-				defer mapping.DestroyLogicalType(&logicalType)
-				reconstructed, err := newTypeInfoFromLogicalType(logicalType)
-				if err != nil {
-					return err
-				}
-				roundTripped = typeInfoAliasTree(reconstructed)
-				return nil
-			})
+			logicalType := info.logicalType()
+			defer mapping.DestroyLogicalType(&logicalType)
+			roundTripped, err := newTypeInfoFromLogicalType(logicalType)
 			require.NoError(t, err)
-			require.Equal(t, tt.want, got)
-			require.Equal(t, tt.want, roundTripped)
+			require.Equal(t, tt.want, typeInfoAliasTree(roundTripped))
 		})
 	}
+}
+
+// columnTypeInfo returns the TypeInfo of the first result column of the prepared query.
+func columnTypeInfo(t *testing.T, db *sql.DB, query string) TypeInfo {
+	t.Helper()
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var info TypeInfo
+	err := conn.Raw(func(driverConn any) (retErr error) {
+		stmt, err := driverConn.(*Conn).PrepareContext(context.Background(), query)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, stmt.Close()) }()
+
+		info, err = stmt.(*Stmt).ColumnTypeInfo(0)
+		return err
+	})
+	require.NoError(t, err)
+	return info
 }
 
 func typeInfoAliasTree(info TypeInfo) []string {

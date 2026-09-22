@@ -112,7 +112,6 @@ func (u *UnionDetails) isTypeDetails() {}
 type baseTypeInfo struct {
 	Type
 
-	alias         string
 	structEntries []StructEntry
 	decimalWidth  uint8
 	decimalScale  uint8
@@ -135,6 +134,8 @@ type vectorTypeInfo struct {
 type typeInfo struct {
 	baseTypeInfo
 
+	// The logical type alias, if the TypeInfo was derived from a DuckDB type.
+	alias string
 	// Member or child types for LIST, MAP, ARRAY, and UNION.
 	types []TypeInfo
 	// Enum names or UNION member names.
@@ -146,6 +147,13 @@ type TypeInfo interface {
 	// InternalType returns the Type.
 	InternalType() Type
 	// Alias returns the logical type alias, or an empty string if the type has no alias.
+	// Only a TypeInfo derived from DuckDB, e.g., via Stmt.ColumnTypeInfo, carries an alias;
+	// the New*Info functions always return a TypeInfo with an empty alias.
+	// In practice, the alias is JSON or the name of an extension type such as INET.
+	// Names of types created with CREATE TYPE are not reported.
+	// The alias is re-applied when the TypeInfo is passed back to DuckDB, e.g., to NewQueryAppender or a UDF.
+	// For JSON, this means that written values are marshaled with encoding/json (see SetChunkValue),
+	// and that scalar UDF inputs are unmarshaled with encoding/json.
 	Alias() string
 	// Details returns type-specific details for complex types.
 	// Returns nil for simple/primitive types.
@@ -450,7 +458,9 @@ func (info *typeInfo) logicalType() mapping.LogicalType {
 	default:
 		return mapping.LogicalType{}
 	}
-	if info.alias != "" {
+	// Creating a nested type fails if a child type is unsupported, e.g., BIGNUM.
+	// duckdb_logical_type_set_alias does not check for NULL.
+	if info.alias != "" && logicalType.Ptr != nil {
 		mapping.LogicalTypeSetAlias(logicalType, info.alias)
 	}
 	return logicalType

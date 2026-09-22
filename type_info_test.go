@@ -605,6 +605,46 @@ func TestNewTypeInfoFromLogicalTypeNested(t *testing.T) {
 	require.Equal(t, "name", structDetails.Entries[1].Name())
 }
 
+func TestTypeInfoAliasWithUnsupportedChild(t *testing.T) {
+	// Creating a nested logical type returns NULL if a child type is unsupported, e.g., BIGNUM.
+	// Re-applying the alias must not pass that NULL logical type to DuckDB.
+	// UNION is not covered: duckdb_create_union_type does not accept a NULL member type.
+	tests := []struct {
+		name   string
+		create func(child mapping.LogicalType) mapping.LogicalType
+	}{
+		{name: "LIST", create: mapping.CreateListType},
+		{name: "ARRAY", create: func(child mapping.LogicalType) mapping.LogicalType {
+			return mapping.CreateArrayType(child, 2)
+		}},
+		{name: "MAP", create: func(child mapping.LogicalType) mapping.LogicalType {
+			key := mapping.CreateLogicalType(TYPE_VARCHAR)
+			defer mapping.DestroyLogicalType(&key)
+			return mapping.CreateMapType(key, child)
+		}},
+		{name: "STRUCT", create: func(child mapping.LogicalType) mapping.LogicalType {
+			return mapping.CreateStructType([]mapping.LogicalType{child}, []string{"a"})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			child := mapping.CreateLogicalType(TYPE_BIGNUM)
+			defer mapping.DestroyLogicalType(&child)
+			lt := tt.create(child)
+			defer mapping.DestroyLogicalType(&lt)
+			mapping.LogicalTypeSetAlias(lt, "my_alias")
+
+			info, err := newTypeInfoFromLogicalType(lt)
+			require.NoError(t, err)
+			require.Equal(t, "my_alias", info.Alias())
+
+			reconstructed := info.logicalType()
+			require.Nil(t, reconstructed.Ptr)
+		})
+	}
+}
+
 func TestTypeInfoDetails(t *testing.T) {
 	// Test primitive types return nil
 	t.Run("PrimitiveTypes", func(t *testing.T) {
