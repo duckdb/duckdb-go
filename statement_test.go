@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func TestPrepareQuery(t *testing.T) {
@@ -1459,6 +1461,83 @@ func TestPreparedStatementColumnTypeInfo(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestPreparedStatementColumnTypeInfoAliases(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{name: "scalar", query: `SELECT '{"a":1}'::JSON`, want: []string{"VARCHAR:JSON"}},
+		{name: "list child", query: `SELECT ['{"a":1}'::JSON]`, want: []string{"LIST:", "VARCHAR:JSON"}},
+		{name: "array child", query: `SELECT ['{"a":1}'::JSON]::JSON[1]`, want: []string{"ARRAY:", "VARCHAR:JSON"}},
+		{name: "struct child", query: `SELECT {'k': '{"a":1}'::JSON}`, want: []string{"STRUCT:", "VARCHAR:JSON"}},
+		{name: "map value", query: `SELECT MAP {'k': '{"a":1}'::JSON}`, want: []string{"MAP:", "VARCHAR:", "VARCHAR:JSON"}},
+		{name: "union member", query: `SELECT union_value(a := '{"a":1}'::JSON)`, want: []string{"UNION:", "VARCHAR:JSON"}},
+		{name: "empty alias", query: `SELECT 'plain'::VARCHAR`, want: []string{"VARCHAR:"}},
+		{name: "unbound parameter result", query: `SELECT ?::JSON`, want: []string{"VARCHAR:JSON"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := columnTypeInfo(t, db, tt.query)
+			require.Equal(t, tt.want, typeInfoAliasTree(info))
+
+			logicalType := info.logicalType()
+			defer mapping.DestroyLogicalType(&logicalType)
+			roundTripped, err := newTypeInfoFromLogicalType(logicalType)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, typeInfoAliasTree(roundTripped))
+		})
+	}
+}
+
+// columnTypeInfo returns the TypeInfo of the first result column of the prepared query.
+func columnTypeInfo(t *testing.T, db *sql.DB, query string) TypeInfo {
+	t.Helper()
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var info TypeInfo
+	err := conn.Raw(func(driverConn any) (retErr error) {
+		stmt, err := driverConn.(*Conn).PrepareContext(context.Background(), query)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, stmt.Close()) }()
+
+		info, err = stmt.(*Stmt).ColumnTypeInfo(0)
+		return err
+	})
+	require.NoError(t, err)
+	return info
+}
+
+func typeInfoAliasTree(info TypeInfo) []string {
+	aliases := []string{typeToStringMap[info.InternalType()] + ":" + info.Alias()}
+	switch details := info.Details().(type) {
+	case *ListDetails:
+		aliases = append(aliases, typeInfoAliasTree(details.Child)...)
+	case *ArrayDetails:
+		aliases = append(aliases, typeInfoAliasTree(details.Child)...)
+	case *MapDetails:
+		aliases = append(aliases, typeInfoAliasTree(details.Key)...)
+		aliases = append(aliases, typeInfoAliasTree(details.Value)...)
+	case *StructDetails:
+		for _, entry := range details.Entries {
+			aliases = append(aliases, typeInfoAliasTree(entry.Info())...)
+		}
+	case *UnionDetails:
+		for _, member := range details.Members {
+			aliases = append(aliases, typeInfoAliasTree(member.Type)...)
+		}
+	}
+	return aliases
 }
 
 func TestVariantColumnType(t *testing.T) {

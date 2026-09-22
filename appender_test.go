@@ -306,6 +306,67 @@ func TestQueryAppenderVariantShredding(t *testing.T) {
 	require.Equal(t, 500, y)
 }
 
+// jsonWriteTests lists how values written to a JSON column are stored.
+// The values are marshaled with encoding/json, see SetChunkValue.
+var jsonWriteTests = []struct {
+	name  string
+	value any
+	// want is the stored value cast to VARCHAR.
+	want any
+}{
+	{name: "string is a JSON string", value: `{"a":1}`, want: `"{\"a\":1}"`},
+	{name: "raw message is a JSON document", value: json.RawMessage(`{"a":1}`), want: `{"a":1}`},
+	{name: "map is a JSON object", value: map[string]any{"a": 1}, want: `{"a":1}`},
+	{name: "byte slice is a base64 JSON string", value: []byte(`{"a":1}`), want: `"eyJhIjoxfQ=="`},
+	{name: "nil is NULL", value: nil, want: nil},
+}
+
+func TestQueryAppenderColumnTypeInfoJSON(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	db := sql.OpenDB(c)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE query_appended (id INTEGER, j JSON)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE table_appended (id INTEGER, j JSON)`)
+	require.NoError(t, err)
+
+	// The JSON TypeInfo keeps its alias, so the query appender marshals values
+	// like the table appender does for a JSON column.
+	intInfo, err := NewTypeInfo(TYPE_INTEGER)
+	require.NoError(t, err)
+	jsonInfo := columnTypeInfo(t, db, `SELECT j FROM query_appended`)
+	require.Equal(t, aliasJSON, jsonInfo.Alias())
+	colTypes := []TypeInfo{intInfo, jsonInfo}
+
+	conn := openDriverConnWrapper(t, c)
+	defer closeDriverConnWrapper(t, &conn)
+
+	for i, tt := range jsonWriteTests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := int32(i)
+
+			a := newQueryAppenderWrapper(t, &conn,
+				`INSERT INTO query_appended SELECT col1, col2 FROM appended_data`, "", colTypes, []string{})
+			require.NoError(t, a.AppendRow(id, tt.value))
+			closeAppenderWrapper(t, a)
+
+			a = newTableAppenderWrapper(t, &conn,
+				`INSERT INTO table_appended SELECT col1, col2 FROM appended_data`, "", "", "table_appended", []string{})
+			require.NoError(t, a.AppendRow(id, tt.value))
+			closeAppenderWrapper(t, a)
+
+			for _, table := range []string{"query_appended", "table_appended"} {
+				var got any
+				require.NoError(t, db.QueryRow(`SELECT j::VARCHAR FROM `+table+` WHERE id = ?`, id).Scan(&got))
+				require.Equal(t, tt.want, got, table)
+			}
+		})
+	}
+}
+
 func TestAppendChunks(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 		CREATE TABLE test (

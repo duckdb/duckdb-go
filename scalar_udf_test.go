@@ -506,6 +506,85 @@ func TestANYScalarUDF(t *testing.T) {
 	require.Equal(t, 0, count)
 }
 
+// jsonSUDF is a scalar UDF with configurable types and row executor.
+type jsonSUDF struct {
+	inputs []TypeInfo
+	result TypeInfo
+	fn     RowExecutorFn
+}
+
+func (udf *jsonSUDF) Config() ScalarFuncConfig {
+	return ScalarFuncConfig{InputTypeInfos: udf.inputs, ResultTypeInfo: udf.result}
+}
+
+func (udf *jsonSUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{RowExecutor: udf.fn}
+}
+
+func TestJSONScalarUDF(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// The JSON TypeInfo keeps its alias, so the UDF has JSON parameters and results.
+	jsonInfo := columnTypeInfo(t, db, `SELECT '{}'::JSON`)
+	require.Equal(t, aliasJSON, jsonInfo.Alias())
+	varcharInfo, err := NewTypeInfo(TYPE_VARCHAR)
+	require.NoError(t, err)
+
+	t.Run("inputs are unmarshaled", func(t *testing.T) {
+		udf := &jsonSUDF{
+			inputs: []TypeInfo{jsonInfo},
+			result: varcharInfo,
+			fn: func(values []driver.Value) (any, error) {
+				return fmt.Sprintf("%#v", values[0]), nil
+			},
+		}
+		require.NoError(t, RegisterScalarUDF(conn, "json_input", udf))
+
+		tests := []struct {
+			name string
+			arg  string
+			want string
+		}{
+			{name: "object", arg: `'{"a":1}'::JSON`, want: `map[string]interface {}{"a":1}`},
+			{name: "array", arg: `'[1,"x"]'::JSON`, want: `[]interface {}{1, "x"}`},
+			{name: "string", arg: `'"s"'::JSON`, want: `"s"`},
+			{name: "number", arg: `'1.5'::JSON`, want: `1.5`},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				var got string
+				row := conn.QueryRowContext(context.Background(), `SELECT json_input(`+tt.arg+`)`)
+				require.NoError(t, row.Scan(&got))
+				require.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("results are marshaled", func(t *testing.T) {
+		for i, tt := range jsonWriteTests {
+			t.Run(tt.name, func(t *testing.T) {
+				name := "json_result_" + strconv.Itoa(i)
+				udf := &jsonSUDF{
+					result: jsonInfo,
+					fn: func([]driver.Value) (any, error) {
+						return tt.value, nil
+					},
+				}
+				require.NoError(t, RegisterScalarUDF(conn, name, udf))
+
+				var got any
+				row := conn.QueryRowContext(context.Background(), `SELECT `+name+`()::VARCHAR`)
+				require.NoError(t, row.Scan(&got))
+				require.Equal(t, tt.want, got)
+			})
+		}
+	})
+}
+
 func TestUnionScalarUDF(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
