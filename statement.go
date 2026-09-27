@@ -53,6 +53,8 @@ type Stmt struct {
 	bound            bool
 	closed           bool
 	rows             bool
+	// True, if Conn.Close destroyed the statement, else false.
+	closedByConn bool
 }
 
 // checkState checks if the statement is closed or uninitialized.
@@ -72,11 +74,20 @@ func (s *Stmt) Close() error {
 	if s.rows {
 		panic("database/sql/driver: misuse of duckdb driver: Close with active Rows")
 	}
+
+	s.conn.stmtsMu.Lock()
+	defer s.conn.stmtsMu.Unlock()
+
+	// Conn.Close already destroyed the statement.
+	if s.closedByConn {
+		return nil
+	}
 	if s.closed {
 		panic("database/sql/driver: misuse of duckdb driver: double Close of Stmt")
 	}
 
 	s.closed = true
+	delete(s.conn.stmts, s)
 	mapping.DestroyPrepare(s.preparedStmt)
 	return nil
 }
@@ -84,6 +95,11 @@ func (s *Stmt) Close() error {
 // NumInput returns the number of placeholder parameters.
 // Implements the driver.Stmt interface.
 func (s *Stmt) NumInput() int {
+	// The number of parameters is unknown after Conn.Close destroyed the statement.
+	// Executing the statement returns an error.
+	if s.closedByConn {
+		return -1
+	}
 	if s.closed {
 		panic("database/sql/driver: misuse of duckdb driver: NumInput after Close")
 	}
@@ -570,6 +586,11 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 // ExecContext executes a query that doesn't return rows, such as an INSERT or UPDATE.
 // It implements the driver.StmtExecContext interface.
 func (s *Stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driver.Result, error) {
+	// Do not touch the closed connection.
+	if s.closedByConn {
+		return nil, errClosedStmt
+	}
+
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 
@@ -693,6 +714,11 @@ func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.StmtQueryContext interface.
 func (s *Stmt) QueryContext(ctx context.Context, nargs []driver.NamedValue) (driver.Rows, error) {
+	// Do not touch the closed connection.
+	if s.closedByConn {
+		return nil, errClosedStmt
+	}
+
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 
