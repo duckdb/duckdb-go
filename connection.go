@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/big"
 	"reflect"
+	"sync"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -24,6 +25,15 @@ type Conn struct {
 	closed bool
 	// True, if the connection has an open transaction.
 	tx bool
+
+	// stmtsMu guards stmts and the closed state of the statements in stmts,
+	// so that Stmt.Close and Conn.Close never destroy the same statement twice.
+	stmtsMu sync.Mutex
+	// The prepared statements of this connection that have not been closed yet.
+	// database/sql does not track statements prepared on a single connection
+	// (e.g., via sql.Conn.PrepareContext), and each prepared statement keeps the
+	// database instance alive. Close destroys them before disconnecting.
+	stmts map[*Stmt]struct{}
 }
 
 func newConn(conn mapping.Connection, ctxStore *contextStore) *Conn {
@@ -167,11 +177,18 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 
 // Close closes the connection to the database.
 // It implements the driver.Conn interface.
+// As required by driver.Conn, it invalidates all prepared statements of the connection
+// that are still open. Using such a statement afterward returns an error,
+// and closing it is a no-op.
 func (conn *Conn) Close() error {
 	if conn.closed {
 		return errClosedCon
 	}
 	conn.closed = true
+	// Destroy the remaining prepared statements before disconnecting.
+	// Otherwise, they keep the database instance alive after closing the connector,
+	// together with its threads and the lock on the database file.
+	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)
 
@@ -209,7 +226,33 @@ func (conn *Conn) prepareExtractedStmt(ctx context.Context, extractedStmts mappi
 		mapping.DestroyPrepare(&stmt)
 		return nil, err
 	}
-	return &Stmt{conn: conn, preparedStmt: &stmt}, nil
+	s := &Stmt{conn: conn, preparedStmt: &stmt}
+	conn.addStmt(s)
+	return s, nil
+}
+
+// addStmt records a prepared statement of the connection.
+func (conn *Conn) addStmt(s *Stmt) {
+	conn.stmtsMu.Lock()
+	defer conn.stmtsMu.Unlock()
+
+	if conn.stmts == nil {
+		conn.stmts = make(map[*Stmt]struct{})
+	}
+	conn.stmts[s] = struct{}{}
+}
+
+// closeStmts destroys all prepared statements of the connection that are still open.
+func (conn *Conn) closeStmts() {
+	conn.stmtsMu.Lock()
+	defer conn.stmtsMu.Unlock()
+
+	for s := range conn.stmts {
+		s.closed = true
+		s.closedByConn = true
+		mapping.DestroyPrepare(s.preparedStmt)
+	}
+	conn.stmts = nil
 }
 
 func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error) {
