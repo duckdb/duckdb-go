@@ -470,13 +470,14 @@ Additionally, automatic extension loading is enabled.
 
 Prepare normal releases from `main`. For LTS releases that stay on DuckDB 1.4 Andium, use the `v1.4-andium` branch.
 
-1. Create a new branch.
-2. Update `duckdb-go-bindings` via `go get github.com/duckdb/duckdb-go-bindings@latest`.
-3. Run `go mod tidy`.
-4. Update `DUCKDB_VERSION` in `Makefile`.
-5. Update the latest version in `README.md`.
-6. Commit and PR changes.
-7. Push a new tagged release, `v2.MAJOR_MINOR_PATCH.x`, e.g. `v2.10500.0` for DuckDB 1.5.0.
+1. Release the new DuckDB version in [duckdb-go-bindings](https://github.com/duckdb/duckdb-go-bindings#releasing-a-new-duckdb-version).
+2. Create a new branch.
+3. Update `duckdb-go-bindings` via `go get github.com/duckdb/duckdb-go-bindings@latest`.
+4. Run `go mod tidy`.
+5. Update `DUCKDB_VERSION` in `Makefile`.
+6. Update the latest version and the version table in `README.md`.
+7. Commit and PR changes. Link the bindings release in the PR description.
+8. After the PR is merged, push a new tagged release, `v2.MAJOR_MINOR_PATCH.x`, e.g. `v2.10500.0` for DuckDB 1.5.0, and publish a GitHub release for the tag.
 
 ```
 git tag <tagname>

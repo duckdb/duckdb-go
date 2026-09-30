@@ -41,11 +41,4 @@ Choose descriptive, concise names. Avoid single-letter variable names.
 
 ## Upgrading DuckDB
 
-To upgrade to a new version of DuckDB:
-
-1. Fork the project and create a new branch. 
-2. Change `DUCKDB_BRANCH` in the `Makefile` to match the latest DuckDB version, for example `DUCKDB_BRANCH=v0.10.0`.
-3. Push the updated `Makefile` and create a PR.
-4. Wait for GitHub Actions to pre-compile the static libraries in `deps`. 
-They will be committed automatically to your branch.
-5. If everything looks good, we will merge the PR.
+See [Releasing a New DuckDB Version](README.md#releasing-a-new-duckdb-version) in the README.
