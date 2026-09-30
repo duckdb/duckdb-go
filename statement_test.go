@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -2046,4 +2047,61 @@ func TestBindRejectedValues(t *testing.T) {
 			require.ErrorIs(t, err, errCreateValue)
 		})
 	}
+}
+
+func TestBindDecimal(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name     string
+		val      Decimal
+		wantType string
+	}{
+		{name: "fraction", val: Decimal{Width: 7, Scale: 4, Value: big.NewInt(1234500)}, wantType: "DECIMAL(7,4)"},
+		{name: "negative", val: Decimal{Width: 5, Scale: 2, Value: big.NewInt(-12345)}, wantType: "DECIMAL(5,2)"},
+		{name: "zero", val: Decimal{Width: 1, Scale: 0, Value: big.NewInt(0)}, wantType: "DECIMAL(1,0)"},
+		{name: "max width", val: Decimal{Width: 38, Scale: 0, Value: new(big.Int).Sub(new(big.Int).Exp(big.NewInt(10), big.NewInt(38), nil), big.NewInt(1))}, wantType: "DECIMAL(38,0)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var typ string
+			var got Decimal
+			require.NoError(t, db.QueryRow(`SELECT typeof(?), ?`, tt.val, tt.val).Scan(&typ, &got))
+			require.Equal(t, tt.wantType, typ)
+			require.Equal(t, tt.val.Width, got.Width)
+			require.Equal(t, tt.val.Scale, got.Scale)
+			require.Equal(t, 0, tt.val.Value.Cmp(got.Value))
+		})
+	}
+}
+
+func TestBindDecimalErrors(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name    string
+		val     Decimal
+		wantErr error
+	}{
+		{name: "width zero", val: Decimal{Width: 0, Value: big.NewInt(0)}, wantErr: errInvalidDecimalWidth},
+		{name: "width too large", val: Decimal{Width: 39, Value: big.NewInt(0)}, wantErr: errInvalidDecimalWidth},
+		{name: "scale exceeds width", val: Decimal{Width: 2, Scale: 3, Value: big.NewInt(1)}, wantErr: errInvalidDecimalScale},
+		{name: "value exceeds width", val: Decimal{Width: 2, Value: big.NewInt(123)}, wantErr: errDecimalValueExceedsWidth},
+		{name: "negative value exceeds width", val: Decimal{Width: 2, Value: big.NewInt(-123)}, wantErr: errDecimalValueExceedsWidth},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Decimal
+			err := db.QueryRow(`SELECT ?`, tt.val).Scan(&got)
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+
+	t.Run("nil value", func(t *testing.T) {
+		var got Decimal
+		err := db.QueryRow(`SELECT ?`, Decimal{Width: 2}).Scan(&got)
+		require.ErrorContains(t, err, "nil Decimal.Value")
+	})
 }
