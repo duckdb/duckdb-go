@@ -128,6 +128,15 @@ func assertElementType[T any](t Type, v any) (T, error) {
 	return vv, nil
 }
 
+// createAssertedValue asserts v to T and creates a DuckDB value from it with create.
+func createAssertedValue[T any](t Type, v any, create func(T) mapping.Value) (mapping.Value, error) {
+	vv, err := assertElementType[T](t, v)
+	if err != nil {
+		return mapping.Value{}, err
+	}
+	return create(vv), nil
+}
+
 func checkCreatedValue(v mapping.Value) (mapping.Value, error) {
 	// DuckDB returns a nil pointer when a value constructor rejects its input.
 	if v.Ptr == nil {
@@ -150,77 +159,29 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 	case TYPE_SQLNULL:
 		return mapping.CreateNullValue(), nil
 	case TYPE_BOOLEAN:
-		vv, err := assertElementType[bool](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateBool(vv), nil
+		return createAssertedValue(t, v, mapping.CreateBool)
 	case TYPE_TINYINT:
-		vv, err := assertElementType[int8](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateInt8(vv), nil
+		return createAssertedValue(t, v, mapping.CreateInt8)
 	case TYPE_SMALLINT:
-		vv, err := assertElementType[int16](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateInt16(vv), nil
+		return createAssertedValue(t, v, mapping.CreateInt16)
 	case TYPE_INTEGER:
-		vv, err := assertElementType[int32](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateInt32(vv), nil
+		return createAssertedValue(t, v, mapping.CreateInt32)
 	case TYPE_BIGINT:
-		vv, err := assertElementType[int64](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateInt64(vv), nil
+		return createAssertedValue(t, v, mapping.CreateInt64)
 	case TYPE_UTINYINT:
-		vv, err := assertElementType[uint8](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateUInt8(vv), nil
+		return createAssertedValue(t, v, mapping.CreateUInt8)
 	case TYPE_USMALLINT:
-		vv, err := assertElementType[uint16](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateUInt16(vv), nil
+		return createAssertedValue(t, v, mapping.CreateUInt16)
 	case TYPE_UINTEGER:
-		vv, err := assertElementType[uint32](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateUInt32(vv), nil
+		return createAssertedValue(t, v, mapping.CreateUInt32)
 	case TYPE_UBIGINT:
-		vv, err := assertElementType[uint64](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateUInt64(vv), nil
+		return createAssertedValue(t, v, mapping.CreateUInt64)
 	case TYPE_FLOAT:
-		vv, err := assertElementType[float32](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateFloat(vv), nil
+		return createAssertedValue(t, v, mapping.CreateFloat)
 	case TYPE_DOUBLE:
-		vv, err := assertElementType[float64](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return mapping.CreateDouble(vv), nil
+		return createAssertedValue(t, v, mapping.CreateDouble)
 	case TYPE_VARCHAR:
-		vv, err := assertElementType[string](t, v)
-		if err != nil {
-			return mapping.Value{}, err
-		}
-		return createVarchar(vv), nil
+		return createAssertedValue(t, v, createVarchar)
 	case TYPE_TIMESTAMP:
 		vv, err := inferTimestamp(t, v)
 		if err != nil {
