@@ -435,7 +435,7 @@ func inferSliceLogicalTypeAndValue[T any](val T, array bool, length int) (mappin
 		values = append(values, vv)
 		logicalTypes = append(logicalTypes, et)
 
-		if et.Ptr != nil {
+		if et.Ptr != nil && mapping.GetTypeId(et) != TYPE_SQLNULL {
 			if elemLogicalType.Ptr == nil {
 				elemLogicalType = et
 				expectedIndex = i
@@ -452,7 +452,9 @@ func inferSliceLogicalTypeAndValue[T any](val T, array bool, length int) (mappin
 	}
 
 	if elemLogicalType.Ptr == nil {
-		return elemLogicalType, mapping.Value{}, unsupportedTypeError(reflect.TypeOf(val).Name())
+		nullType := mapping.CreateLogicalType(TYPE_SQLNULL)
+		defer mapping.DestroyLogicalType(&nullType)
+		return typeFunc(nullType), createFunc(nullType, values), nil
 	}
 	return typeFunc(elemLogicalType), createFunc(elemLogicalType, values), nil
 }
@@ -476,6 +478,10 @@ func createSliceValue[T any](lt mapping.LogicalType, t Type, val T) (mapping.Val
 	defer func() { destroyValueSlice(values) }()
 
 	for _, v := range slice {
+		if isNil(v) {
+			values = append(values, mapping.CreateNullValue())
+			continue
+		}
 		vv, err := createValue(childType, v)
 		if err != nil {
 			return mapping.Value{}, err
