@@ -315,6 +315,22 @@ func (s *Stmt) bindCompositeValue(val driver.NamedValue, n int) (mapping.State, 
 	}
 
 	mappedVal, err := createValue(lt, val.Value)
+	if errors.Is(err, errElementType) {
+		// The values do not have the Go types of the declared parameter type, e.g. int64 elements for an INTEGER[]
+		// parameter that DuckDB inferred from `$1::INTEGER[]`. Bind them as the values they are and let DuckDB cast
+		// them to the parameter type, as it does for any other value of a different type; an element the cast
+		// cannot represent fails there with DuckDB's conversion error instead of a Go type assertion panic.
+		//
+		// "As the values they are" means exactly what tryBindComplexValue binds for a parameter whose type is
+		// unknown: the same inference, with no rules of its own. A value that inference cannot bind (mixed element
+		// types, a []byte read as VARCHAR, a defined type without Stringer) fails here as it fails there.
+		sourceType, sourceValue, inferErr := inferLogicalTypeAndValue(val.Value)
+		defer mapping.DestroyLogicalType(&sourceType)
+		defer mapping.DestroyValue(&sourceValue)
+		if inferErr == nil {
+			return mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), sourceValue), nil
+		}
+	}
 	if err != nil {
 		return mapping.StateError, addIndexToError(err, n+1)
 	}
