@@ -587,6 +587,11 @@ func setVectorVal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	case TYPE_UNION:
 		return setUnion(vec, rowIdx, val)
 	default:
+		name, inMap := unsupportedValueTypeToStringMap[vec.Type]
+		if inMap {
+			return unsupportedTypeError(name)
+		}
+
 		return unsupportedTypeError(unknownTypeErrMsg)
 	}
 }
