@@ -203,3 +203,68 @@ func TestRunWithCtxInterrupt_RecursiveOnlyOneGoroutine(t *testing.T) {
 	close(allowReturn)
 	require.NoError(t, <-doneErrCh)
 }
+
+// Test that a panic in fn after cancellation still stops the interrupter goroutine.
+// Callers may recover the panic and keep using the connection, so a leftover
+// interrupter would cancel later queries on it, or call Interrupt on a closed connection.
+func TestRunWithCtxInterrupt_PanicAfterCancel_StopsInterrupter(t *testing.T) {
+	patchVar(t, &interruptInterval, 5*time.Millisecond)
+
+	var count atomic.Int64
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) { count.Add(1) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	started := make(chan struct{})
+	allowPanic := make(chan struct{})
+	recoveredCh := make(chan any, 1)
+
+	var dummyConn mapping.Connection
+	go func() {
+		defer func() { recoveredCh <- recover() }()
+		_ = runWithCtxInterrupt(ctx, dummyConn, func(_ context.Context) error {
+			close(started)
+			<-allowPanic
+			panic("boom")
+		})
+	}()
+
+	<-started
+	cancel()
+	for count.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	close(allowPanic)
+
+	require.Equal(t, "boom", <-recoveredCh, "the panic should propagate to the caller")
+
+	finalCount := count.Load()
+	time.Sleep(20 * interruptInterval)
+	require.Equal(t, finalCount, count.Load(), "Interrupt should not be called after fn panics")
+}
+
+// Test that a panic in fn before cancellation does not leave an interrupter waiting on ctx.
+func TestRunWithCtxInterrupt_PanicBeforeCancel_NoInterrupt(t *testing.T) {
+	patchVar(t, &interruptInterval, 5*time.Millisecond)
+
+	var count atomic.Int64
+	patchVar(t, &mapping.Interrupt, func(_ mapping.Connection) { count.Add(1) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dummyConn mapping.Connection
+	recoveredCh := make(chan any, 1)
+	func() {
+		defer func() { recoveredCh <- recover() }()
+		_ = runWithCtxInterrupt(ctx, dummyConn, func(_ context.Context) error {
+			panic("boom")
+		})
+	}()
+	require.Equal(t, "boom", <-recoveredCh, "the panic should propagate to the caller")
+
+	cancel()
+	time.Sleep(20 * interruptInterval)
+	require.Equal(t, int64(0), count.Load(), "Interrupt should not be called after fn panics")
+}
