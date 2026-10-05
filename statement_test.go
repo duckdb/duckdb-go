@@ -1835,3 +1835,62 @@ func TestBindBlobWithNullBytes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, input, got)
 }
+
+func TestBindCompositeNullElements(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  []any
+	}{
+		{name: "list interior null", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), nil, int32(2)}, want: []any{int32(1), nil, int32(2)}},
+		{name: "list leading null", query: "SELECT ?::INTEGER[]", arg: []any{nil, int32(2)}, want: []any{nil, int32(2)}},
+		{name: "list trailing null", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), nil}, want: []any{int32(1), nil}},
+		{name: "list all null", query: "SELECT ?::INTEGER[]", arg: []any{nil, nil}, want: []any{nil, nil}},
+		{name: "list typed nil", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), (*int32)(nil), int32(2)}, want: []any{int32(1), nil, int32(2)}},
+		{name: "array interior null", query: "SELECT ?::INTEGER[3]", arg: [3]any{int32(1), nil, int32(2)}, want: []any{int32(1), nil, int32(2)}},
+		{name: "non-null control", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), int32(2)}, want: []any{int32(1), int32(2)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openDbWrapper(t, "")
+			defer closeDbWrapper(t, db)
+			var got Composite[[]any]
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.Get())
+		})
+	}
+}
+
+func TestBindInferredListNullElements(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name     string
+		arg      any
+		wantType string
+		want     []any
+	}{
+		{name: "leading null", arg: []any{nil, "a"}, wantType: "VARCHAR[]", want: []any{nil, "a"}},
+		{name: "trailing null", arg: []any{"a", nil}, wantType: "VARCHAR[]", want: []any{"a", nil}},
+		{name: "null between integers", arg: []any{int64(1), nil, int64(2)}, wantType: "BIGINT[]", want: []any{int64(1), nil, int64(2)}},
+		{name: "all null", arg: []any{nil, nil}, wantType: `"NULL"[]`, want: []any{nil, nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var typ string
+			var got Composite[[]any]
+			require.NoError(t, db.QueryRow(`SELECT typeof(?), ?`, tt.arg, tt.arg).Scan(&typ, &got))
+			require.Equal(t, tt.wantType, typ)
+			require.Equal(t, tt.want, got.Get())
+		})
+	}
+
+	t.Run("mixed non-null types", func(t *testing.T) {
+		var got Composite[[]any]
+		err := db.QueryRow(`SELECT ?`, []any{nil, "a", int64(1)}).Scan(&got)
+		require.ErrorContains(t, err, "mixed types in slice")
+	})
+}
