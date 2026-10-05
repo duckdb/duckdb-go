@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"math/big"
 	"reflect"
 
@@ -56,12 +57,12 @@ func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.N
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
-	prepared, err := conn.prepareStmts(ctx, query)
+	prepared, remaining, err := conn.prepareStmts(ctx, query, args)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := prepared.ExecContext(ctx, args)
+	res, err := prepared.ExecContext(ctx, remaining)
 	errClose := prepared.Close()
 	if err != nil {
 		if errClose != nil {
@@ -84,12 +85,12 @@ func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.
 
 	var rows driver.Rows
 	err := runWithCtxInterrupt(ctx, conn.conn, func(wctx context.Context) error {
-		prepared, err := conn.prepareStmts(wctx, query)
+		prepared, remaining, err := conn.prepareStmts(wctx, query, args)
 		if err != nil {
 			return err
 		}
 
-		r, err := prepared.QueryContext(wctx, args)
+		r, err := prepared.QueryContext(wctx, remaining)
 		if err != nil {
 			errClose := prepared.Close()
 			if errClose != nil {
@@ -114,7 +115,11 @@ func (conn *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
-	return conn.prepareStmts(ctx, query)
+	// Intermediate statements in a multi-statement query are executed during
+	// prepare with no bound arguments, so placeholders may only appear in the
+	// final statement when using Prepare/PrepareContext.
+	prepared, _, err := conn.prepareStmts(ctx, query, nil)
+	return prepared, err
 }
 
 // Prepare returns a prepared statement, bound to this connection.
@@ -212,47 +217,85 @@ func (conn *Conn) prepareExtractedStmt(ctx context.Context, extractedStmts mappi
 	return &Stmt{conn: conn, preparedStmt: &stmt}, nil
 }
 
-func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error) {
+func (conn *Conn) prepareStmts(ctx context.Context, query string, args []driver.NamedValue) (*Stmt, []driver.NamedValue, error) {
 	if conn.closed {
-		return nil, errClosedCon
+		return nil, nil, errClosedCon
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	stmts, count, errExtract := conn.extractStmts(ctx, query)
 	if errExtract != nil {
-		return nil, errExtract
+		return nil, nil, errExtract
 	}
 	defer mapping.DestroyExtracted(stmts)
 
+	remaining := args
 	for i := mapping.IdxT(0); i < count-1; i++ {
 		preparedStmt, err := conn.prepareExtractedStmt(ctx, *stmts, i)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Check for cancellation between prepare and execute
 		if err := ctx.Err(); err != nil {
 			if closeErr := preparedStmt.Close(); closeErr != nil {
-				return nil, errors.Join(err, closeErr)
+				return nil, nil, errors.Join(err, closeErr)
 			}
-			return nil, err
+			return nil, nil, err
 		}
 
-		// Execute the statement without any arguments and ignore the result.
-		_, execErr := preparedStmt.ExecContext(ctx, nil)
+		stmtArgs, rest, err := takeStmtArgs(remaining, preparedStmt.NumInput())
+		if err != nil {
+			_ = preparedStmt.Close()
+			return nil, nil, err
+		}
+		remaining = rest
+
+		// Execute the statement and ignore the result.
+		_, execErr := preparedStmt.ExecContext(ctx, stmtArgs)
 		closeErr := preparedStmt.Close()
 		if execErr != nil {
-			return nil, execErr
+			return nil, nil, execErr
 		}
 		if closeErr != nil {
-			return nil, closeErr
+			return nil, nil, closeErr
 		}
 	}
 
-	return conn.prepareExtractedStmt(ctx, *stmts, count-1)
+	prepared, err := conn.prepareExtractedStmt(ctx, *stmts, count-1)
+	if err != nil {
+		return nil, nil, err
+	}
+	return prepared, renumberArgs(remaining), nil
+}
+
+// takeStmtArgs returns the next n arguments for a statement, renumbering
+// ordinals to be 1-based for that statement, and the unused remainder.
+func takeStmtArgs(args []driver.NamedValue, n int) ([]driver.NamedValue, []driver.NamedValue, error) {
+	if n == 0 {
+		return nil, args, nil
+	}
+	if n > len(args) {
+		return nil, nil, fmt.Errorf("incorrect argument count for command: have %d want %d", len(args), n)
+	}
+
+	return renumberArgs(args[:n]), args[n:], nil
+}
+
+// renumberArgs copies args with 1-based ordinals for binding to a single statement.
+func renumberArgs(args []driver.NamedValue) []driver.NamedValue {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]driver.NamedValue, len(args))
+	for i := range args {
+		out[i] = args[i]
+		out[i].Ordinal = i + 1
+	}
+	return out
 }
 
 // GetTableNames returns the tables names of a query.

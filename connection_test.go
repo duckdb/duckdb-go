@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"database/sql/driver"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,4 +64,35 @@ func TestGetTableNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTakeStmtArgs(t *testing.T) {
+	args := []driver.NamedValue{
+		{Ordinal: 1, Value: "a"},
+		{Ordinal: 2, Value: "b"},
+		{Ordinal: 3, Value: "c"},
+	}
+
+	taken, rest, err := takeStmtArgs(args, 2)
+	require.NoError(t, err)
+	require.Len(t, taken, 2)
+	require.Equal(t, 1, taken[0].Ordinal)
+	require.Equal(t, 2, taken[1].Ordinal)
+	require.Equal(t, "a", taken[0].Value)
+	require.Equal(t, "b", taken[1].Value)
+	require.Len(t, rest, 1)
+	require.Equal(t, 3, rest[0].Ordinal)
+
+	_, _, err = takeStmtArgs(rest, 2)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "incorrect argument count for command: have 1 want 2")
+
+	empty, rest2, err := takeStmtArgs(rest, 0)
+	require.NoError(t, err)
+	require.Nil(t, empty)
+	require.Equal(t, rest, rest2)
+
+	renumbered := renumberArgs(rest)
+	require.Equal(t, 1, renumbered[0].Ordinal)
+	require.Equal(t, "c", renumbered[0].Value)
 }

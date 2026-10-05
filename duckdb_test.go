@@ -795,8 +795,12 @@ func TestMultipleStatements(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = db.Exec(`INSERT INTO foo VALUES (?); INSERT INTO bar VALUES (?);`, "hello", "world")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "incorrect argument count for command: have 0 want 1")
+	require.NoError(t, err)
+	var fooVal, barVal string
+	require.NoError(t, db.QueryRow(`SELECT x FROM foo`).Scan(&fooVal))
+	require.NoError(t, db.QueryRow(`SELECT x FROM bar`).Scan(&barVal))
+	require.Equal(t, "hello", fooVal)
+	require.Equal(t, "world", barVal)
 
 	ctx := context.Background()
 	conn := openConnWrapper(t, db, ctx)
@@ -812,10 +816,27 @@ func TestMultipleStatements(t *testing.T) {
 	require.NoError(t, err)
 	closeRowsWrapper(t, r)
 
-	// args are only applied to the last statement.
+	// Too few args across multiple statements with placeholders.
 	_, err = conn.ExecContext(ctx, `INSERT INTO foo1 VALUES ('lala', ?), ('lalo', ?); INSERT INTO foo1 VALUES ('lala', ?), ('lalo', ?)`, 12345, 1234)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "incorrect argument count for command: have 0 want 2")
+
+	// Placeholders before the last statement are bound in order (#37).
+	_, err = conn.ExecContext(ctx, `
+		SET VARIABLE var1 = 'camel';
+		SET VARIABLE var3 = ?;
+		SET VARIABLE var2 = 'tester';
+	`, "duck")
+	require.NoError(t, err)
+	var var3 string
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT getvariable('var3')`).Scan(&var3))
+	require.Equal(t, "duck", var3)
+
+	_, err = conn.ExecContext(ctx, `INSERT INTO foo1 VALUES ('a', ?); INSERT INTO foo1 VALUES ('b', ?)`, 1, 2)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM foo1 WHERE (bar = 'a' AND baz = 1) OR (bar = 'b' AND baz = 2)`).Scan(&count))
+	require.Equal(t, 2, count)
 
 	r, err = conn.QueryContext(ctx, `CREATE TABLE foo2(bar VARCHAR, baz INTEGER); INSERT INTO foo2 VALUES ('lala', 12345); SELECT bar FROM foo2 LIMIT 1`)
 	require.NoError(t, err)
