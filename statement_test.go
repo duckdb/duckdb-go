@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -2012,6 +2013,37 @@ func TestBindTopLevelNilAndEmptyContainers(t *testing.T) {
 			var got any
 			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBindRejectedValues(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// Go allows several NaN map keys, but DuckDB treats NaN keys as equal and rejects the MAP.
+	nanKeys := Map{math.NaN(): int32(1), math.NaN(): int32(2)}
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+	}{
+		{name: "duplicate map keys", query: "SELECT ?::MAP(DOUBLE, INTEGER)", arg: nanKeys},
+		{name: "nested duplicate map keys", query: "SELECT ?::MAP(DOUBLE, INTEGER)[]", arg: []any{nanKeys}},
+		{name: "invalid UTF-8 list element", query: "SELECT ?::VARCHAR[]", arg: []any{"\xff"}},
+		{name: "invalid UTF-8 array element", query: "SELECT ?::VARCHAR[2]", arg: [2]string{"\xff", "ok"}},
+		{name: "invalid UTF-8 struct field", query: "SELECT ?::STRUCT(a VARCHAR)", arg: map[string]any{"a": "\xff"}},
+		{name: "invalid UTF-8 map key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: OrderedMap{[]any{"\xff"}, []any{int32(1)}}},
+		{name: "invalid UTF-8 map value", query: "SELECT ?::MAP(VARCHAR, VARCHAR)", arg: OrderedMap{[]any{"a"}, []any{"\xff"}}},
+		{name: "inferred invalid UTF-8 list", query: "SELECT ?", arg: []string{"\xff"}},
+		{name: "typed invalid UTF-8", query: "SELECT ?", arg: Typed("\xff", TYPE_VARCHAR)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.ErrorIs(t, err, errCreateValue)
 		})
 	}
 }

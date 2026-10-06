@@ -139,6 +139,7 @@ var (
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")
 	errEmptyQuery                 = errors.New("empty query")
 	errCouldNotBind               = errors.New("could not bind parameter")
+	errCreateValue                = errors.New("could not create value")
 	errActiveRows                 = errors.New("ExecContext or QueryContext with active Rows")
 	errNotBound                   = errors.New("parameters have not been bound")
 	errBeginTx                    = errors.New("could not begin transaction")

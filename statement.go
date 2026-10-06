@@ -315,24 +315,21 @@ func (s *Stmt) bindCompositeValue(val driver.NamedValue, n int) (mapping.State, 
 	}
 
 	mappedVal, err := createValue(lt, val.Value)
-	defer mapping.DestroyValue(&mappedVal)
 	if err != nil {
 		return mapping.StateError, addIndexToError(err, n+1)
 	}
-
-	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal)
-	return state, nil
+	defer mapping.DestroyValue(&mappedVal)
+	return mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal), nil
 }
 
 func (s *Stmt) tryBindComplexValue(val driver.NamedValue, n int) (mapping.State, error) {
 	lt, mappedVal, err := inferLogicalTypeAndValue(val.Value)
 	defer mapping.DestroyLogicalType(&lt)
-	defer mapping.DestroyValue(&mappedVal)
 	if err != nil {
 		return mapping.StateError, addIndexToError(err, n+1)
 	}
-	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal)
-	return state, nil
+	defer mapping.DestroyValue(&mappedVal)
+	return mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal), nil
 }
 
 func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name string) (mapping.State, error) {
@@ -384,11 +381,10 @@ func (s *Stmt) bindTypedValue(val TypedValue, n int) (mapping.State, error) {
 	}
 
 	mappedVal, err := createPrimitiveValue(val.typ, coerced)
-	defer mapping.DestroyValue(&mappedVal)
 	if err != nil {
 		return mapping.StateError, addIndexToError(err, n+1)
 	}
-
+	defer mapping.DestroyValue(&mappedVal)
 	return mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), mappedVal), nil
 }
 
