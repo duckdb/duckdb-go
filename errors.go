@@ -139,6 +139,7 @@ var (
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")
 	errEmptyQuery                 = errors.New("empty query")
 	errCouldNotBind               = errors.New("could not bind parameter")
+	errCreateValue                = errors.New("could not create value")
 	errActiveRows                 = errors.New("ExecContext or QueryContext with active Rows")
 	errNotBound                   = errors.New("parameters have not been bound")
 	errBeginTx                    = errors.New("could not begin transaction")
@@ -158,6 +159,7 @@ var (
 	errAppenderDuplicateColumn  = errors.New("duplicate column name")
 
 	errUnsupportedMapKeyType = errors.New("MAP key type not supported")
+	errNullMapKey            = errors.New("MAP keys cannot be NULL")
 	errEmptyName             = errors.New("empty name")
 	errInvalidDecimalWidth   = fmt.Errorf("the DECIMAL with must be between 1 and %d", max_decimal_width)
 	errInvalidDecimalScale   = errors.New("the DECIMAL scale must be less than or equal to the width")

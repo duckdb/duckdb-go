@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -1848,7 +1849,9 @@ func TestBindCompositeNullElements(t *testing.T) {
 		{name: "list trailing null", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), nil}, want: []any{int32(1), nil}},
 		{name: "list all null", query: "SELECT ?::INTEGER[]", arg: []any{nil, nil}, want: []any{nil, nil}},
 		{name: "list typed nil", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), (*int32)(nil), int32(2)}, want: []any{int32(1), nil, int32(2)}},
+		{name: "list typed nil and empty child", query: "SELECT ?::INTEGER[][]", arg: []any{[]int32(nil), []int32{}}, want: []any{nil, []any{}}},
 		{name: "array interior null", query: "SELECT ?::INTEGER[3]", arg: [3]any{int32(1), nil, int32(2)}, want: []any{int32(1), nil, int32(2)}},
+		{name: "array typed nil and empty child", query: "SELECT ?::INTEGER[][2]", arg: [2]any{[]int32(nil), []int32{}}, want: []any{nil, []any{}}},
 		{name: "non-null control", query: "SELECT ?::INTEGER[]", arg: []any{int32(1), int32(2)}, want: []any{int32(1), int32(2)}},
 	}
 	for _, tt := range tests {
@@ -1893,4 +1896,154 @@ func TestBindInferredListNullElements(t *testing.T) {
 		err := db.QueryRow(`SELECT ?`, []any{nil, "a", int64(1)}).Scan(&got)
 		require.ErrorContains(t, err, "mixed types in slice")
 	})
+}
+
+func TestBindStructNullFields(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		arg   map[string]any
+		want  map[string]any
+	}{
+		{name: "nil field", query: "SELECT ?::STRUCT(a INTEGER, b VARCHAR)", arg: map[string]any{"a": nil, "b": "x"}, want: map[string]any{"a": nil, "b": "x"}},
+		{name: "typed nil field", query: "SELECT ?::STRUCT(a INTEGER, b VARCHAR)", arg: map[string]any{"a": (*int32)(nil), "b": "x"}, want: map[string]any{"a": nil, "b": "x"}},
+		{name: "missing field", query: "SELECT ?::STRUCT(a INTEGER, b VARCHAR)", arg: map[string]any{"b": "x"}, want: map[string]any{"a": nil, "b": "x"}},
+		{name: "nil nested struct", query: "SELECT ?::STRUCT(s STRUCT(a INTEGER))", arg: map[string]any{"s": nil}, want: map[string]any{"s": nil}},
+		{name: "nil nested list", query: "SELECT ?::STRUCT(l INTEGER[])", arg: map[string]any{"l": nil}, want: map[string]any{"l": nil}},
+		{name: "typed nil nested list", query: "SELECT ?::STRUCT(l INTEGER[])", arg: map[string]any{"l": []int32(nil)}, want: map[string]any{"l": nil}},
+		{name: "empty nested list", query: "SELECT ?::STRUCT(l INTEGER[])", arg: map[string]any{"l": []int32{}}, want: map[string]any{"l": []any{}}},
+		{name: "typed nil nested struct", query: "SELECT ?::STRUCT(s STRUCT(a INTEGER))", arg: map[string]any{"s": map[string]any(nil)}, want: map[string]any{"s": nil}},
+		{name: "empty nested struct", query: "SELECT ?::STRUCT(s STRUCT(a INTEGER))", arg: map[string]any{"s": map[string]any{}}, want: map[string]any{"s": map[string]any{"a": nil}}},
+		{name: "typed nil nested map", query: "SELECT ?::STRUCT(m MAP(VARCHAR, INTEGER))", arg: map[string]any{"m": Map(nil)}, want: map[string]any{"m": nil}},
+		{name: "empty nested map", query: "SELECT ?::STRUCT(m MAP(VARCHAR, INTEGER))", arg: map[string]any{"m": Map{}}, want: map[string]any{"m": OrderedMap{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Composite[map[string]any]
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got.Get())
+		})
+	}
+}
+
+func TestBindMapNullValues(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  OrderedMap
+	}{
+		{name: "nil value", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: OrderedMap{[]any{"a", "b"}, []any{int32(1), nil}}, want: OrderedMap{[]any{"a", "b"}, []any{int32(1), nil}}},
+		{name: "typed nil value", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: OrderedMap{[]any{"a"}, []any{(*int32)(nil)}}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "nil value in Map", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: Map{"a": nil}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "nil nested list value", query: "SELECT ?::MAP(VARCHAR, INTEGER[])", arg: OrderedMap{[]any{"a"}, []any{nil}}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "typed nil nested list value", query: "SELECT ?::MAP(VARCHAR, INTEGER[])", arg: OrderedMap{[]any{"a"}, []any{[]int32(nil)}}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "empty nested list value", query: "SELECT ?::MAP(VARCHAR, INTEGER[])", arg: OrderedMap{[]any{"a"}, []any{[]int32{}}}, want: OrderedMap{[]any{"a"}, []any{[]any{}}}},
+		{name: "typed nil nested struct value", query: "SELECT ?::MAP(VARCHAR, STRUCT(a INTEGER))", arg: OrderedMap{[]any{"a"}, []any{map[string]any(nil)}}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "empty nested struct value", query: "SELECT ?::MAP(VARCHAR, STRUCT(a INTEGER))", arg: OrderedMap{[]any{"a"}, []any{map[string]any{}}}, want: OrderedMap{[]any{"a"}, []any{map[string]any{"a": nil}}}},
+		{name: "typed nil nested map value", query: "SELECT ?::MAP(VARCHAR, MAP(VARCHAR, INTEGER))", arg: OrderedMap{[]any{"a"}, []any{Map(nil)}}, want: OrderedMap{[]any{"a"}, []any{nil}}},
+		{name: "empty nested map value", query: "SELECT ?::MAP(VARCHAR, MAP(VARCHAR, INTEGER))", arg: OrderedMap{[]any{"a"}, []any{Map{}}}, want: OrderedMap{[]any{"a"}, []any{OrderedMap{}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got OrderedMap
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBindMapNullKeys(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		key   any
+	}{
+		{name: "nil key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", key: nil},
+		{name: "typed nil pointer key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", key: (*string)(nil)},
+		{name: "typed nil list key", query: "SELECT ?::MAP(INTEGER[], INTEGER)", key: []int32(nil)},
+		{name: "typed nil struct key", query: "SELECT ?::MAP(STRUCT(a INTEGER), INTEGER)", key: map[string]any(nil)},
+		{name: "typed nil map key", query: "SELECT ?::MAP(MAP(VARCHAR, INTEGER), INTEGER)", key: Map(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got OrderedMap
+			err := db.QueryRow(tt.query, OrderedMap{[]any{tt.key}, []any{int32(1)}}).Scan(&got)
+			require.ErrorIs(t, err, errNullMapKey)
+		})
+	}
+}
+
+func TestBindTopLevelNilAndEmptyContainers(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// Nil containers bind as NULL with either an explicit or inferred SQL type.
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  any
+	}{
+		{name: "nil list", query: "SELECT ?::INTEGER[]", arg: nil, want: nil},
+		{name: "typed nil list", query: "SELECT ?::INTEGER[]", arg: []int32(nil), want: nil},
+		{name: "empty list", query: "SELECT ?::INTEGER[]", arg: []int32{}, want: []any{}},
+		{name: "nil array", query: "SELECT ?::INTEGER[2]", arg: nil, want: nil},
+		{name: "typed nil array pointer", query: "SELECT ?::INTEGER[2]", arg: (*[2]int32)(nil), want: nil},
+		{name: "nil struct", query: "SELECT ?::STRUCT(a INTEGER)", arg: nil, want: nil},
+		{name: "typed nil struct", query: "SELECT ?::STRUCT(a INTEGER)", arg: map[string]any(nil), want: nil},
+		{name: "empty struct", query: "SELECT ?::STRUCT(a INTEGER)", arg: map[string]any{}, want: map[string]any{"a": nil}},
+		{name: "nil map", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: nil, want: nil},
+		{name: "typed nil map", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: Map(nil), want: nil},
+		{name: "empty map", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: Map{}, want: OrderedMap{}},
+		{name: "inferred nil list", query: "SELECT ?", arg: []int32(nil), want: nil},
+		{name: "inferred empty list", query: "SELECT ?", arg: []int32{}, want: []any{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBindRejectedValues(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// Go allows several NaN map keys, but DuckDB treats NaN keys as equal and rejects the MAP.
+	nanKeys := Map{math.NaN(): int32(1), math.NaN(): int32(2)}
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+	}{
+		{name: "duplicate map keys", query: "SELECT ?::MAP(DOUBLE, INTEGER)", arg: nanKeys},
+		{name: "nested duplicate map keys", query: "SELECT ?::MAP(DOUBLE, INTEGER)[]", arg: []any{nanKeys}},
+		{name: "invalid UTF-8 list element", query: "SELECT ?::VARCHAR[]", arg: []any{"\xff"}},
+		{name: "invalid UTF-8 array element", query: "SELECT ?::VARCHAR[2]", arg: [2]string{"\xff", "ok"}},
+		{name: "invalid UTF-8 struct field", query: "SELECT ?::STRUCT(a VARCHAR)", arg: map[string]any{"a": "\xff"}},
+		{name: "invalid UTF-8 map key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", arg: OrderedMap{[]any{"\xff"}, []any{int32(1)}}},
+		{name: "invalid UTF-8 map value", query: "SELECT ?::MAP(VARCHAR, VARCHAR)", arg: OrderedMap{[]any{"a"}, []any{"\xff"}}},
+		{name: "inferred invalid UTF-8 list", query: "SELECT ?", arg: []string{"\xff"}},
+		{name: "typed invalid UTF-8", query: "SELECT ?", arg: Typed("\xff", TYPE_VARCHAR)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.ErrorIs(t, err, errCreateValue)
+		})
+	}
 }

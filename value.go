@@ -89,6 +89,10 @@ func getValue(v mapping.Value) (any, error) {
 }
 
 func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
+	if isNil(val) {
+		return mapping.CreateNullValue(), nil
+	}
+
 	t := mapping.GetTypeId(lt)
 	if isPrimitiveType(t) {
 		return createPrimitiveValue(t, val)
@@ -108,8 +112,24 @@ func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	}
 }
 
-//nolint:gocyclo
+func checkCreatedValue(v mapping.Value) (mapping.Value, error) {
+	// DuckDB returns a nil pointer when a value constructor rejects its input.
+	if v.Ptr == nil {
+		return mapping.Value{}, errCreateValue
+	}
+	return v, nil
+}
+
 func createPrimitiveValue(t mapping.Type, v any) (mapping.Value, error) {
+	value, err := createPrimitiveValueRaw(t, v)
+	if err != nil {
+		return mapping.Value{}, err
+	}
+	return checkCreatedValue(value)
+}
+
+//nolint:gocyclo
+func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 	switch t {
 	case TYPE_SQLNULL:
 		return mapping.CreateNullValue(), nil
@@ -414,12 +434,6 @@ func inferSliceLogicalTypeAndValue[T any](val T, array bool, length int) (mappin
 	values := make([]mapping.Value, 0, length)
 	defer func() { destroyValueSlice(values) }()
 
-	if len(slice) == 0 {
-		lt := mapping.CreateLogicalType(TYPE_SQLNULL)
-		defer mapping.DestroyLogicalType(&lt)
-		return typeFunc(lt), createFunc(lt, values), nil
-	}
-
 	logicalTypes := make([]mapping.LogicalType, 0, length)
 	defer func() { destroyLogicalTypes(logicalTypes) }()
 
@@ -452,11 +466,14 @@ func inferSliceLogicalTypeAndValue[T any](val T, array bool, length int) (mappin
 	}
 
 	if elemLogicalType.Ptr == nil {
-		nullType := mapping.CreateLogicalType(TYPE_SQLNULL)
-		defer mapping.DestroyLogicalType(&nullType)
-		return typeFunc(nullType), createFunc(nullType, values), nil
+		elemLogicalType = mapping.CreateLogicalType(TYPE_SQLNULL)
+		defer mapping.DestroyLogicalType(&elemLogicalType)
 	}
-	return typeFunc(elemLogicalType), createFunc(elemLogicalType, values), nil
+	v, err := checkCreatedValue(createFunc(elemLogicalType, values))
+	if err != nil {
+		return mapping.LogicalType{}, mapping.Value{}, err
+	}
+	return typeFunc(elemLogicalType), v, nil
 }
 
 func createSliceValue[T any](lt mapping.LogicalType, t Type, val T) (mapping.Value, error) {
@@ -478,10 +495,6 @@ func createSliceValue[T any](lt mapping.LogicalType, t Type, val T) (mapping.Val
 	defer func() { destroyValueSlice(values) }()
 
 	for _, v := range slice {
-		if isNil(v) {
-			values = append(values, mapping.CreateNullValue())
-			continue
-		}
 		vv, err := createValue(childType, v)
 		if err != nil {
 			return mapping.Value{}, err
@@ -497,7 +510,7 @@ func createSliceValue[T any](lt mapping.LogicalType, t Type, val T) (mapping.Val
 		v = mapping.CreateListValue(childType, values)
 	}
 
-	return v, nil
+	return checkCreatedValue(v)
 }
 
 func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
@@ -515,19 +528,15 @@ func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 		t := mapping.StructTypeChildType(lt, mapping.IdxT(i))
 		defer mapping.DestroyLogicalType(&t)
 
-		v, exists := m[name]
-		if exists {
-			vv, err := createValue(t, v)
-			if err != nil {
-				return mapping.Value{}, err
-			}
-			values = append(values, vv)
-		} else {
-			values = append(values, mapping.CreateNullValue())
+		// A missing field is nil, which binds as NULL.
+		vv, err := createValue(t, m[name])
+		if err != nil {
+			return mapping.Value{}, err
 		}
+		values = append(values, vv)
 	}
 
-	return mapping.CreateStructValue(lt, values), nil
+	return checkCreatedValue(mapping.CreateStructValue(lt, values))
 }
 
 func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
@@ -552,6 +561,9 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	keys := make([]mapping.Value, m.Len())
 	defer destroyValueSlice(keys)
 	for i, k := range m.Keys() {
+		if isNil(k) {
+			return mapping.Value{}, errNullMapKey
+		}
 		kv, err := createValue(keyType, k)
 		if err != nil {
 			return mapping.Value{}, err
@@ -569,7 +581,7 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 		values[i] = vv
 	}
 
-	return mapping.CreateMapValue(lt, keys, values), nil
+	return checkCreatedValue(mapping.CreateMapValue(lt, keys, values))
 }
 
 func destroyValueSlice(values []mapping.Value) {
