@@ -158,6 +158,7 @@ var (
 	errAppenderDuplicateColumn  = errors.New("duplicate column name")
 
 	errUnsupportedMapKeyType = errors.New("MAP key type not supported")
+	errNullMapKey            = errors.New("MAP keys cannot be NULL")
 	errEmptyName             = errors.New("empty name")
 	errInvalidDecimalWidth   = fmt.Errorf("the DECIMAL with must be between 1 and %d", max_decimal_width)
 	errInvalidDecimalScale   = errors.New("the DECIMAL scale must be less than or equal to the width")

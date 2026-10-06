@@ -89,6 +89,10 @@ func getValue(v mapping.Value) (any, error) {
 }
 
 func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
+	if isNil(val) {
+		return mapping.CreateNullValue(), nil
+	}
+
 	t := mapping.GetTypeId(lt)
 	if isPrimitiveType(t) {
 		return createPrimitiveValue(t, val)
@@ -478,10 +482,6 @@ func createSliceValue[T any](lt mapping.LogicalType, t Type, val T) (mapping.Val
 	defer func() { destroyValueSlice(values) }()
 
 	for _, v := range slice {
-		if isNil(v) {
-			values = append(values, mapping.CreateNullValue())
-			continue
-		}
 		vv, err := createValue(childType, v)
 		if err != nil {
 			return mapping.Value{}, err
@@ -515,16 +515,12 @@ func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 		t := mapping.StructTypeChildType(lt, mapping.IdxT(i))
 		defer mapping.DestroyLogicalType(&t)
 
-		v, exists := m[name]
-		if exists {
-			vv, err := createValue(t, v)
-			if err != nil {
-				return mapping.Value{}, err
-			}
-			values = append(values, vv)
-		} else {
-			values = append(values, mapping.CreateNullValue())
+		// A missing field is nil, which binds as NULL.
+		vv, err := createValue(t, m[name])
+		if err != nil {
+			return mapping.Value{}, err
 		}
+		values = append(values, vv)
 	}
 
 	return mapping.CreateStructValue(lt, values), nil
@@ -552,6 +548,9 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	keys := make([]mapping.Value, m.Len())
 	defer destroyValueSlice(keys)
 	for i, k := range m.Keys() {
+		if isNil(k) {
+			return mapping.Value{}, errNullMapKey
+		}
 		kv, err := createValue(keyType, k)
 		if err != nil {
 			return mapping.Value{}, err
