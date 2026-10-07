@@ -185,6 +185,27 @@ func (s *Stmt) bindUhugeint(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
+func (s *Stmt) bindDecimal(val Decimal, n int) (mapping.State, error) {
+	if val.Width < 1 || val.Width > max_decimal_width {
+		return mapping.StateError, addIndexToError(errInvalidDecimalWidth, n+1)
+	}
+	if val.Scale > val.Width {
+		return mapping.StateError, addIndexToError(errInvalidDecimalScale, n+1)
+	}
+	if val.Value == nil {
+		return mapping.StateError, addIndexToError(castError("nil Decimal.Value", "*big.Int"), n+1)
+	}
+	// The unscaled value must have at most Width digits, or DuckDB would store a value outside DECIMAL(Width, Scale).
+	if len(new(big.Int).Abs(val.Value).String()) > int(val.Width) {
+		return mapping.StateError, addIndexToError(errDecimalValueExceedsWidth, n+1)
+	}
+	value, err := hugeIntFromNative(val.Value)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	return mapping.BindDecimal(*s.preparedStmt, mapping.IdxT(n+1), mapping.NewDecimal(val.Width, val.Scale, value)), nil
+}
+
 func (s *Stmt) bindBigNum(val *big.Int, n int) (mapping.State, error) {
 	bignum := bigNumFromNative(val)
 	defer mapping.DestroyBigNum(&bignum)
@@ -465,9 +486,7 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		}
 		return s.bindBigNum(v, n)
 	case Decimal:
-		// FIXME: use NamedValueChecker to support this type.
-		name := typeToStringMap[TYPE_DECIMAL]
-		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
+		return s.bindDecimal(v, n)
 	case uint8:
 		return mapping.BindUInt8(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case uint16:
