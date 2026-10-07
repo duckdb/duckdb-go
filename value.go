@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -112,6 +113,30 @@ func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	}
 }
 
+// errElementType reports a value whose Go type is not the one the declared DuckDB type is built from, e.g. an int64
+// for an INTEGER parameter. It is a type mismatch rather than a bad value: the caller may bind the value as it is and
+// let DuckDB cast it, which is what a prepared parameter of a different type means (see bindCompositeValue).
+var errElementType = errors.New("value does not have the Go type of the declared DuckDB type")
+
+// assertElementType returns v as T, or errElementType instead of the panic an unchecked assertion raises.
+func assertElementType[T any](t Type, v any) (T, error) {
+	vv, ok := v.(T)
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("%w: %w", errElementType, castErrorForValue(v, typeToStringMap[t]))
+	}
+	return vv, nil
+}
+
+// createAssertedValue asserts v to T and creates a DuckDB value from it with create.
+func createAssertedValue[T any](t Type, v any, create func(T) mapping.Value) (mapping.Value, error) {
+	vv, err := assertElementType[T](t, v)
+	if err != nil {
+		return mapping.Value{}, err
+	}
+	return create(vv), nil
+}
+
 func checkCreatedValue(v mapping.Value) (mapping.Value, error) {
 	// DuckDB returns a nil pointer when a value constructor rejects its input.
 	if v.Ptr == nil {
@@ -134,29 +159,29 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 	case TYPE_SQLNULL:
 		return mapping.CreateNullValue(), nil
 	case TYPE_BOOLEAN:
-		return mapping.CreateBool(v.(bool)), nil
+		return createAssertedValue(t, v, mapping.CreateBool)
 	case TYPE_TINYINT:
-		return mapping.CreateInt8(v.(int8)), nil
+		return createAssertedValue(t, v, mapping.CreateInt8)
 	case TYPE_SMALLINT:
-		return mapping.CreateInt16(v.(int16)), nil
+		return createAssertedValue(t, v, mapping.CreateInt16)
 	case TYPE_INTEGER:
-		return mapping.CreateInt32(v.(int32)), nil
+		return createAssertedValue(t, v, mapping.CreateInt32)
 	case TYPE_BIGINT:
-		return mapping.CreateInt64(v.(int64)), nil
+		return createAssertedValue(t, v, mapping.CreateInt64)
 	case TYPE_UTINYINT:
-		return mapping.CreateUInt8(v.(uint8)), nil
+		return createAssertedValue(t, v, mapping.CreateUInt8)
 	case TYPE_USMALLINT:
-		return mapping.CreateUInt16(v.(uint16)), nil
+		return createAssertedValue(t, v, mapping.CreateUInt16)
 	case TYPE_UINTEGER:
-		return mapping.CreateUInt32(v.(uint32)), nil
+		return createAssertedValue(t, v, mapping.CreateUInt32)
 	case TYPE_UBIGINT:
-		return mapping.CreateUInt64(v.(uint64)), nil
+		return createAssertedValue(t, v, mapping.CreateUInt64)
 	case TYPE_FLOAT:
-		return mapping.CreateFloat(v.(float32)), nil
+		return createAssertedValue(t, v, mapping.CreateFloat)
 	case TYPE_DOUBLE:
-		return mapping.CreateDouble(v.(float64)), nil
+		return createAssertedValue(t, v, mapping.CreateDouble)
 	case TYPE_VARCHAR:
-		return createVarchar(v.(string)), nil
+		return createAssertedValue(t, v, createVarchar)
 	case TYPE_TIMESTAMP:
 		vv, err := inferTimestamp(t, v)
 		if err != nil {
@@ -239,7 +264,10 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper))
 		return mapping.CreateUUID(uHugeInt), nil
 	case TYPE_BIT:
-		vv := v.(Bit)
+		vv, err := assertElementType[Bit](t, v)
+		if err != nil {
+			return mapping.Value{}, err
+		}
 		bit := mapping.NewBit(vv.Data)
 		defer mapping.DestroyBit(&bit)
 		return mapping.CreateBit(bit), nil
