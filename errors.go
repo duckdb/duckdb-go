@@ -137,6 +137,7 @@ var (
 
 	errPrepare                    = errors.New("could not prepare query")
 	errMissingPrepareContext      = errors.New("missing context for multi-statement query: try using PrepareContext")
+	errParametersBeforeLastStmt   = errors.New("parameters are only supported in the last statement of a multi-statement query; split parameterized statements into separate calls")
 	errEmptyQuery                 = errors.New("empty query")
 	errCouldNotBind               = errors.New("could not bind parameter")
 	errCreateValue                = errors.New("could not create value")
