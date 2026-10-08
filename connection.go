@@ -241,6 +241,10 @@ func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error)
 			return nil, err
 		}
 
+		if preparedStmt.NumInput() != 0 {
+			return nil, errors.Join(errParametersBeforeLastStmt, preparedStmt.Close())
+		}
+
 		// Execute the statement without any arguments and ignore the result.
 		_, execErr := preparedStmt.ExecContext(ctx, nil)
 		closeErr := preparedStmt.Close()
