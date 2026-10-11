@@ -265,11 +265,8 @@ func NewTypeInfo(t Type) (TypeInfo, error) {
 // NewDecimalInfo returns DECIMAL type information.
 // Its input parameters are the width and scale of the DECIMAL type.
 func NewDecimalInfo(width, scale uint8) (TypeInfo, error) {
-	if width < 1 || width > max_decimal_width {
-		return nil, getError(errAPI, errInvalidDecimalWidth)
-	}
-	if scale > width {
-		return nil, getError(errAPI, errInvalidDecimalScale)
+	if err := validateDecimalWidthScale(width, scale); err != nil {
+		return nil, getError(errAPI, err)
 	}
 
 	return &typeInfo{
