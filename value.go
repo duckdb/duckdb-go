@@ -236,7 +236,8 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 			return mapping.Value{}, err
 		}
 		lower, upper := mapping.HugeIntMembers(&vv)
-		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper))
+		// CreateUUID expects unsigned UUID bits, not the sign-flipped internal hugeint.
+		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper)^(1<<63))
 		return mapping.CreateUUID(uHugeInt), nil
 	case TYPE_BIT:
 		vv := v.(Bit)
