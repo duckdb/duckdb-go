@@ -337,6 +337,16 @@ row := db.QueryRow(`
 In this example, the wrapper ensures the parameters bind as `TIMESTAMP_NS`. Bare `time.Time` values bind as
 `TIMESTAMP_TZ` by default. `Typed` is a narrow scalar binding hint; validation happens when the parameter is bound.
 
+Unlike timestamps, `DATE` and `TIME` preserve the calendar date and wall clock in the `time.Time` value's own
+location, without converting to UTC. `DATE` uses its year, month, and day and discards the time of day;
+`TIME` uses its hour, minute, second, and fractional second (to microsecond precision) and discards the date
+and UTC offset. `TIMETZ` preserves the same wall clock plus the value's UTC offset, but not its location name.
+These rules apply to query parameters bound as those types, appender values, and UDF output.
+For example, splitting `2024-01-15 08:30:00+09:00` into `DATE` and `TIME` produces `2024-01-15` and `08:30:00`.
+Call `value.UTC()` first if you want the UTC calendar date and clock instead.
+Use `Typed(value, TYPE_DATE)` or `Typed(value, TYPE_TIME)` when SQL does not infer the desired parameter type;
+binding a timestamp and casting it in SQL instead follows DuckDB's timestamp cast rules.
+
 **Connection lifetime**
 
 Temporary objects and state, such as temporary tables, are scoped to connections.

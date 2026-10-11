@@ -11,9 +11,6 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// secondsPerDay to calculate the days since 1970-01-01.
-const secondsPerDay = 24 * 60 * 60
-
 // isNullInput reports whether val is a NULL write. An untyped nil or a nil
 // pointer to time.Time, big.Int, Interval, Bit, or UUID writes NULL regardless
 // of the target column. Unlike isNil, this check is allocation-free and does
