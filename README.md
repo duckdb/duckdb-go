@@ -337,6 +337,12 @@ row := db.QueryRow(`
 In this example, the wrapper ensures the parameters bind as `TIMESTAMP_NS`. Bare `time.Time` values bind as
 `TIMESTAMP_TZ` by default. `Typed` is a narrow scalar binding hint; validation happens when the parameter is bound.
 
+Unlike timestamps, `DATE` and `TIME` use the calendar date and wall clock in the `time.Time` value's own location:
+`2024-01-15 08:30:00+09:00` becomes `DATE '2024-01-15'` and `TIME '08:30:00'`.
+Call `value.UTC()` first to get the UTC date and clock.
+Query parameters must bind as `DATE` or `TIME` for this: a bare `time.Time` in `?::DATE` binds as
+`TIMESTAMP_TZ`, so the cast uses the session `TimeZone`; use `Typed(value, TYPE_DATE)` instead.
+
 **Connection lifetime**
 
 Temporary objects and state, such as temporary tables, are scoped to connections.

@@ -810,14 +810,19 @@ func inferTimestampNS(val any) (mapping.TimestampNS, error) {
 	return mapping.NewTimestampNS(ticks), err
 }
 
+const secondsPerDay = 24 * 60 * 60
+
 func inferDate[T any](val T) (mapping.Date, error) {
 	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.Date{}, err
 	}
 
-	date := mapping.NewDate(int32(ti.Unix() / secondsPerDay))
-	return date, err
+	// Preserve the local calendar date, just as TIME preserves the local clock.
+	// UTC midnight makes the day count exact, including before the Unix epoch.
+	year, month, day := ti.Date()
+	midnight := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return mapping.NewDate(int32(midnight.Unix() / secondsPerDay)), nil
 }
 
 func inferTime(val any) (mapping.Time, error) {
