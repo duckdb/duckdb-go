@@ -826,11 +826,11 @@ func inferDate[T any](val T) (mapping.Date, error) {
 }
 
 func inferTime(val any) (mapping.Time, error) {
-	ticks, err := getTimeTicks(val)
+	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.Time{}, err
 	}
-	return mapping.NewTime(ticks), nil
+	return mapping.NewTime(wallClockMicros(ti)), nil
 }
 
 func inferTimeTZ(val any) (mapping.TimeTZ, error) {
@@ -839,22 +839,13 @@ func inferTimeTZ(val any) (mapping.TimeTZ, error) {
 		return mapping.TimeTZ{}, err
 	}
 
-	// DuckDB stores time as microseconds since 00:00:00.
-	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	ticks := base.UnixMicro()
-
 	// Preserve the UTC offset from the input time.
 	_, offset := ti.Zone()
-	return mapping.CreateTimeTZ(ticks, int32(offset)), nil
+	return mapping.CreateTimeTZ(wallClockMicros(ti), int32(offset)), nil
 }
 
-func getTimeTicks[T any](val T) (int64, error) {
-	ti, err := castToTime(val)
-	if err != nil {
-		return 0, err
-	}
-
+func wallClockMicros(ti time.Time) int64 {
 	// DuckDB stores time as microseconds since 00:00:00.
 	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	return base.UnixMicro(), err
+	return base.UnixMicro()
 }

@@ -194,6 +194,9 @@ func (s *Stmt) bindBigNum(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
+// Temporal binders use direct bind APIs where available to avoid the extra
+// duckdb_value allocation and cgo calls required by createPrimitiveValue.
+// Conversion rules remain shared through the infer functions.
 func (s *Stmt) bindTimestamp(val driver.NamedValue, t Type, n int) (mapping.State, error) {
 	var state mapping.State
 	switch t {
@@ -247,21 +250,20 @@ func (s *Stmt) bindDate(val driver.NamedValue, n int) (mapping.State, error) {
 }
 
 func (s *Stmt) bindTime(val driver.NamedValue, t Type, n int) (mapping.State, error) {
-	ticks, err := getTimeTicks(val.Value)
-	if err != nil {
-		return mapping.StateError, err
-	}
-
 	if t == TYPE_TIME {
-		ti := mapping.NewTime(ticks)
+		ti, err := inferTime(val.Value)
+		if err != nil {
+			return mapping.StateError, err
+		}
 		state := mapping.BindTime(*s.preparedStmt, mapping.IdxT(n+1), ti)
 		return state, nil
 	}
 
 	// TYPE_TIME_TZ: Preserve the UTC offset from the input time.
-	goTime, _ := castToTime(val.Value)
-	_, offset := goTime.Zone()
-	ti := mapping.CreateTimeTZ(ticks, int32(offset))
+	ti, err := inferTimeTZ(val.Value)
+	if err != nil {
+		return mapping.StateError, err
+	}
 	v := mapping.CreateTimeTZValue(ti)
 	state := mapping.BindValue(*s.preparedStmt, mapping.IdxT(n+1), v)
 	mapping.DestroyValue(&v)
