@@ -9,6 +9,41 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
+func TestUUIDValueBindRoundTrip(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	_, err := db.Exec(`CREATE TABLE t (ids UUID[], arr UUID[1], s STRUCT(a UUID), m MAP(UUID, UUID))`)
+	require.NoError(t, err)
+	for _, want := range []string{
+		"123e4567-e89b-12d3-a456-426614174000",
+		"923e4567-e89b-12d3-a456-426614174000",
+	} {
+		t.Run(want, func(t *testing.T) {
+			var u UUID
+			require.NoError(t, u.Scan(want))
+			_, err := db.Exec(`DELETE FROM t`)
+			require.NoError(t, err)
+			_, err = db.Exec(`INSERT INTO t VALUES (?, ?, ?, ?)`,
+				[]UUID{u}, [1]UUID{u}, map[string]any{"a": u}, Map{u: u})
+			require.NoError(t, err)
+			var list, array, st, mapKey, mapValue string
+			require.NoError(t, db.QueryRow(`SELECT ids[1]::VARCHAR, arr[1]::VARCHAR, s.a::VARCHAR,
+				map_keys(m)[1]::VARCHAR, map_values(m)[1]::VARCHAR FROM t`).
+				Scan(&list, &array, &st, &mapKey, &mapValue))
+			for name, got := range map[string]string{
+				"list": list, "array": array, "struct": st, "map key": mapKey, "map value": mapValue,
+			} {
+				t.Run(name, func(t *testing.T) { require.Equal(t, want, got) })
+			}
+			t.Run("untyped", func(t *testing.T) {
+				var got string
+				require.NoError(t, db.QueryRow(`SELECT x::VARCHAR FROM (SELECT ? AS x)`, u).Scan(&got))
+				require.Equal(t, want, got)
+			})
+		})
+	}
+}
+
 func TestCreateRejectedValues(t *testing.T) {
 	doubleType := mapping.CreateLogicalType(TYPE_DOUBLE)
 	defer mapping.DestroyLogicalType(&doubleType)
