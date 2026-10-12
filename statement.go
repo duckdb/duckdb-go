@@ -521,7 +521,7 @@ func (s *Stmt) bind(args []driver.NamedValue) error {
 	byOrdinal := make(map[int]driver.NamedValue, len(args))
 	byName := make(map[string]driver.NamedValue, len(args))
 	for _, v := range args {
-		if v.Ordinal != 0 {
+		if v.Name == "" && v.Ordinal != 0 {
 			byOrdinal[v.Ordinal] = v
 		}
 		if v.Name != "" {
@@ -533,17 +533,23 @@ func (s *Stmt) bind(args []driver.NamedValue) error {
 	for i := range s.NumInput() {
 		name := mapping.ParameterName(*s.preparedStmt, mapping.IdxT(i+1))
 
-		// fallback on index position
+		// Only unnamed arguments may fall back on index position or ordinal.
 		arg := args[i]
+		found := arg.Name == ""
 
 		// override with ordinal if set
 		if v, ok := byOrdinal[i+1]; ok {
 			arg = v
+			found = true
 		}
 
 		// override with name if set
 		if v, ok := byName[name]; ok {
 			arg = v
+			found = true
+		}
+		if !found {
+			return fmt.Errorf("%w: no argument for parameter %q", errCouldNotBind, name)
 		}
 
 		state, err := s.bindValue(arg, i)

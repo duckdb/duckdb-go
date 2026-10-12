@@ -17,6 +17,58 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
+func TestNamedArgUnknownName(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	var id, tenant int
+	err := db.QueryRow(`SELECT $id, $tenant`, sql.Named("tenat", 9), sql.Named("id", 5)).Scan(&id, &tenant)
+	require.Error(t, err, "got id=%d tenant=%d", id, tenant)
+	require.ErrorIs(t, err, errCouldNotBind)
+	require.ErrorContains(t, err, `no argument for parameter "tenant"`)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+	err = conn.Raw(func(driverConn any) error {
+		s, innerErr := driverConn.(*Conn).PrepareContext(context.Background(), `SELECT $id, $tenant`)
+		require.NoError(t, innerErr)
+		defer func() { require.NoError(t, s.Close()) }()
+		return s.(*Stmt).Bind([]driver.NamedValue{{Name: "tenat", Value: 9}, {Name: "id", Value: 5}})
+	})
+	require.ErrorIs(t, err, errCouldNotBind)
+	require.ErrorContains(t, err, `no argument for parameter "tenant"`)
+}
+
+func TestBindArgumentMatching(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		args  []any
+		want  []int
+	}{
+		{"anonymous", `SELECT ?, ?`, []any{5, 9}, []int{5, 9}},
+		{"numbered reused", `SELECT $2, $1, $1`, []any{5, 9}, []int{9, 5, 5}},
+		{"named reordered", `SELECT $id, $tenant`, []any{sql.Named("tenant", 9), sql.Named("id", 5)}, []int{5, 9}},
+		{"unused named", `SELECT $id`, []any{sql.Named("unused", 9), sql.Named("id", 5)}, []int{5}},
+		{"mixed named first", `SELECT $id, $tenant`, []any{sql.Named("id", 5), 9}, []int{5, 9}},
+		{"mixed named last", `SELECT $id, $tenant`, []any{5, sql.Named("tenant", 9)}, []int{5, 9}},
+		{"unnamed for named", `SELECT $id, $tenant`, []any{5, 9}, []int{5, 9}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := make([]int, len(tt.want))
+			dest := make([]any, len(got))
+			for i := range got {
+				dest[i] = &got[i]
+			}
+			require.NoError(t, db.QueryRow(tt.query, tt.args...).Scan(dest...))
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestPrepareQuery(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
