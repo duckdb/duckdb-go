@@ -25,6 +25,17 @@ func TestNamedArgUnknownName(t *testing.T) {
 	require.Error(t, err, "got id=%d tenant=%d", id, tenant)
 	require.ErrorIs(t, err, errCouldNotBind)
 	require.ErrorContains(t, err, `no argument for parameter "tenant"`)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+	err = conn.Raw(func(driverConn any) error {
+		s, innerErr := driverConn.(*Conn).PrepareContext(context.Background(), `SELECT $id, $tenant`)
+		require.NoError(t, innerErr)
+		defer func() { require.NoError(t, s.Close()) }()
+		return s.(*Stmt).Bind([]driver.NamedValue{{Name: "tenat", Value: 9}, {Name: "id", Value: 5}})
+	})
+	require.ErrorIs(t, err, errCouldNotBind)
+	require.ErrorContains(t, err, `no argument for parameter "tenant"`)
 }
 
 func TestBindArgumentMatching(t *testing.T) {
@@ -40,6 +51,7 @@ func TestBindArgumentMatching(t *testing.T) {
 		{"anonymous", `SELECT ?, ?`, []any{5, 9}, []int{5, 9}},
 		{"numbered reused", `SELECT $2, $1, $1`, []any{5, 9}, []int{9, 5, 5}},
 		{"named reordered", `SELECT $id, $tenant`, []any{sql.Named("tenant", 9), sql.Named("id", 5)}, []int{5, 9}},
+		{"unused named", `SELECT $id`, []any{sql.Named("unused", 9), sql.Named("id", 5)}, []int{5}},
 		{"mixed named first", `SELECT $id, $tenant`, []any{sql.Named("id", 5), 9}, []int{5, 9}},
 		{"mixed named last", `SELECT $id, $tenant`, []any{5, sql.Named("tenant", 9)}, []int{5, 9}},
 		{"unnamed for named", `SELECT $id, $tenant`, []any{5, 9}, []int{5, 9}},
