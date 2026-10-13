@@ -21,6 +21,29 @@ Adhering to these guidelines is not a complete guarantee that your pull request 
 `duckdb-go` aims to contain tests that are fast, cover a significant portion of the code, 
 are comprehensible, and can serve as documentation.
 
+#### CI test scope
+
+Every pull request, push to `main`, and tag push executes the applicable suites.
+Main tests cover Linux x64 and ARM64, macOS ARM64, and Windows on pull requests.
+Pushes and manual runs also cover macOS Intel main tests and dynamic linking.
+Additional suites cover Linux x64 race tests and coverage, Arrow
+on Linux x64, macOS ARM64, and Windows, examples on Linux x64 and macOS ARM64,
+dynamic linking on Linux and macOS, and explicit static linking on macOS ARM64.
+
+For complete manual validation, dispatch both the Tests and Tidy Checks
+workflows on the same branch or tag. Tests runs the five platform jobs;
+Tidy Checks runs lint separately.
+
+Test suites share one runner per platform to reduce queueing; a failed suite
+does not prevent the remaining suites from running. With a separate lint job,
+CI uses five runners per pull request and six on pushes and manual runs.
+Feature-branch pushes do not trigger duplicate
+checks alongside pull requests. No labels or changed-file classification are
+needed to run the full suite.
+
+Post-merge failures should be repaired or reverted promptly. Before releasing,
+ensure the full suite passes on the exact commit being released.
+
 ### Go Guidelines
 
 duckdb-go uses [Effective Go](https://go.dev/doc/effective_go) and the 

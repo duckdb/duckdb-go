@@ -1,6 +1,8 @@
 name: Tests
 on:
   push:
+    branches: [main]
+    tags: ['**']
   pull_request:
   workflow_dispatch:
 
@@ -8,36 +10,50 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  go_test:
-    name: Main Tests
+  platform_tests:
+    name: Platform Tests (${{ matrix.platform }}, ${{ matrix.go }})
     runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - linux-x64
+          - linux-arm64
+          - macos-x64
           - macos-arm64
           - windows-x64
-          - macos-x64
-          - linux-arm64
         go: [1.24]
         # Keep native Intel coverage after merge without delaying PR checks.
         exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
-        # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
-        # runners when the workflow runs in the duckdb organization. There is no
-        # Namespace profile for macOS x64, so that platform stays on GitHub.
         include:
-          - &linux-x64 { platform: linux-x64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
-          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
-          - &macos-arm64 { platform: macos-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
-          # Includes run after exclusions; use an empty array on PRs to avoid
-          # adding the excluded Intel job back.
-          - &macos-x64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","github":"macos-15-intel","namespace":"macos-15-intel"}]') }}
-          - &windows-x64 { platform: windows-x64, github: windows-2025, namespace: namespace-profile-windows-x64 }
-      fail-fast: false
+          - platform: linux-x64
+            github: ubuntu-24.04
+            namespace: namespace-profile-linux-small
+            filename: libduckdb-linux-amd64
+            ld_path_env_name: LD_LIBRARY_PATH
+          - platform: linux-arm64
+            github: ubuntu-24.04-arm
+            namespace: namespace-profile-linux-arm64-small
+            filename: libduckdb-linux-arm64
+            ld_path_env_name: LD_LIBRARY_PATH
+          # Includes run after exclusions; do not reintroduce Intel on PRs.
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","github":"macos-15-intel","namespace":"macos-15-intel","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
+          - platform: macos-arm64
+            github: macos-26
+            namespace: namespace-profile-macos-arm64
+            filename: libduckdb-osx-universal
+            ld_path_env_name: DYLD_LIBRARY_PATH
+          - platform: windows-x64
+            github: windows-2025
+            namespace: namespace-profile-windows-x64
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -45,130 +61,48 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
         run: go test -v
-
-  go_race_test:
-    name: Race Tests
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        platform: [linux-x64]
-        go: [1.24]
-        include: [*linux-x64]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ matrix.go }}
       - name: Run Race Tests
+        if: ${{ !cancelled() && matrix.platform == 'linux-x64' }}
         run: go test -race -count=1 ./...
-
-  test_examples:
-    name: Test Examples
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
-    strategy:
-      matrix:
-        platform:
-          - linux-x64
-          - macos-arm64
-        go: [1.24]
-        include: [*linux-x64, *macos-arm64]
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ matrix.go }}
-      - name: Test Examples
-        run: make test.examples
-
-  test-arrow:
-    name: Test Arrow
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        platform:
-          - linux-x64
-          - macos-arm64
-          - windows-x64
-        go: [1.24]
-        include: [*linux-x64, *macos-arm64, *windows-x64]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ matrix.go }}
       - name: Run Arrow Tests
+        if: ${{ !cancelled() && (matrix.platform == 'linux-x64' || matrix.platform == 'macos-arm64' || matrix.platform == 'windows-x64') }}
         run: go test -v -tags=duckdb_arrow
-
-  test-dynamic-lib:
-    name: Dynamic Lib Tests
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        go: [1.24]
-        platform:
-          - macos-x64
-          - macos-arm64
-          - linux-x64
-          - linux-arm64
-        # Keep native Intel coverage after merge without delaying PR checks.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
-        include:
-          - *macos-x64
-          - *macos-arm64
-          - *linux-x64
-          - *linux-arm64
-          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
-          - platform: "macos-arm64"
-            filename: "libduckdb-osx-universal"
-            ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - platform: "linux-x64"
-            filename: "libduckdb-linux-amd64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
-          - platform: "linux-arm64"
-            filename: "libduckdb-linux-arm64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ matrix.go }}
-      - name: Run Dynamic Lib Tests
+      - name: Test Examples
+        if: ${{ !cancelled() && (matrix.platform == 'linux-x64' || matrix.platform == 'macos-arm64') }}
+        run: make test.examples
+      - name: Generate Test Coverage
+        id: coverage
+        if: ${{ !cancelled() && matrix.platform == 'linux-x64' }}
         run: |
-          make test.dynamic.lib FILENAME=${{ matrix.filename }}
-          CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
-
-  test-static-lib-darwin-arm64:
-    name: Static Lib Tests Darwin ARM64
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        go: [1.24]
-        include: [*macos-arm64]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+          go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+          go tool cover -html=cover.out -o=cover.html
+      - name: Check Test Coverage
+        if: ${{ !cancelled() && steps.coverage.outcome == 'success' }}
+        uses: vladopajic/go-test-coverage@v2.20.0
         with:
-          go-version: ${{ matrix.go }}
+          config: ./.github/testcoverage.yml
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && matrix.platform == 'linux-x64' }}
+        with:
+          name: Cover_out
+          path: cover.out
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && matrix.platform == 'linux-x64' }}
+        with:
+          name: Cover_html
+          path: cover.html
+          if-no-files-found: ignore
+      - name: Run Dynamic Lib Tests
+        if: ${{ !cancelled() && matrix.platform != 'windows-x64' }}
+        env:
+          FILENAME: ${{ matrix.filename }}
+          LD_PATH_ENV_NAME: ${{ matrix.ld_path_env_name }}
+        run: |
+          make test.dynamic.lib FILENAME="$FILENAME"
+          env CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" "${LD_PATH_ENV_NAME}=${SRCDIR}dynamic-dir" go test -tags=duckdb_use_lib
       - name: Run Static Lib Tests Darwin ARM64
+        if: ${{ !cancelled() && matrix.platform == 'macos-arm64' }}
         run: |
           make test.static.lib.darwin.arm64
           CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_static -lduckdb_generated_extension_loader -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_fastpforlib -lduckdb_fmt -lduckdb_fsst -lduckdb_hyperloglog -lduckdb_mbedtls -lduckdb_miniz -lduckdb_pg_query -lduckdb_re2 -lduckdb_skiplistlib -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_zstd -lc++ -L${SRCDIR}static-dir" go test -tags=duckdb_use_static_lib
