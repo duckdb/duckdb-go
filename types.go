@@ -812,6 +812,13 @@ func inferTimestampNS(val any) (mapping.TimestampNS, error) {
 
 const secondsPerDay = 24 * 60 * 60
 
+// DuckDB reserves the day counts immediately outside these finite bounds for
+// negative and positive infinity; INT32_MIN is also excluded from valid dates.
+var (
+	minDate = time.Date(-5877641, time.June, 25, 0, 0, 0, 0, time.UTC)
+	maxDate = time.Date(5881580, time.July, 10, 0, 0, 0, 0, time.UTC)
+)
+
 func inferDate[T any](val T) (mapping.Date, error) {
 	ti, err := castToTime(val)
 	if err != nil {
@@ -822,6 +829,9 @@ func inferDate[T any](val T) (mapping.Date, error) {
 	// UTC midnight makes the day count exact, including before the Unix epoch.
 	year, month, day := ti.Date()
 	midnight := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	if midnight.Before(minDate) || midnight.After(maxDate) {
+		return mapping.Date{}, dateRangeError(midnight, minDate, maxDate)
+	}
 	return mapping.NewDate(int32(midnight.Unix() / secondsPerDay)), nil
 }
 

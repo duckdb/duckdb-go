@@ -1809,6 +1809,56 @@ func testTemporalWritePaths(t *testing.T, conn *sql.Conn, a *Appender, value tim
 	}
 }
 
+func TestDateRange(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		year  int
+		month time.Month
+		day   int
+		want  string
+	}{
+		{"minimum", -5877641, 6, 25, "5877642-06-25 (BC)"},
+		{"maximum", 5881580, 7, 10, "5881580-07-10"},
+		{"negative infinity", -5877641, 6, 24, ""},
+		{"int32 minimum", -5877641, 6, 23, ""},
+		{"positive infinity", 5881580, 7, 11, ""},
+		{"below minimum year", -5877642, 12, 31, ""},
+		{"above maximum year", 5881581, 1, 1, ""},
+		{"wrapped year", 6000000, 1, 1, ""},
+		{"huge positive year", 200_000_000_000, 1, 1, ""},
+		{"huge negative year", -200_000_000_000, 1, 1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, db, driverConn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (d DATE)`)
+			defer cleanupAppender(t, c, db, driverConn, a)
+			ctx := context.Background()
+			conn := openConnWrapper(t, db, ctx)
+			defer closeConnWrapper(t, conn)
+			// These offsets cross the UTC date boundary at opposite ends of the range.
+			offset, hour := 14*3600, 0
+			if tc.year > 0 {
+				offset, hour = -12*3600, 23
+			}
+			value := time.Date(tc.year, tc.month, tc.day, hour, 0, 0, 0, time.FixedZone("boundary", offset))
+			require.Equal(t, tc.year, value.Year())
+			testTemporalWritePaths(t, conn, a, value, []Type{TYPE_DATE}, func(t *testing.T, err error) {
+				if tc.want == "" {
+					require.ErrorContains(t, err, fmt.Sprintf(
+						"cannot convert %d-%02d-%02d, minimum: -5877641-06-25, maximum: 5881580-07-10",
+						tc.year, tc.month, tc.day))
+					return
+				}
+				require.NoError(t, err)
+				var got string
+				var finite bool
+				require.NoError(t, conn.QueryRowContext(ctx, `SELECT d::VARCHAR, isfinite(d) FROM test`).Scan(&got, &finite))
+				require.Equal(t, tc.want, got)
+				require.True(t, finite)
+			})
+		})
+	}
+}
+
 func TestTemporalCalendarAndClock(t *testing.T) {
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
 	require.NoError(t, err)
