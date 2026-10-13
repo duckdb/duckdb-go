@@ -26,8 +26,8 @@ jobs:
         go: [1.24]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
@@ -45,8 +45,8 @@ jobs:
         go: [1.24]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Race Tests
@@ -65,8 +65,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Test Examples
@@ -87,8 +87,8 @@ jobs:
         go: [1.24]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Arrow Tests
@@ -123,8 +123,8 @@ jobs:
             ld_path_env_name: "LD_LIBRARY_PATH"
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Dynamic Lib Tests
@@ -143,8 +143,8 @@ jobs:
         go: [1.24]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Static Lib Tests Darwin ARM64
