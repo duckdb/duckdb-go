@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -30,6 +31,11 @@ func castErrorForValue(v any, expected string) error {
 
 func conversionError(actual, min, max int) error {
 	return fmt.Errorf("%s: cannot convert %d, minimum: %d, maximum: %d", convertErrMsg, actual, min, max)
+}
+
+func dateRangeError(actual, min, max time.Time) error {
+	return fmt.Errorf("%s: cannot convert %s, minimum: %s, maximum: %s",
+		convertErrMsg, actual.Format(time.DateOnly), min.Format(time.DateOnly), max.Format(time.DateOnly))
 }
 
 func invalidInputError(actual, expected string) error {

@@ -812,6 +812,13 @@ func inferTimestampNS(val any) (mapping.TimestampNS, error) {
 
 const secondsPerDay = 24 * 60 * 60
 
+// DuckDB reserves the day counts immediately outside these finite bounds for
+// negative and positive infinity; INT32_MIN is also excluded from valid dates.
+var (
+	minDate = time.Date(-5877641, time.June, 25, 0, 0, 0, 0, time.UTC)
+	maxDate = time.Date(5881580, time.July, 10, 0, 0, 0, 0, time.UTC)
+)
+
 func inferDate[T any](val T) (mapping.Date, error) {
 	ti, err := castToTime(val)
 	if err != nil {
@@ -822,15 +829,18 @@ func inferDate[T any](val T) (mapping.Date, error) {
 	// UTC midnight makes the day count exact, including before the Unix epoch.
 	year, month, day := ti.Date()
 	midnight := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	if midnight.Before(minDate) || midnight.After(maxDate) {
+		return mapping.Date{}, dateRangeError(midnight, minDate, maxDate)
+	}
 	return mapping.NewDate(int32(midnight.Unix() / secondsPerDay)), nil
 }
 
 func inferTime(val any) (mapping.Time, error) {
-	ticks, err := getTimeTicks(val)
+	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.Time{}, err
 	}
-	return mapping.NewTime(ticks), nil
+	return mapping.NewTime(wallClockMicros(ti)), nil
 }
 
 func inferTimeTZ(val any) (mapping.TimeTZ, error) {
@@ -839,22 +849,13 @@ func inferTimeTZ(val any) (mapping.TimeTZ, error) {
 		return mapping.TimeTZ{}, err
 	}
 
-	// DuckDB stores time as microseconds since 00:00:00.
-	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	ticks := base.UnixMicro()
-
 	// Preserve the UTC offset from the input time.
 	_, offset := ti.Zone()
-	return mapping.CreateTimeTZ(ticks, int32(offset)), nil
+	return mapping.CreateTimeTZ(wallClockMicros(ti), int32(offset)), nil
 }
 
-func getTimeTicks[T any](val T) (int64, error) {
-	ti, err := castToTime(val)
-	if err != nil {
-		return 0, err
-	}
-
+func wallClockMicros(ti time.Time) int64 {
 	// DuckDB stores time as microseconds since 00:00:00.
 	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	return base.UnixMicro(), err
+	return base.UnixMicro()
 }

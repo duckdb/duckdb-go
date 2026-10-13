@@ -1761,6 +1761,104 @@ func TestOrderedMapJSON(t *testing.T) {
 	require.Equal(t, om.Values(), got.Values())
 }
 
+func testTemporalWritePaths(t *testing.T, conn *sql.Conn, a *Appender, value time.Time, columns []Type, check func(*testing.T, error)) {
+	t.Helper()
+	ctx := context.Background()
+	exec := func(query string, args ...any) error {
+		_, err := conn.ExecContext(ctx, query, args...)
+		return err
+	}
+	values := make([]any, len(columns))
+	typedArgs := make([]any, len(columns))
+	appenderArgs := make([]driver.Value, len(columns))
+	placeholders := make([]string, len(columns))
+	udfs := make([]string, len(columns))
+	for i, typ := range columns {
+		values[i] = value
+		typedArgs[i] = Typed(value, typ)
+		appenderArgs[i] = value
+		placeholders[i] = "?"
+		name := fmt.Sprintf("temporal_%d", i)
+		udfs[i] = name + "()"
+		info, err := NewTypeInfo(typ)
+		require.NoError(t, err)
+		require.NoError(t, RegisterScalarUDF(conn, name, &jsonSUDF{
+			result: info,
+			fn:     func([]driver.Value) (any, error) { return value, nil },
+		}))
+	}
+	insertQuery := "INSERT INTO test VALUES (" + strings.Join(placeholders, ", ") + ")"
+	for _, path := range []struct {
+		name   string
+		insert func() error
+	}{
+		{"parameters", func() error { return exec(insertQuery, values...) }},
+		{"typed", func() error { return exec(insertQuery, typedArgs...) }},
+		{"appender", func() error {
+			if err := a.AppendRow(appenderArgs...); err != nil {
+				return err
+			}
+			return a.Flush()
+		}},
+		{"udf", func() error { return exec("INSERT INTO test SELECT " + strings.Join(udfs, ", ")) }},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			require.NoError(t, exec(`DELETE FROM test`))
+			check(t, path.insert())
+		})
+	}
+}
+
+func TestDateRange(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		year  int
+		month time.Month
+		day   int
+		want  string
+	}{
+		{"minimum", -5877641, 6, 25, "5877642-06-25 (BC)"},
+		{"maximum", 5881580, 7, 10, "5881580-07-10"},
+		{"negative infinity", -5877641, 6, 24, ""},
+		{"int32 minimum", -5877641, 6, 23, ""},
+		{"positive infinity", 5881580, 7, 11, ""},
+		{"below minimum year", -5877642, 12, 31, ""},
+		{"above maximum year", 5881581, 1, 1, ""},
+		{"wrapped year", 6000000, 1, 1, ""},
+		{"huge positive year", 200_000_000_000, 1, 1, ""},
+		{"huge negative year", -200_000_000_000, 1, 1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, db, driverConn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (d DATE)`)
+			defer cleanupAppender(t, c, db, driverConn, a)
+			ctx := context.Background()
+			conn := openConnWrapper(t, db, ctx)
+			defer closeConnWrapper(t, conn)
+			// These offsets cross the UTC date boundary at opposite ends of the range.
+			offset, hour := 14*3600, 0
+			if tc.year > 0 {
+				offset, hour = -12*3600, 23
+			}
+			value := time.Date(tc.year, tc.month, tc.day, hour, 0, 0, 0, time.FixedZone("boundary", offset))
+			require.Equal(t, tc.year, value.Year())
+			testTemporalWritePaths(t, conn, a, value, []Type{TYPE_DATE}, func(t *testing.T, err error) {
+				if tc.want == "" {
+					require.ErrorContains(t, err, fmt.Sprintf(
+						"cannot convert %d-%02d-%02d, minimum: -5877641-06-25, maximum: 5881580-07-10",
+						tc.year, tc.month, tc.day))
+					return
+				}
+				require.NoError(t, err)
+				var got string
+				var finite bool
+				require.NoError(t, conn.QueryRowContext(ctx, `SELECT d::VARCHAR, isfinite(d) FROM test`).Scan(&got, &finite))
+				require.Equal(t, tc.want, got)
+				require.True(t, finite)
+			})
+		})
+	}
+}
+
 func TestTemporalCalendarAndClock(t *testing.T) {
 	tokyo, err := time.LoadLocation("Asia/Tokyo")
 	require.NoError(t, err)
@@ -1786,58 +1884,23 @@ func TestTemporalCalendarAndClock(t *testing.T) {
 			ctx := context.Background()
 			conn := openConnWrapper(t, db, ctx)
 			defer closeConnWrapper(t, conn)
-			exec := func(query string, args ...any) error {
-				_, err := conn.ExecContext(ctx, query, args...)
-				return err
-			}
-			require.NoError(t, exec(`SET TimeZone = 'UTC'`))
+			_, err := conn.ExecContext(ctx, `SET TimeZone = 'UTC'`)
+			require.NoError(t, err)
 
 			columns := []Type{TYPE_DATE, TYPE_TIME, TYPE_TIME_TZ, TYPE_TIMESTAMP, TYPE_TIMESTAMP_TZ}
-			typedArgs := make([]any, len(columns))
-			for i, typ := range columns {
-				typedArgs[i] = Typed(tc.value, typ)
-				info, err := NewTypeInfo(typ)
+			testTemporalWritePaths(t, conn, a, tc.value, columns, func(t *testing.T, err error) {
 				require.NoError(t, err)
-				require.NoError(t, RegisterScalarUDF(conn, fmt.Sprintf("temporal_%d", i), &jsonSUDF{
-					result: info,
-					fn:     func([]driver.Value) (any, error) { return tc.value, nil },
-				}))
-			}
-
-			const insertQuery = `INSERT INTO test VALUES (?, ?, ?, ?, ?)`
-			for _, path := range []struct {
-				name   string
-				insert func() error
-			}{
-				{"parameters", func() error {
-					return exec(insertQuery, tc.value, tc.value, tc.value, tc.value, tc.value)
-				}},
-				{"typed", func() error { return exec(insertQuery, typedArgs...) }},
-				{"appender", func() error {
-					if err := a.AppendRow(tc.value, tc.value, tc.value, tc.value, tc.value); err != nil {
-						return err
-					}
-					return a.Flush()
-				}},
-				{"udf", func() error {
-					return exec(`INSERT INTO test SELECT temporal_0(), temporal_1(), temporal_2(), temporal_3(), temporal_4()`)
-				}},
-			} {
-				t.Run(path.name, func(t *testing.T) {
-					require.NoError(t, exec(`DELETE FROM test`))
-					require.NoError(t, path.insert())
-					var date, clock string
-					var timeTZ, ts, tsTZ time.Time
-					require.NoError(t, conn.QueryRowContext(ctx,
-						`SELECT d::VARCHAR, t::VARCHAR, z, ts, tz FROM test`).
-						Scan(&date, &clock, &timeTZ, &ts, &tsTZ))
-					require.Equal(t, tc.date, date)
-					require.Equal(t, tc.clock, clock)
-					require.Equal(t, tc.value.Format("15:04:05.999999Z07:00"), timeTZ.Format("15:04:05.999999Z07:00"))
-					require.True(t, tc.value.Equal(ts), "TIMESTAMP must preserve the instant: %v", ts)
-					require.True(t, tc.value.Equal(tsTZ), "TIMESTAMPTZ must preserve the instant: %v", tsTZ)
-				})
-			}
+				var date, clock string
+				var timeTZ, ts, tsTZ time.Time
+				require.NoError(t, conn.QueryRowContext(ctx,
+					`SELECT d::VARCHAR, t::VARCHAR, z, ts, tz FROM test`).
+					Scan(&date, &clock, &timeTZ, &ts, &tsTZ))
+				require.Equal(t, tc.date, date)
+				require.Equal(t, tc.clock, clock)
+				require.Equal(t, tc.value.Format("15:04:05.999999Z07:00"), timeTZ.Format("15:04:05.999999Z07:00"))
+				require.True(t, tc.value.Equal(ts), "TIMESTAMP must preserve the instant: %v", ts)
+				require.True(t, tc.value.Equal(tsTZ), "TIMESTAMPTZ must preserve the instant: %v", tsTZ)
+			})
 		})
 	}
 }
