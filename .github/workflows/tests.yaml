@@ -24,6 +24,8 @@ jobs:
           - macos-x64
           - linux-arm64
         go: [1.24]
+        # Keep native Intel coverage after merge without delaying PR checks.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
         # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
         # runners when the workflow runs in the duckdb organization. There is no
         # Namespace profile for macOS x64, so that platform stays on GitHub.
@@ -31,7 +33,9 @@ jobs:
           - &linux-x64 { platform: linux-x64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
           - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
           - &macos-arm64 { platform: macos-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
-          - &macos-x64 { platform: macos-x64, github: macos-15-intel, namespace: macos-15-intel }
+          # Includes run after exclusions; use an empty array on PRs to avoid
+          # adding the excluded Intel job back.
+          - &macos-x64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","github":"macos-15-intel","namespace":"macos-15-intel"}]') }}
           - &windows-x64 { platform: windows-x64, github: windows-2025, namespace: namespace-profile-windows-x64 }
       fail-fast: false
     steps:
@@ -120,14 +124,14 @@ jobs:
           - macos-arm64
           - linux-x64
           - linux-arm64
+        # Keep native Intel coverage after merge without delaying PR checks.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
         include:
           - *macos-x64
           - *macos-arm64
           - *linux-x64
           - *linux-arm64
-          - platform: "macos-x64"
-            filename: "libduckdb-osx-universal"
-            ld_path_env_name: "DYLD_LIBRARY_PATH"
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
           - platform: "macos-arm64"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
