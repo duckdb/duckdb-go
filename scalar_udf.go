@@ -60,7 +60,7 @@ type bindData struct {
 type ScalarUDFArg struct {
 	// Foldable is true, if the argument was folded into a value, else false.
 	Foldable bool
-	// Value is the folded argument value, or nil, if the argument is not foldable.
+	// Value is the folded argument value, or nil, if the argument is not foldable or folded to NULL.
 	Value driver.Value
 }
 
