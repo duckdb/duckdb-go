@@ -11,19 +11,28 @@ concurrency:
 jobs:
   go_test:
     name: Main Tests
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-          - macos-15-intel
-          - ubuntu-24.04-arm
+        platform:
+          - linux-x64
+          - macos-arm64
+          - windows-x64
+          - macos-x64
+          - linux-arm64
         go: [1.24]
+        # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
+        # runners when the workflow runs in the duckdb organization. There is no
+        # Namespace profile for macOS x64, so that platform stays on GitHub.
+        include:
+          - &linux-x64 { platform: linux-x64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
+          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
+          - &macos-arm64 { platform: macos-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
+          - &macos-x64 { platform: macos-x64, github: macos-15-intel, namespace: macos-15-intel }
+          - &windows-x64 { platform: windows-x64, github: windows-2025, namespace: namespace-profile-windows-x64 }
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -35,14 +44,15 @@ jobs:
 
   go_race_test:
     name: Race Tests
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        platform: [linux-x64]
         go: [1.24]
+        include: [*linux-x64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -54,13 +64,14 @@ jobs:
 
   test_examples:
     name: Test Examples
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+        platform:
+          - linux-x64
+          - macos-arm64
         go: [1.24]
+        include: [*linux-x64, *macos-arm64]
     defaults:
       run:
         shell: bash
@@ -74,17 +85,18 @@ jobs:
 
   test-arrow:
     name: Test Arrow
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        platform:
+          - linux-x64
+          - macos-arm64
+          - windows-x64
         go: [1.24]
+        include: [*linux-x64, *macos-arm64, *windows-x64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -96,29 +108,33 @@ jobs:
 
   test-dynamic-lib:
     name: Dynamic Lib Tests
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         go: [1.24]
-        os:
-          - macos-15-intel
-          - macos-latest
-          - ubuntu-latest
-          - ubuntu-24.04-arm
+        platform:
+          - macos-x64
+          - macos-arm64
+          - linux-x64
+          - linux-arm64
         include:
-          - os: "macos-15-intel"
+          - *macos-x64
+          - *macos-arm64
+          - *linux-x64
+          - *linux-arm64
+          - platform: "macos-x64"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - os: "macos-latest"
+          - platform: "macos-arm64"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - os: "ubuntu-latest"
+          - platform: "linux-x64"
             filename: "libduckdb-linux-amd64"
             ld_path_env_name: "LD_LIBRARY_PATH"
-          - os: "ubuntu-24.04-arm"
+          - platform: "linux-arm64"
             filename: "libduckdb-linux-arm64"
             ld_path_env_name: "LD_LIBRARY_PATH"
       fail-fast: false
@@ -134,13 +150,14 @@ jobs:
 
   test-static-lib-darwin-arm64:
     name: Static Lib Tests Darwin ARM64
-    runs-on: macos-latest
+    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         go: [1.24]
+        include: [*macos-arm64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
