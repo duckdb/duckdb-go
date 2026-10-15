@@ -177,6 +177,14 @@ func TestAppenderClose(t *testing.T) {
 	require.NoError(t, a.AppendRow(int32(42)))
 }
 
+func TestAppenderClearAfterClose(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (i INTEGER)`)
+	defer cleanupDb(t, c, db, conn)
+	require.NoError(t, a.AppendRow(int32(42)))
+	require.NoError(t, a.Close())
+	require.ErrorContains(t, a.Clear(), "appender already closed")
+}
+
 func TestAppenderRejectsVariant(t *testing.T) {
 	tests := []struct {
 		name string
