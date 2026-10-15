@@ -314,7 +314,12 @@ func (a *Appender) FlushWithCancel(ctx context.Context) error {
 // This resets the DuckDB appender's internal state.
 // Clear is typically used after an error occurs during Flush or FlushWithCancel to avoid memory leaks
 // before closing the appender. After calling Clear, the appender can be reused for appending new rows.
+// Clear returns an error if the appender has been closed.
 func (a *Appender) Clear() error {
+	if a.closed {
+		return getError(errAppenderClearAfterClose, nil)
+	}
+
 	errClear := a.clearAppender()
 	a.chunk.reset(true)
 	a.rowCount = 0

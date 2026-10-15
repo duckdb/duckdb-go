@@ -159,6 +159,7 @@ var (
 	errAppenderDoubleClose      = fmt.Errorf("%w: already closed", errAppenderClose)
 	errAppenderAppendRow        = errors.New("could not append row")
 	errAppenderAppendAfterClose = fmt.Errorf("%w: appender already closed", errAppenderAppendRow)
+	errAppenderClearAfterClose  = errors.New("could not clear appender: appender already closed")
 	errAppenderFlush            = errors.New("could not flush appender")
 	errAppenderEmptyQuery       = errors.New("empty query")
 	errAppenderEmptyColumnTypes = errors.New("empty column types")
