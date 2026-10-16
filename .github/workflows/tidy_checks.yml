@@ -12,7 +12,8 @@ permissions:
 jobs:
   linter:
     name: Golangci-lint
-    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-small' || 'ubuntu-24.04' }}
+    runs-on: &runner ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-small' || 'ubuntu-24.04' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -25,7 +26,8 @@ jobs:
 
   coverage:
     name: Go Test Coverage
-    runs-on: ${{ github.repository_owner == 'duckdb' && 'namespace-profile-linux-small' || 'ubuntu-24.04' }}
+    runs-on: *runner
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

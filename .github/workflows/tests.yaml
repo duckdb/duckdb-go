@@ -11,32 +11,33 @@ concurrency:
 jobs:
   go_test:
     name: Main Tests
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: &runner ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         platform:
-          - linux-x64
-          - macos-arm64
-          - windows-x64
-          - macos-x64
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
           - linux-arm64
+          - windows-amd64
         go: [1.24]
         # Keep native Intel coverage after merge without delaying PR checks.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
+        exclude: &skip-intel-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"}]' || '[]') }}
         # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
         # runners when the workflow runs in the duckdb organization. There is no
-        # Namespace profile for macOS x64, so that platform stays on GitHub.
+        # Namespace profile for Intel macOS, so runs-on falls back to github.
         include:
-          - &linux-x64 { platform: linux-x64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
-          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
-          - &macos-arm64 { platform: macos-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
           # Includes run after exclusions; use an empty array on PRs to avoid
           # adding the excluded Intel job back.
-          - &macos-x64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","github":"macos-15-intel","namespace":"macos-15-intel"}]') }}
-          - &windows-x64 { platform: windows-x64, github: windows-2025, namespace: namespace-profile-windows-x64 }
+          - &darwin-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","github":"macos-15-intel"}]') }}
+          - &darwin-arm64 { platform: darwin-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
+          - &linux-amd64 { platform: linux-amd64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
+          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
+          - &windows-amd64 { platform: windows-amd64, github: windows-2025, namespace: namespace-profile-windows-x64 }
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -48,15 +49,16 @@ jobs:
 
   go_race_test:
     name: Race Tests
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        platform: [linux-x64]
+        platform: [linux-amd64]
         go: [1.24]
-        include: [*linux-x64]
+        include: [*linux-amd64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -68,14 +70,15 @@ jobs:
 
   test_examples:
     name: Test Examples
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: *runner
+    timeout-minutes: 15
     strategy:
       matrix:
         platform:
-          - linux-x64
-          - macos-arm64
+          - darwin-arm64
+          - linux-amd64
         go: [1.24]
-        include: [*linux-x64, *macos-arm64]
+        include: [*darwin-arm64, *linux-amd64]
     defaults:
       run:
         shell: bash
@@ -89,18 +92,19 @@ jobs:
 
   test-arrow:
     name: Test Arrow
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         platform:
-          - linux-x64
-          - macos-arm64
-          - windows-x64
+          - darwin-arm64
+          - linux-amd64
+          - windows-amd64
         go: [1.24]
-        include: [*linux-x64, *macos-arm64, *windows-x64]
+        include: [*darwin-arm64, *linux-amd64, *windows-amd64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -112,7 +116,8 @@ jobs:
 
   test-dynamic-lib:
     name: Dynamic Lib Tests
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -120,22 +125,21 @@ jobs:
       matrix:
         go: [1.24]
         platform:
-          - macos-x64
-          - macos-arm64
-          - linux-x64
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
           - linux-arm64
-        # Keep native Intel coverage after merge without delaying PR checks.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"macos-x64"}]' || '[]') }}
+        exclude: *skip-intel-on-pr
         include:
-          - *macos-x64
-          - *macos-arm64
-          - *linux-x64
+          - *darwin-amd64
+          - *darwin-arm64
+          - *linux-amd64
           - *linux-arm64
-          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"macos-x64","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
-          - platform: "macos-arm64"
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
+          - platform: "darwin-arm64"
             filename: "libduckdb-osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - platform: "linux-x64"
+          - platform: "linux-amd64"
             filename: "libduckdb-linux-amd64"
             ld_path_env_name: "LD_LIBRARY_PATH"
           - platform: "linux-arm64"
@@ -154,14 +158,15 @@ jobs:
 
   test-static-lib-darwin-arm64:
     name: Static Lib Tests Darwin ARM64
-    runs-on: ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         go: [1.24]
-        include: [*macos-arm64]
+        include: [*darwin-arm64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
