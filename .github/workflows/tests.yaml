@@ -19,11 +19,11 @@ jobs:
     strategy:
       matrix:
         platform:
-          - linux-amd64
-          - darwin-arm64
-          - windows-amd64
           - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
           - linux-arm64
+          - windows-amd64
         go: [1.24]
         # Keep native Intel coverage after merge without delaying PR checks.
         exclude: &skip-intel-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"}]' || '[]') }}
@@ -31,12 +31,12 @@ jobs:
         # runners when the workflow runs in the duckdb organization. There is no
         # Namespace profile for Intel macOS, so runs-on falls back to github.
         include:
-          - &linux-amd64 { platform: linux-amd64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
-          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
-          - &darwin-arm64 { platform: darwin-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
           # Includes run after exclusions; use an empty array on PRs to avoid
           # adding the excluded Intel job back.
           - &darwin-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","github":"macos-15-intel"}]') }}
+          - &darwin-arm64 { platform: darwin-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
+          - &linux-amd64 { platform: linux-amd64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
+          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
           - &windows-amd64 { platform: windows-amd64, github: windows-2025, namespace: namespace-profile-windows-x64 }
       fail-fast: false
     steps:
@@ -75,10 +75,10 @@ jobs:
     strategy:
       matrix:
         platform:
-          - linux-amd64
           - darwin-arm64
+          - linux-amd64
         go: [1.24]
-        include: [*linux-amd64, *darwin-arm64]
+        include: [*darwin-arm64, *linux-amd64]
     defaults:
       run:
         shell: bash
@@ -100,11 +100,11 @@ jobs:
     strategy:
       matrix:
         platform:
-          - linux-amd64
           - darwin-arm64
+          - linux-amd64
           - windows-amd64
         go: [1.24]
-        include: [*linux-amd64, *darwin-arm64, *windows-amd64]
+        include: [*darwin-arm64, *linux-amd64, *windows-amd64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
