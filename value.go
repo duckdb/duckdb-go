@@ -14,6 +14,13 @@ func createVarchar(s string) mapping.Value {
 }
 
 func getValue(v mapping.Value) (any, error) {
+	// Typed NULL values must not reach duckdb_get_*: some getters throw a C++
+	// exception on NULL, which terminates the process across the cgo boundary.
+	// A missing value (nil pointer) keeps the existing type-dispatch behavior.
+	if v.Ptr != nil && mapping.IsNullValue(v) {
+		return nil, nil
+	}
+
 	// The logical type is valid as long as v (mapping.Value) is valid,
 	// i.e., it must not be destroyed.
 	lt := mapping.GetValueType(v)
