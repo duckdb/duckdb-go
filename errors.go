@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -325,6 +326,18 @@ func getDuckDBError(errMsg string) error {
 	if prefix, _, ok := strings.Cut(errMsg, ": "); ok {
 		if typ, ok := errorPrefixMap[prefix]; ok {
 			errType = typ
+		}
+	}
+
+	// With errors_as_json, the type is in the exception_type field instead of a prefix.
+	if strings.HasPrefix(errMsg, "{") {
+		var jsonErr struct {
+			ExceptionType string `json:"exception_type"` //nolint:tagliatelle // DuckDB's field name.
+		}
+		if json.Unmarshal([]byte(errMsg), &jsonErr) == nil {
+			if typ, ok := errorPrefixMap[jsonErr.ExceptionType+" Error"]; ok {
+				errType = typ
+			}
 		}
 	}
 
