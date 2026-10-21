@@ -80,6 +80,33 @@ and we are looking forward to your future PRs, issues, and discussions!
 
 The license is unchanged: the migrated repository keeps the original MIT license, which is the same for core DuckDB and other primary clients.
 
+## Upgrading to DuckDB v2
+
+DuckDB `v2.0.0` maps to duckdb-go `v2.20000.x`. The `/v2` in duckdb-go's module path is unrelated to DuckDB's major version.
+duckdb-go keeps its Go API, so existing code builds unchanged.
+What else changes depends on how you link DuckDB and which features you use.
+See also the [duckdb-go-bindings upgrade notes](https://github.com/duckdb/duckdb-go-bindings#upgrading-to-duckdb-v2).
+
+### Linking
+
+- **Pre-built static libraries (default):** nothing to do.
+  The libraries now come from `go.duckdb.org` instead of GitHub,
+  so builds that restrict module downloads, e.g., with `GOPROXY` or `GOPRIVATE`, must allow it.
+- **Dynamic libraries (`duckdb_use_lib`):** link the shared library of a DuckDB v2 release,
+  published as `duckdb-shared-libs-<platform>.tar.gz` (see [Linking a Dynamic Library](#linking-a-dynamic-library)).
+- **Custom static libraries (`duckdb_use_static_lib`):** DuckDB v2 removed the `bundle-library` target.
+  Link a static extension loader and the v2 set of archives instead (see [Linking a Static Library](#linking-a-static-library)).
+
+### Behavior changes
+
+- `RowsAffected` of a `CREATE TABLE ... AS` statement returns the number of created rows instead of 0.
+- Profiling metrics and configuration have changed; see [DuckDB Profiling API](#duckdb-profiling-api).
+- Setting an option with `PRAGMA name = value` is deprecated and logs a warning. Use `SET name = value` instead.
+- With DuckDB `v2.0.0`, a custom log storage (`RegisterLogStorage`) receives each query twice: once when duckdb-go prepares it, and once when it executes it.
+- A failed automatic flush, `Flush`, or `FlushWithCancel` drops the rows it tried to append instead of keeping them for the next flush.
+  `Close` still returns an error for that flush unless you call `Clear` first.
+  Batches appended after the failure can still commit, so that error does not imply that no rows were written.
+
 ## Breaking Changes
 
 > [!WARNING]
@@ -214,56 +241,34 @@ Statically linking DuckDB increases your binary size.
 
 ### Linking a Static Library
 
-If none of the pre-built libraries satisfy your needs, you can build a custom static library.
+If none of the pre-built libraries satisfy your needs, you can link your own DuckDB static libraries
+by passing `-tags=duckdb_use_static_lib` to `go build`.
 
-1. Clone and build the DuckDB source code.
-   - Use their `bundle-library` Makefile target (e.g., `make bundle-library`).
-   - Common build flags are: `DUCKDB_PLATFORM=any BUILD_EXTENSIONS="icu;json;parquet;autocomplete"`.
-   - See DuckDB's [development](https://github.com/duckdb/duckdb#development) instructions for more details.
-2. Link against the resulting static library, which you can find in: `duckdb/build/release/libduckdb_bundle.a`.
-
-For Darwin ARM64, you can then build your module like so:
+DuckDB releases publish them as `duckdb-static-libs-<platform>.tar.gz`.
+DuckDB's install script fetches them for the current platform into `~/.duckdb/lib/<version>/release_<platform>`:
 
 ```sh
-CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/libs" go build -tags=duckdb_use_static_lib
+curl https://install.duckdb.org | DUCKDB_INSTALL=static sh
 ```
 
-#### Using a local DuckDB checkout
+DuckDB only loads statically linked extensions once they are registered.
+duckdb-go calls `duckdb_register_static_extensions()` before opening a database,
+so you must also link a static extension loader that defines it.
+When you build DuckDB from source, `make` leaves the archives under `build/release`,
+and `make static_extension_loader` generates the loader for that build.
+Without a DuckDB checkout, start from the loader of the pre-built libraries, as described in the
+[duckdb-go-bindings README](https://github.com/duckdb/duckdb-go-bindings#alternative-custom-static-libraries).
 
-If you want to validate local DuckDB changes from `duckdb-go`, point `duckdb-go` at a static library built from your local DuckDB checkout.
-
-1. Build DuckDB and create the bundled static archive in your local checkout. Rerun this command after editing DuckDB source files.
+Link the loader, an archive for each capability and extension it registers, and `libduckdb_static.a` last.
+For Darwin ARM64, with the extensions of the pre-built libraries:
 
 ```sh
-cd /path/to/duckdb
-make bundle-library
+CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
+CGO_LDFLAGS="-lduckdb_static_extension_loader -lduckdb_httplib -lduckdb_loadable_extensions -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_static -lc++ -L/path/to/libs" \
+go build -tags=duckdb_use_static_lib
 ```
 
-2. Run `duckdb-go` against that archive. The example below uses macOS linker flags.
-
-```sh
-CGO_ENABLED=1 \
-CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
-CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/duckdb/build/release" \
-go test -tags=duckdb_use_static_lib ./...
-```
-
-For targeted verification, run only the reproducer or regression test you care about:
-
-```sh
-CGO_ENABLED=1 \
-CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
-CGO_LDFLAGS="-lduckdb_bundle -lc++ -L/path/to/duckdb/build/release" \
-go test -tags=duckdb_use_static_lib -run TestName -v
-```
-
-This lets you verify a local DuckDB fix from `duckdb-go` without replacing the bundled libraries in this repository. The same static-linking pattern is also used in the `Makefile` and `tests.yaml`.
-
-The DuckDB team also publishes pre-built libraries as part of their [releases](https://github.com/duckdb/duckdb/releases).
-The published zipped archives contain libraries for DuckDB core, the third-party libraries, and the default extensions.
-When linking, you might want to bundle these libraries into a single archive first.
-You can use any archive tool (e.g., `ar`).
-DuckDB's `bundle-library` Makefile target contains an example of `ar`, or you can look at the Docker file [here](https://github.com/duckdb/duckdb/issues/17312#issuecomment-2885130728).
+The duckdb-go-bindings README lists the linker flags for Linux and Windows.
 
 #### Note on FreeBSD
 
@@ -274,8 +279,9 @@ Thus, you must build your static library for FreeBSD using the steps above.
 ### Linking a Dynamic Library
 
 Alternatively, you can dynamically link DuckDB by passing `-tags=duckdb_use_lib` to `go build`.
-You must have a copy of `libduckdb` available on your system (`.so` on Linux or `.dylib` on macOS),
-which you can download from the DuckDB [releases page](https://github.com/duckdb/duckdb/releases).
+You must have a copy of `libduckdb` available on your system (`.so` on Linux or `.dylib` on macOS).
+DuckDB releases publish it as `duckdb-shared-libs-<platform>.tar.gz`,
+and `curl https://install.duckdb.org | DUCKDB_INSTALL=shared sh` installs it into `~/.duckdb/lib/<version>/release_<platform>`.
 
 For example:
 
@@ -290,6 +296,23 @@ DYLD_LIBRARY_PATH=/path/to/libs ./main
 ```
 
 You can also find these steps in the `Makefile` and the `tests.yaml`.
+
+#### Using a local DuckDB checkout
+
+To validate local DuckDB changes from `duckdb-go`, build DuckDB and link `duckdb-go` against its shared library.
+Rerun `make` after editing DuckDB source files.
+
+```sh
+cd /path/to/duckdb
+make
+
+cd /path/to/duckdb-go
+CGO_ENABLED=1 \
+CGO_LDFLAGS="-lduckdb -L/path/to/duckdb/build/release/src -Wl,-rpath,/path/to/duckdb/build/release/src" \
+go test -tags=duckdb_use_lib ./...
+```
+
+To run only the test you care about, add `-run TestName -v`.
 
 ## Notes and FAQs
 
@@ -424,8 +447,7 @@ defer db.Close()
 conn, err := db.Conn(context.Background())
 defer conn.Close()
 
-_, err = conn.ExecContext(context.Background(), `PRAGMA enable_profiling = 'no_output'`)
-_, err = conn.ExecContext(context.Background(), `PRAGMA profiling_mode = 'detailed'`)
+_, err = conn.ExecContext(context.Background(), `SET enable_profiling = 'no_output'`)
 
 res, err := conn.QueryContext(context.Background(), `SELECT 42`)
 defer res.Close()
@@ -434,6 +456,13 @@ info, err := GetProfilingInfo(conn)
 
 _, err = conn.ExecContext(context.Background(), `PRAGMA disable_profiling`)
 ```
+
+The root of the `ProfilingInfo` tree has no metrics of its own.
+Its children are the operators of the query plan, followed by metric groups measured over the entire query,
+such as the group containing the query's `sql` and `cpu_time`.
+Metric names are lowercase, e.g., `cpu_time` instead of `CPU_TIME`.
+`SET tracked_metrics` selects the collected metrics, e.g., `SET tracked_metrics = ['query.cpu_time', 'storage.checkpoint_latency']`.
+It replaces `custom_profiling_settings`; `profiling_mode` is deprecated.
 
 ## DuckDB Apache Arrow Interface
 
@@ -471,21 +500,20 @@ for rdr.Next() {
 ## DuckDB Extensions
 
 `duckdb-go` relies on the [`duckdb-go-bindings` module](https://github.com/duckdb/duckdb-go-bindings).
-Any pre-built library in `duckdb-go-bindings` statically links the default extensions: ICU, JSON, Parquet, and Autocomplete.
+Any pre-built library in `duckdb-go-bindings` statically links the core functions and the Autocomplete, ICU, JSON, Parquet, TPC-DS, and TPC-H extensions.
 Additionally, automatic extension loading is enabled.
 
 ## Releasing a New DuckDB Version
 
 Prepare normal releases from `main`. For LTS releases that stay on DuckDB 1.4 Andium, use the `v1.4-andium` branch.
 
-1. Release the new DuckDB version in [duckdb-go-bindings](https://github.com/duckdb/duckdb-go-bindings#releasing-a-new-duckdb-version).
+1. Release the new DuckDB version in [duckdb-go-bindings](https://github.com/duckdb/duckdb-go-bindings#updating-native-libraries).
 2. Create a new branch.
 3. Update `duckdb-go-bindings` via `go get github.com/duckdb/duckdb-go-bindings@latest`.
 4. Run `go mod tidy`.
-5. Update `DUCKDB_VERSION` in `Makefile`.
-6. Update the latest version and the version table in `README.md`.
-7. Commit and PR changes. Link the bindings release in the PR description.
-8. After the PR is merged, push a new tagged release, `v2.MAJOR_MINOR_PATCH.x`, e.g. `v2.10500.0` for DuckDB 1.5.0, and publish a GitHub release for the tag.
+5. Update the latest version and the version table in `README.md`.
+6. Commit and PR changes. Link the bindings release in the PR description.
+7. After the PR is merged, push a new tagged release, `v2.MAJOR_MINOR_PATCH.x`, e.g. `v2.10500.0` for DuckDB 1.5.0, and publish a GitHub release for the tag.
 
 ```
 git tag <tagname>
