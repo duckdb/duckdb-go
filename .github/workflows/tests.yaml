@@ -135,15 +135,15 @@ jobs:
           - *darwin-arm64
           - *linux-amd64
           - *linux-arm64
-          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","filename":"libduckdb-osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","artifact":"osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
           - platform: "darwin-arm64"
-            filename: "libduckdb-osx-universal"
+            artifact: "osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
           - platform: "linux-amd64"
-            filename: "libduckdb-linux-amd64"
+            artifact: "linux-amd64"
             ld_path_env_name: "LD_LIBRARY_PATH"
           - platform: "linux-arm64"
-            filename: "libduckdb-linux-arm64"
+            artifact: "linux-arm64"
             ld_path_env_name: "LD_LIBRARY_PATH"
       fail-fast: false
     steps:
@@ -153,7 +153,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Dynamic Lib Tests
         run: |
-          make test.dynamic.lib FILENAME=${{ matrix.filename }}
+          make test.dynamic.lib ARTIFACT=${{ matrix.artifact }}
           CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
 
   test-static-lib-darwin-arm64:
@@ -176,4 +176,4 @@ jobs:
       - name: Run Static Lib Tests Darwin ARM64
         run: |
           make test.static.lib.darwin.arm64
-          CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_static -lduckdb_generated_extension_loader -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_fastpforlib -lduckdb_fmt -lduckdb_fsst -lduckdb_hyperloglog -lduckdb_mbedtls -lduckdb_miniz -lduckdb_pg_query -lduckdb_re2 -lduckdb_skiplistlib -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_zstd -lc++ -L${SRCDIR}static-dir" go test -tags=duckdb_use_static_lib
+          CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_static_extension_loader -lduckdb_httplib -lduckdb_loadable_extensions -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_static -lc++ -L${SRCDIR}static-dir" go test -tags=duckdb_use_static_lib

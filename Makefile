@@ -1,4 +1,5 @@
-DUCKDB_VERSION=v1.5.6
+BINDINGS=github.com/duckdb/duckdb-go-bindings
+NATIVE_DARWIN_ARM64=go.duckdb.org/libduckdb/darwin-arm64
 
 test.examples:
 	go run examples/appender/main.go
@@ -8,17 +9,20 @@ test.examples:
 	go run examples/table_udf/main.go
 	go run examples/table_udf_parallel/main.go
 
+# Download the shared library of the DuckDB build that the bindings pin. ARTIFACT is the
+# platform suffix of DuckDB's release artifact, e.g. osx-universal.
 test.dynamic.lib:
+	base_url=$$(jq -r .base_url "$$(go list -f '{{.Dir}}' ${BINDINGS})/duckdb-release.json") && \
 	mkdir dynamic-dir && \
-	cd dynamic-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/${FILENAME}.zip && \
-	unzip ${FILENAME}.zip
+	curl -fsSL "$$base_url/duckdb-shared-libs-${ARTIFACT}.tar.gz" | tar -xz -C dynamic-dir
 
+# Copy the static archives of the bindings' darwin-arm64 module and build their extension loader.
 test.static.lib.darwin.arm64:
+	native=$$(go list -f '{{.Dir}}' ${NATIVE_DARWIN_ARM64}) && \
 	mkdir static-dir && \
-	cd static-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/static-libs-osx-arm64.zip && \
-	unzip static-libs-osx-arm64.zip
+	cp "$$native"/*.a static-dir && \
+	cc -c "$$native/static_extension_loader.c" -o static-dir/static_extension_loader.o && \
+	ar rcs static-dir/libduckdb_static_extension_loader.a static-dir/static_extension_loader.o
 
 GOBIN ?= $$(go env GOPATH)/bin
 
