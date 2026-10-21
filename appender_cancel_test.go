@@ -2,6 +2,8 @@ package duckdb
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -120,7 +122,7 @@ func TestAppenderFlushWithCancelPreCanceledFailureIncludesContext(t *testing.T) 
 	require.True(t, spies.flush, "AppenderFlush should run when ctx is pre-canceled")
 }
 
-func TestAppenderCloseWithCancelFlushFailureClearsWithoutResettingChunk(t *testing.T) {
+func TestAppenderCloseWithCancelFlushFailureCleansUp(t *testing.T) {
 	spies := stubAppenderMapping(t, mapping.StateError, "Invalid Input Error: appender failed")
 
 	ctx := preCanceledContext()
@@ -131,35 +133,51 @@ func TestAppenderCloseWithCancelFlushFailureClearsWithoutResettingChunk(t *testi
 	require.ErrorIs(t, err, errAppenderClose)
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorContains(t, err, "appender failed")
-	require.True(t, spies.clear, "failed close should clear buffered appender state")
+	require.Equal(t, 1, strings.Count(err.Error(), "appender failed"), "close should report the flush error once")
+	require.False(t, spies.clear, "DuckDB already discards the rows of a failed flush")
+	require.Equal(t, 1, spies.destroyAppenderCalls)
+	require.Equal(t, 1, spies.destroyChunkCalls)
 	require.False(t, spies.resetChunk, "failed close should not reset the destroyed data chunk")
 	require.False(t, spies.getChunkVector, "failed close should not reinitialize vectors on the destroyed data chunk")
 }
 
-func TestAppenderCloseWithCancelFlushAndClearFailuresAreJoined(t *testing.T) {
-	spies := stubAppenderMapping(t, mapping.StateError, "Invalid Input Error: flush failed")
-
-	var appenderErrorCalls int
-	patchVar(t, &mapping.AppenderError, func(_ mapping.Appender) string {
-		appenderErrorCalls++
-		if appenderErrorCalls == 1 {
-			return "Invalid Input Error: flush failed"
-		}
-		return "Invalid Input Error: clear failed"
-	})
+func TestAppenderClearFailurePreservesFlushError(t *testing.T) {
+	spies := stubAppenderMapping(t, mapping.StateSuccess, "Invalid Input Error: clear failed")
 	patchVar(t, &mapping.AppenderClear, func(_ mapping.Appender) mapping.State {
 		spies.clear = true
 		return mapping.StateError
 	})
 
 	a := newStubAppender()
+	flushErr := errors.New("flush failed")
+	a.droppedErr = flushErr
+	a.rowCount = 1
 
-	err := a.CloseWithCancel(context.Background())
-	require.ErrorIs(t, err, errAppenderClose)
-	require.ErrorContains(t, err, "flush failed")
+	err := a.Clear()
 	require.ErrorContains(t, err, "clear failed")
 	require.ErrorContains(t, err, "failed to clear appender's internal data")
-	require.True(t, spies.clear, "failed close should still try to clear buffered appender state")
+	require.True(t, spies.clear)
+	require.Zero(t, a.rowCount, "a failed clear should still discard the rows buffered in Go")
+	require.ErrorIs(t, a.Close(), flushErr)
+}
+
+func TestAppenderCloseWithCancelPreservesEarlierFlushError(t *testing.T) {
+	stubAppenderMapping(t, mapping.StateError, "Invalid Input Error: flush failed")
+	a := newStubAppender()
+	require.ErrorIs(t, a.FlushWithCancel(preCanceledContext()), context.Canceled)
+
+	patchVar(t, &mapping.AppenderFlush, func(_ mapping.Appender) mapping.State {
+		return mapping.StateSuccess
+	})
+	patchVar(t, &mapping.AppenderError, func(_ mapping.Appender) string {
+		t.Fatal("successful close should not reread an earlier error from DuckDB")
+		return ""
+	})
+
+	err := a.Close()
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "flush failed")
+	require.Equal(t, 1, strings.Count(err.Error(), "flush failed"))
 }
 
 func TestAppenderCloseWithCancelAppendFailureIncludesError(t *testing.T) {
@@ -178,12 +196,15 @@ func TestAppenderCloseWithCancelAppendFailureIncludesError(t *testing.T) {
 	err := a.CloseWithCancel(context.Background())
 	require.ErrorIs(t, err, errAppenderClose)
 	require.ErrorContains(t, err, "append failed")
+	require.Equal(t, 1, strings.Count(err.Error(), "append failed"), "close should report the append error once")
 	require.True(t, appendCalled, "CloseWithCancel should append buffered rows before flushing")
 	require.Equal(t, 1, spies.destroyAppenderCalls, "append failure should still destroy the appender")
 	require.Equal(t, 1, spies.destroyChunkCalls, "append failure should still destroy the data chunk")
 }
 
-func TestAppenderCloseWithCancelDestroyFailureReturnsError(t *testing.T) {
+func TestAppenderCloseWithCancelIgnoresDestroyState(t *testing.T) {
+	// DuckDB v2.0.0 fails destroying after any earlier failed flush, even a cleared one.
+	// FlushWithCancel already reported that flush, so Close ignores the destroy state.
 	spies := stubAppenderMapping(t, mapping.StateSuccess, "")
 	patchVar(t, &mapping.AppenderDestroy, func(_ *mapping.Appender) mapping.State {
 		spies.destroyAppenderCalls++
@@ -192,10 +213,8 @@ func TestAppenderCloseWithCancelDestroyFailureReturnsError(t *testing.T) {
 
 	a := newStubAppender()
 
-	err := a.CloseWithCancel(context.Background())
-	require.ErrorIs(t, err, errAppenderClose)
-	require.Equal(t, 1, spies.destroyAppenderCalls, "failed destroy should only run once")
-	require.Equal(t, 1, spies.destroyChunkCalls, "failed destroy should still follow data chunk cleanup")
+	require.NoError(t, a.CloseWithCancel(context.Background()))
+	require.Equal(t, 1, spies.destroyAppenderCalls, "close should destroy the appender once")
 }
 
 func TestAppenderCloseWithCancelDoubleCloseDoesNotDestroyAgain(t *testing.T) {

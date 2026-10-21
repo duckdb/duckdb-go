@@ -17,6 +17,8 @@ type Appender struct {
 	appender mapping.Appender
 	// True, if the appender has been closed.
 	closed bool
+	// The first error after which DuckDB discarded rows. Close reports it until Clear.
+	droppedErr error
 
 	// The chunk to append to.
 	chunk DataChunk
@@ -282,15 +284,7 @@ func NewTableAppender(driverConn driver.Conn, query, catalog, schema, table stri
 // Does not close the appender, even if it returns an error. Unless you have a good reason to call this,
 // call Close when you are done with the appender.
 func (a *Appender) Flush() error {
-	if err := a.appendDataChunk(); err != nil {
-		return getError(errAppenderFlush, invalidatedAppenderError(err))
-	}
-
-	if err := a.flush(); err != nil {
-		return getError(errAppenderFlush, invalidatedAppenderError(err))
-	}
-
-	return nil
+	return a.FlushWithCancel(context.Background())
 }
 
 // FlushWithCancel flushes the data chunks to the underlying table and clears the internal cache.
@@ -299,40 +293,36 @@ func (a *Appender) Flush() error {
 // Takes a context for cancellation. Unlike query execution, an already-canceled ctx does not
 // skip starting the flush, but that flush may be interrupted immediately.
 func (a *Appender) FlushWithCancel(ctx context.Context) error {
-	if err := a.appendDataChunk(); err != nil {
-		return getError(errAppenderFlush, invalidatedAppenderError(err))
+	err := a.appendDataChunk()
+	if err == nil {
+		err = a.flushWithCancel(ctx)
 	}
-
-	if err := a.flushWithCancel(ctx); err != nil {
-		return getError(errAppenderFlush, invalidatedAppenderError(err))
+	if err != nil {
+		return getError(errAppenderFlush, a.dropped(err))
 	}
 
 	return nil
 }
 
 // Clear clears the appender's internal state, discarding any appended but not yet flushed data.
-// This resets the DuckDB appender's internal state.
-// Clear is typically used after an error occurs during Flush or FlushWithCancel to avoid memory leaks
-// before closing the appender. After calling Clear, the appender can be reused for appending new rows.
+// It acknowledges errors from automatic or explicit flushes so Close no longer reports them.
+// After calling Clear, the appender can be reused for appending new rows.
 // Clear returns an error if the appender has been closed.
+// If DuckDB fails to clear its buffer, Clear still discards the rows buffered in Go,
+// but it returns the error and Close keeps reporting earlier dropped rows.
 func (a *Appender) Clear() error {
 	if a.closed {
 		return getError(errAppenderClearAfterClose, nil)
 	}
 
-	errClear := a.clearAppender()
 	a.chunk.reset(true)
 	a.rowCount = 0
 
-	return errClear
-}
-
-// clearAppender clears only DuckDB's appender state; it does not touch the Go chunk buffer.
-func (a *Appender) clearAppender() error {
 	if mapping.AppenderClear(a.appender) == mapping.StateError {
 		errClear := getDuckDBError(mapping.AppenderError(a.appender))
 		return getError(invalidatedAppenderClearError(errClear), nil)
 	}
+	a.droppedErr = nil
 
 	return nil
 }
@@ -344,9 +334,10 @@ func (a *Appender) Close() error {
 }
 
 // CloseWithCancel closes the appender. This flushes any remaining data chunks to the underlying table.
-// The flush operation can be cancelled via the provided context. If the flush fails, the appender is cleared
-// before closing to prevent a memory leak. It is essential to call this function when you are done with
-// the appender to avoid leaking memory. It uses the same cancellation behavior as FlushWithCancel.
+// The flush operation can be cancelled via the provided context.
+// It is essential to call this function when you are done with the appender to avoid leaking memory.
+// It uses the same cancellation behavior as FlushWithCancel.
+// It also returns an error if an earlier automatic or explicit flush failed and Clear was not called since.
 func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	if a.closed {
 		return getError(errAppenderDoubleClose, nil)
@@ -360,17 +351,12 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	// We flush before closing to get a meaningful error message.
 	errFlush := a.flushWithCancel(ctx)
 
-	var errClear error
-	if errFlush != nil {
-		errClear = a.clearAppender()
-	}
 	// Destroy all appender data and the appender.
 	destroyLogicalTypes(a.types)
-	var errClose error
-	if mapping.AppenderDestroy(&a.appender) == mapping.StateError {
-		errClose = errAppenderClose
-	}
-	err := errors.Join(errAppend, errFlush, errClose, errClear)
+	// Ignore destroy's state: droppedErr already reports unacknowledged dropped rows, which is all
+	// destroy can add. DuckDB v2.0.0 also fails destroy after a failed flush that Clear acknowledged.
+	mapping.AppenderDestroy(&a.appender)
+	err := errors.Join(a.droppedErr, errAppend, errFlush)
 	if err != nil {
 		return getError(errAppenderClose, err)
 	}
@@ -425,7 +411,7 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 	// Create a new data chunk if the current chunk is full.
 	if a.rowCount == GetDataChunkCapacity() {
 		if err := a.appendDataChunk(); err != nil {
-			return err
+			return a.dropped(err)
 		}
 	}
 
@@ -449,20 +435,14 @@ func (a *Appender) appendDataChunk() error {
 	if err := a.chunk.SetSize(a.rowCount); err != nil {
 		return err
 	}
-	if mapping.AppendDataChunk(a.appender, a.chunk.chunk) == mapping.StateError {
-		return getDuckDBError(mapping.AppenderError(a.appender))
-	}
-
+	state := mapping.AppendDataChunk(a.appender, a.chunk.chunk)
+	// DuckDB copies the chunk before flushing automatically, so a failed flush discards these rows, too.
 	a.chunk.reset(true)
 	a.rowCount = 0
-
-	return nil
-}
-
-func (a *Appender) flush() error {
-	if mapping.AppenderFlush(a.appender) == mapping.StateError {
+	if state == mapping.StateError {
 		return getDuckDBError(mapping.AppenderError(a.appender))
 	}
+
 	return nil
 }
 
@@ -491,4 +471,13 @@ func (a *Appender) flushWithCancel(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// dropped remembers err as droppedErr unless an earlier error is still unacknowledged,
+// and returns err with advice to acknowledge it.
+func (a *Appender) dropped(err error) error {
+	if a.droppedErr == nil {
+		a.droppedErr = err
+	}
+	return invalidatedAppenderError(err)
 }
