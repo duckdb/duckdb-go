@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"os"
-	"strings"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,20 +16,12 @@ type logStore struct {
 
 var myLogStore logStore
 
-func (s *logStore) Contains(entry string) bool {
-	for _, e := range s.store {
-		if strings.Contains(e, entry) {
-			return true
-		}
-	}
-	return false
-}
-
 func WriteLogEntry(level, logType, logMsg string) {
 	myLogStore.store = append(myLogStore.store, level+", "+logType+", "+logMsg)
 }
 
 func TestLogStorage(t *testing.T) {
+	myLogStore.store = nil
 	defer func() {
 		err := os.Remove("test_logging.db")
 		require.NoError(t, err)
@@ -59,17 +51,19 @@ func TestLogStorage(t *testing.T) {
 	// ATTACH a database and silently fail a CHECKPOINT.
 	_, err = db.Exec("ATTACH 'test_logging.db'")
 	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA wal_autocheckpoint = '1TB';")
+	_, err = db.Exec("SET wal_autocheckpoint = '1TB';")
 	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA debug_checkpoint_abort = 'before_header';")
+	_, err = db.Exec("SET debug_checkpoint_abort = 'before_header';")
 	require.NoError(t, err)
 	_, err = db.Exec("CREATE TABLE test_logging.integers AS SELECT * FROM range(100) tbl(i);")
 	require.NoError(t, err)
 
-	// Ensure that our log storage contains the logs.
-	require.Len(t, myLogStore.store, 4)
-	require.True(t, myLogStore.Contains("ATTACH 'test_logging.db'"))
-	require.True(t, myLogStore.Contains("PRAGMA wal_autocheckpoint = '1TB';"))
-	require.True(t, myLogStore.Contains("PRAGMA debug_checkpoint_abort = 'before_header';"))
-	require.True(t, myLogStore.Contains("CREATE TABLE test_logging.integers AS SELECT * FROM range(100) tbl(i);"))
+	// Ensure that our log storage contains the logs. DuckDB v2.0.0 also logs
+	// each query when duckdb-go prepares it, so collapse those repeats.
+	require.Equal(t, []string{
+		"INFO, QueryLog, ATTACH 'test_logging.db'",
+		"INFO, QueryLog, SET wal_autocheckpoint = '1TB';",
+		"INFO, QueryLog, SET debug_checkpoint_abort = 'before_header';",
+		"INFO, QueryLog, CREATE TABLE test_logging.integers AS SELECT * FROM range(100) tbl(i);",
+	}, slices.Compact(myLogStore.store))
 }
