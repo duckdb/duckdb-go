@@ -6,10 +6,10 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// ProfilingInfo is a recursive type containing metrics for each node in DuckDB's query plan.
-// There are two types of nodes: the QUERY_ROOT and OPERATOR nodes.
-// The QUERY_ROOT refers exclusively to the top-level node; its metrics are measured over the entire query.
-// The OPERATOR nodes refer to the individual operators in the query plan.
+// ProfilingInfo is a recursive type containing the metrics DuckDB collected for a query.
+// See the [DuckDB Profiling API] section of the README for the tree structure and configuration.
+//
+// [DuckDB Profiling API]: https://github.com/duckdb/duckdb-go#duckdb-profiling-api
 type ProfilingInfo struct {
 	// Metrics contains all key-value pairs of the current node.
 	// The key represents the name and corresponds to the measured value.
