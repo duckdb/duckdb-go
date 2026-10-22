@@ -111,8 +111,8 @@ See also the [duckdb-go-bindings upgrade notes](https://github.com/duckdb/duckdb
 ## Breaking Changes
 
 > [!WARNING]
-> Starting with `v2.0.0`, duckdb-go supports DuckDB `v1.2.0` and upward.
-> Moving to `v2` includes the following list of breaking changes.
+> duckdb-go `v2.0.0`, the first release of the `v2` module, shipped with DuckDB `v1.2.0`.
+> Moving from duckdb-go `v1` to `v2` includes the following list of breaking changes.
 > Later `v2` releases add to the list; those entries say so.
 
 #### Dropping pre-built FreeBSD support
