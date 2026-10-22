@@ -135,15 +135,12 @@ jobs:
           - *darwin-arm64
           - *linux-amd64
           - *linux-arm64
-          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","artifact":"osx-universal","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
           - platform: "darwin-arm64"
-            artifact: "osx-universal"
             ld_path_env_name: "DYLD_LIBRARY_PATH"
           - platform: "linux-amd64"
-            artifact: "linux-amd64"
             ld_path_env_name: "LD_LIBRARY_PATH"
           - platform: "linux-arm64"
-            artifact: "linux-arm64"
             ld_path_env_name: "LD_LIBRARY_PATH"
       fail-fast: false
     steps:
@@ -153,7 +150,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Dynamic Lib Tests
         run: |
-          make test.dynamic.lib ARTIFACT=${{ matrix.artifact }}
+          make test.dynamic.lib PLATFORM=${{ matrix.platform }}
           CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
 
   test-static-lib-darwin-arm64:
