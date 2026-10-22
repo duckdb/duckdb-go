@@ -271,7 +271,7 @@ Link the loader, an archive for each capability and extension it registers, and 
 For Darwin ARM64, with the extensions of the pre-built libraries:
 
 ```sh
-CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" \
+CGO_ENABLED=1 \
 CGO_LDFLAGS="-lduckdb_static_extension_loader -lduckdb_httplib -lduckdb_loadable_extensions -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_static -lc++ -L/path/to/libs" \
 go build -tags=duckdb_use_static_lib
 ```
@@ -291,19 +291,14 @@ You must have a copy of `libduckdb` available on your system (`.so` on Linux or 
 DuckDB releases publish it as `duckdb-shared-libs-<platform>.tar.gz`,
 and `curl https://install.duckdb.org | DUCKDB_INSTALL=shared sh` installs it into `~/.duckdb/lib/<version>/release_<platform>`.
 
-For example:
+For example, on Linux or macOS, embed the library path in the binary with an rpath:
 
 ```sh
-# On Linux.
-CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L/path/to/libs" go build -tags=duckdb_use_lib main.go
-LD_LIBRARY_PATH=/path/to/libs ./main
-
-# On MacOS.
-CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L/path/to/libs" go build -tags=duckdb_use_lib main.go
-DYLD_LIBRARY_PATH=/path/to/libs ./main
+CGO_ENABLED=1 \
+CGO_LDFLAGS="-L/path/to/libs -Wl,-rpath,/path/to/libs" \
+go build -tags=duckdb_use_lib main.go
+./main
 ```
-
-You can also find these steps in the `Makefile` and the `tests.yaml`.
 
 #### Using a local DuckDB checkout
 
@@ -316,10 +311,11 @@ make
 
 cd /path/to/duckdb-go
 CGO_ENABLED=1 \
-CGO_LDFLAGS="-lduckdb -L/path/to/duckdb/build/release/src -Wl,-rpath,/path/to/duckdb/build/release/src" \
-go test -tags=duckdb_use_lib ./...
+CGO_LDFLAGS="-L/path/to/duckdb/build/release/src -Wl,-rpath,/path/to/duckdb/build/release/src" \
+go test -count=1 -tags=duckdb_use_lib ./...
 ```
 
+Use `-count=1` so Go reruns the tests after rebuilding the shared library.
 To run only the test you care about, add `-run TestName -v`.
 
 ## Cross-Compilation
