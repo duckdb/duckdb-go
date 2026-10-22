@@ -298,7 +298,7 @@ func (a *Appender) FlushWithCancel(ctx context.Context) error {
 		err = a.flushWithCancel(ctx)
 	}
 	if err != nil {
-		return getError(errAppenderFlush, a.dropped(err))
+		return getError(errAppenderFlush, a.recordDropped(err))
 	}
 
 	return nil
@@ -334,10 +334,10 @@ func (a *Appender) Close() error {
 }
 
 // CloseWithCancel closes the appender. This flushes any remaining data chunks to the underlying table.
-// The flush operation can be cancelled via the provided context.
-// It is essential to call this function when you are done with the appender to avoid leaking memory.
-// It uses the same cancellation behavior as FlushWithCancel.
-// It also returns an error if an earlier automatic or explicit flush failed and Clear was not called since.
+// The flush operation can be cancelled via the provided context. It is essential to call this
+// function when you are done with the appender to avoid leaking memory. It uses the same
+// cancellation behavior as FlushWithCancel. It also returns an error if an earlier automatic or
+// explicit flush failed and Clear was not called since.
 func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	if a.closed {
 		return getError(errAppenderDoubleClose, nil)
@@ -353,8 +353,9 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 
 	// Destroy all appender data and the appender.
 	destroyLogicalTypes(a.types)
-	// Ignore destroy's state: droppedErr already reports unacknowledged dropped rows, which is all
-	// destroy can add. DuckDB v2.0.0 also fails destroy after a failed flush that Clear acknowledged.
+	// Ignore destroy's state: droppedErr already reports unacknowledged dropped rows, which is
+	// all destroy can add. DuckDB v2.0.0 also fails destroy after a failed flush that Clear
+	// acknowledged.
 	mapping.AppenderDestroy(&a.appender)
 	err := errors.Join(a.droppedErr, errAppend, errFlush)
 	if err != nil {
@@ -411,7 +412,7 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 	// Create a new data chunk if the current chunk is full.
 	if a.rowCount == GetDataChunkCapacity() {
 		if err := a.appendDataChunk(); err != nil {
-			return a.dropped(err)
+			return a.recordDropped(err)
 		}
 	}
 
@@ -436,7 +437,8 @@ func (a *Appender) appendDataChunk() error {
 		return err
 	}
 	state := mapping.AppendDataChunk(a.appender, a.chunk.chunk)
-	// DuckDB copies the chunk before flushing automatically, so a failed flush discards these rows, too.
+	// DuckDB copies the chunk before flushing automatically, so a failed flush discards these
+	// rows, too.
 	a.chunk.reset(true)
 	a.rowCount = 0
 	if state == mapping.StateError {
@@ -473,9 +475,9 @@ func (a *Appender) flushWithCancel(ctx context.Context) error {
 	return nil
 }
 
-// dropped remembers err as droppedErr unless an earlier error is still unacknowledged,
+// recordDropped remembers err as droppedErr unless an earlier error is still unacknowledged,
 // and returns err with advice to acknowledge it.
-func (a *Appender) dropped(err error) error {
+func (a *Appender) recordDropped(err error) error {
 	if a.droppedErr == nil {
 		a.droppedErr = err
 	}

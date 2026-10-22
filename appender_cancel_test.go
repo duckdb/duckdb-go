@@ -133,7 +133,8 @@ func TestAppenderCloseWithCancelFlushFailureCleansUp(t *testing.T) {
 	require.ErrorIs(t, err, errAppenderClose)
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorContains(t, err, "appender failed")
-	require.Equal(t, 1, strings.Count(err.Error(), "appender failed"), "close should report the flush error once")
+	require.Equal(t, 1, strings.Count(err.Error(), "appender failed"),
+		"close should report the flush error once")
 	require.False(t, spies.clear, "DuckDB already discards the rows of a failed flush")
 	require.Equal(t, 1, spies.destroyAppenderCalls)
 	require.Equal(t, 1, spies.destroyChunkCalls)
@@ -196,7 +197,8 @@ func TestAppenderCloseWithCancelAppendFailureIncludesError(t *testing.T) {
 	err := a.CloseWithCancel(context.Background())
 	require.ErrorIs(t, err, errAppenderClose)
 	require.ErrorContains(t, err, "append failed")
-	require.Equal(t, 1, strings.Count(err.Error(), "append failed"), "close should report the append error once")
+	require.Equal(t, 1, strings.Count(err.Error(), "append failed"),
+		"close should report the append error once")
 	require.True(t, appendCalled, "CloseWithCancel should append buffered rows before flushing")
 	require.Equal(t, 1, spies.destroyAppenderCalls, "append failure should still destroy the appender")
 	require.Equal(t, 1, spies.destroyChunkCalls, "append failure should still destroy the data chunk")

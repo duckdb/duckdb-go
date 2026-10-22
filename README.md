@@ -104,6 +104,7 @@ See also the [duckdb-go-bindings upgrade notes](https://github.com/duckdb/duckdb
 - Setting an option with `PRAGMA name = value` is deprecated and logs a warning. Use `SET name = value` instead.
 - With DuckDB `v2.0.0`, a custom log storage (`RegisterLogStorage`) receives each query twice: once when duckdb-go prepares it, and once when it executes it.
 - A failed automatic flush, `Flush`, or `FlushWithCancel` drops the rows it tried to append instead of keeping them for the next flush.
+  An `AppendRow` call that returns such an error does not append its row either.
   `Close` still returns an error for that flush unless you call `Clear` first.
   Batches appended after the failure can still commit, so that error does not imply that no rows were written.
 
