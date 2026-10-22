@@ -442,7 +442,7 @@ func TestQuery(t *testing.T) {
 		require.NoError(t, err)
 		ra, err := res.RowsAffected()
 		require.NoError(t, err)
-		require.Equal(t, int64(0), ra)
+		require.Equal(t, int64(100000), ra)
 
 		r, err := db.Query(`SELECT i FROM integers ORDER BY i ASC`)
 		require.NoError(t, err)

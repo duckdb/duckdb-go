@@ -1021,6 +1021,37 @@ func TestErrTableUDF(t *testing.T) {
 	// FIXME: add more error tests.
 }
 
+func TestTableUDFNullArguments(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	var boundArgs []any
+	var boundNamedArgs map[string]any
+	udf := RowTableFunction{
+		Config: TableFunctionConfig{
+			Arguments:      []TypeInfo{typeBigintTableUDF},
+			NamedArguments: map[string]TypeInfo{"ARG": typeBigintTableUDF},
+		},
+		BindArguments: func(namedArgs map[string]any, args ...any) (RowTableSource, error) {
+			boundArgs, boundNamedArgs = args, namedArgs
+			return &incTableUDF{}, nil
+		},
+	}
+	require.NoError(t, RegisterTableUDF(conn, "null_args", udf))
+
+	res, err := conn.QueryContext(context.Background(), `SELECT * FROM null_args(NULL::BIGINT, ARG = NULL::BIGINT)`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+	require.False(t, res.Next())
+
+	// Typed NULL arguments reach the binder as nil.
+	require.Equal(t, []any{nil}, boundArgs)
+	require.Equal(t, map[string]any{"ARG": nil}, boundNamedArgs)
+}
+
 func TestTableUDFAggregate(t *testing.T) {
 	db := openDbWrapper(t, `?access_mode=READ_WRITE`)
 	defer closeDbWrapper(t, db)

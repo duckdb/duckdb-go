@@ -110,7 +110,7 @@ const (
 	setValueErrMsg              = "failed to set value"
 	unprojectedColumnErrMsg     = "unprojected column"
 	unsupportedTypeErrMsg       = "unsupported data type"
-	considerAppenderClearMsg    = "appended and not yet flushed data has been invalidated due to error: consider invoking Appender.Clear followed by Appender.Close in case of unexpected errors to avoid leaking memory"
+	considerAppenderClearMsg    = "the appended rows that were not yet flushed were discarded: call Appender.Clear to acknowledge this, otherwise Appender.Close reports this error"
 	invalidatedAppenderClearMsg = "failed to clear appender's internal data (this likely indicates a bug - please consider opening a bug report at https://github.com/duckdb/duckdb-go/issues)"
 	tryOtherFuncErrMsg          = "please try this function instead"
 	indexErrMsg                 = "index"

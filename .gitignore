@@ -7,3 +7,5 @@ duckdb/
 duckdb
 cover.html
 cover.out
+dynamic-dir/
+static-dir/
