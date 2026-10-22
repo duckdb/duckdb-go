@@ -130,10 +130,11 @@ var (
 	errUninitializedVectorView   = errors.New("uninitialized vector view")
 	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
 
-	errConnect      = errors.New("could not connect to database")
-	errParseDSN     = errors.New("could not parse DSN for database")
-	errSetConfig    = errors.New("could not set invalid or local option for global database config")
-	errCreateConfig = errors.New("could not create config for database")
+	errConnect         = errors.New("could not connect to database")
+	errParseDSN        = errors.New("could not parse DSN for database")
+	errSetConfig       = errors.New("could not set invalid or local option for global database config")
+	errCreateConfig    = errors.New("could not create config for database")
+	errClosedConnector = errors.New("closed connector")
 
 	errInvalidCon = errors.New("not a DuckDB driver connection")
 	errClosedCon  = errors.New("closed connection")

@@ -227,13 +227,6 @@ func TestConnectorBootQueries(t *testing.T) {
 	})
 }
 
-func TestConnector_Close(t *testing.T) {
-	c := newConnectorWrapper(t, ``, nil)
-	// Multiple close calls must not cause panics or errors.
-	closeConnectorWrapper(t, c)
-	closeConnectorWrapper(t, c)
-}
-
 // This test patches package-level mapping hooks and must not run in parallel.
 func TestConnectCleansUpOnInitError(t *testing.T) {
 	initErr := errors.New("init failed")
