@@ -2,9 +2,9 @@ package duckdb
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"reflect"
-	"strconv"
 	"time"
 	"unsafe"
 
@@ -421,7 +421,7 @@ func setArray[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return err
 	}
 	if len(array) != int(vec.arrayLength) {
-		return invalidInputError(strconv.Itoa(len(array)), strconv.Itoa(int(vec.arrayLength)))
+		return invalidInputError(fmt.Sprintf("array of length %d", len(array)), fmt.Sprintf("array of length %d", vec.arrayLength))
 	}
 	return setSliceChildren(vec, array, rowIdx*vec.arrayLength)
 }
