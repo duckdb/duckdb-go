@@ -315,6 +315,109 @@ go test -tags=duckdb_use_lib ./...
 
 To run only the test you care about, add `-run TestName -v`.
 
+## Cross-Compilation
+
+`duckdb-go` is a CGO package that links a native DuckDB library.
+Because of CGO, cross-compilation needs more than setting `GOOS` and `GOARCH`:
+you also need a C/C++ toolchain that targets the destination platform, and a DuckDB
+library for that platform.
+
+> [!NOTE]
+> The Go toolchain disables CGO by default when `GOOS`/`GOARCH` differ from the host.
+> You must re-enable it with `CGO_ENABLED=1` and point `CC`/`CXX` at a cross-compiler
+> (see the `undefined: conn` entry under [Notes and FAQs](#notes-and-faqs)).
+
+### How the native library is selected
+
+By default, `duckdb-go` statically links a pre-built DuckDB library from
+[`duckdb-go-bindings`](https://github.com/duckdb/duckdb-go-bindings).
+A pre-built library exists only for these target platforms:
+
+| `GOOS`    | `GOARCH` | Pre-built library |
+|-----------|----------|-------------------|
+| `darwin`  | `arm64`  | yes               |
+| `darwin`  | `amd64`  | yes               |
+| `linux`   | `arm64`  | yes               |
+| `linux`   | `amd64`  | yes               |
+| `windows` | `amd64`  | yes               |
+
+The matching library is chosen automatically from the target `GOOS`/`GOARCH` — there is no
+build tag to pick a platform. A target outside this set (e.g., `windows/arm64`, or FreeBSD)
+has no pre-built library; you must link your own with `duckdb_use_static_lib` or
+`duckdb_use_lib` (see [Linking DuckDB](#linking-duckdb)).
+
+### Reported working combinations
+
+The combinations below were reported and verified by the community in
+[issue #20](https://github.com/duckdb/duckdb-go/issues/20) (and its
+[predecessor](https://github.com/marcboeker/go-duckdb/issues/279)). They have not been
+re-verified here; treat them as starting points rather than guarantees, and note that
+the destination must be one of the pre-built platforms above.
+
+Same OS and architecture as the host needs no cross C compiler:
+
+```sh
+go build .
+```
+
+From **macOS (arm64)** to **macOS (amd64)** — same toolchain, different architecture:
+
+```sh
+CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build .
+```
+
+From **macOS (arm64)** to **Linux**, using the
+[messense](https://github.com/messense/homebrew-macos-cross-toolchains) cross-toolchains:
+
+```sh
+# Target Linux arm64.
+brew install messense/macos-cross-toolchains/aarch64-unknown-linux-gnu
+CC="aarch64-linux-gnu-gcc" CXX="aarch64-linux-gnu-g++" \
+CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build .
+
+# Target Linux amd64.
+brew install messense/macos-cross-toolchains/x86_64-unknown-linux-gnu
+CC="x86_64-linux-gnu-gcc" CXX="x86_64-linux-gnu-g++" \
+CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build .
+```
+
+From **Linux (amd64)** to **Windows (amd64)**, using the UCRT MinGW-w64 toolchain
+(package names shown for Debian/Ubuntu: `binutils-mingw-w64`, `gcc-mingw-w64-ucrt64`,
+`g++-mingw-w64-ucrt64`):
+
+```sh
+CC=x86_64-w64-mingw32ucrt-gcc CXX=x86_64-w64-mingw32ucrt-g++ \
+CGO_ENABLED=1 GOOS=windows GOARCH=amd64 \
+go build -ldflags "-linkmode external -extldflags '-static'" -o app.exe .
+```
+
+### Known limitations
+
+> [!WARNING]
+> Many host → target combinations do **not** work, even with a cross C compiler. In
+> [issue #20](https://github.com/duckdb/duckdb-go/issues/20), community sweeps reported that
+> a Linux host builds only for `linux/amd64` and `linux/arm64`, and a macOS host builds only
+> for `darwin/amd64` and `darwin/arm64`; targeting macOS from Linux, or Windows from either,
+> failed. Results depend on your exact toolchain and DuckDB version.
+
+- **Targeting macOS from a non-macOS host is generally not possible.** No community-verified
+  recipe exists, and Apple's SDK/linker requirements make it impractical.
+- **C++ ABI mismatches.** The pre-built libraries are compiled with GCC's `libstdc++` and its
+  C++11 (`__cxx11`) ABI. A cross-toolchain that produces a different C++ standard-library ABI
+  can link but then fail at runtime or produce undefined-reference errors such as
+  `std::basic_streambuf<...>::seekpos`. On Windows, use a recent UCRT MinGW-w64 (an older
+  MinGW can trigger exactly this error).
+- **Zig as a cross-compiler does not work with the pre-built libraries.** A DuckDB maintainer
+  [explained](https://github.com/duckdb/duckdb-go/issues/20#issuecomment-3421191594) that
+  while `zig cc` bundles glibc (resolving missing symbols like `pthread_atfork`), it uses
+  LLVM's `libc++` and a different C++ ABI than the GCC `libstdc++` the pre-built libraries
+  were compiled with. Zig would only work if DuckDB itself were also built with that toolchain.
+- **Some cross-toolchains do not fully satisfy dependencies.** For example, macOS-hosted
+  `x86_64-linux-gnu-gcc` has been reported not to satisfy all link-time dependencies.
+
+If no cross-compilation path works for your target, build natively on that platform (for
+example, in a matching CI runner or container).
+
 ## Notes and FAQs
 
 **`undefined: conn`**
