@@ -46,6 +46,9 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
         run: go test -v
+      - name: Test Vendored Consumer
+        if: matrix.platform == 'linux-amd64'
+        run: make test.vendor
 
   go_race_test:
     name: Race Tests

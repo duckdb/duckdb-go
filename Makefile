@@ -11,6 +11,9 @@ test.examples:
 	go run examples/table_udf/main.go
 	go run examples/table_udf_parallel/main.go
 
+test.vendor:
+	./scripts/test-vendor.sh
+
 # Download the shared library that the bindings pin for PLATFORM, and verify its checksum.
 test.dynamic.lib:
 	manifest="$$(go list -f '{{.Dir}}' ${BINDINGS})/duckdb-release.json" && \
