@@ -237,6 +237,10 @@ Please refer to the [database/sql](https://godoc.org/database/sql) documentation
 By default, `duckdb-go` statically links pre-built DuckDB libraries into your binary.
 Statically linking DuckDB increases your binary size.
 
+On Linux, this does not make the executable fully static: it still depends on system libraries, including glibc.
+Use compatible build and runtime images, preferably the same distribution release.
+Avoid forcing static glibc linking with `-static`: runtime library loading can fail with an incompatible glibc.
+
 `duckdb-go` bundles the following pre-compiled static libraries.
 
 - MacOS: amd64, arm64.
