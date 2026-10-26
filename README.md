@@ -175,6 +175,9 @@ After, you can compile this package in Windows.
 
 You can use `go mod vendor` to make a copy of the third-party packages in this package, including the pre-built DuckDB libraries in [duckdb-go-bindings](https://github.com/duckdb/duckdb-go-bindings).
 
+Run `make test.vendor` to vendor an external consumer of the checkout and execute a query offline with empty caches.
+This catches missing headers and native libraries; it runs in Linux amd64 CI and does not validate published module archives.
+
 ## Usage
 
 _Note: For readability, we omit error handling in most examples._
