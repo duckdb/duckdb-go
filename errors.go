@@ -251,6 +251,7 @@ var errorPrefixMap = map[string]ErrorType{
 	"Out of Range Error":           ErrorTypeOutOfRange,
 	"Conversion Error":             ErrorTypeConversion,
 	"Error":                        ErrorTypeUnknownType,
+	"Unknown Type Error":           ErrorTypeUnknownType,
 	"Decimal Error":                ErrorTypeDecimal,
 	"Mismatch Type Error":          ErrorTypeMismatchType,
 	"Divide by Zero Error":         ErrorTypeDivideByZero,
