@@ -639,6 +639,10 @@ func TestDuckDBErrorsCornerCases(t *testing.T) {
 			Type: ErrorTypeInvalidInput,
 		},
 		{
+			Msg:  `{"exception_type":"Unknown Type","exception_message":"xxx"}`,
+			Type: ErrorTypeUnknownType,
+		},
+		{
 			Msg:  `{"exception_type":"Unknown"}`,
 			Type: ErrorTypeInvalid,
 		},
