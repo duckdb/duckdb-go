@@ -535,7 +535,15 @@ func TestErrAPISetValue(t *testing.T) {
 }
 
 func TestDuckDBErrors(t *testing.T) {
-	db := openDbWrapper(t, ``)
+	testDuckDBErrors(t, ``)
+}
+
+func TestDuckDBErrorsAsJSON(t *testing.T) {
+	testDuckDBErrors(t, `?errors_as_json=true`)
+}
+
+func testDuckDBErrors(t *testing.T, dsn string) {
+	db := openDbWrapper(t, dsn)
 	defer closeDbWrapper(t, db)
 
 	createTable(t, db, `CREATE TABLE duckdb_error_test(bar VARCHAR UNIQUE, baz INT32, u_1 UNION("string" VARCHAR))`)
@@ -624,6 +632,19 @@ func TestDuckDBErrorsCornerCases(t *testing.T) {
 		{
 			Msg:  "Invalid Configuration Error: xxx",
 			Type: ErrorTypeInvalidConfiguration,
+		},
+		// JSON testing.
+		{
+			Msg:  `{"exception_type":"Invalid Input","exception_message":"xxx"}`,
+			Type: ErrorTypeInvalidInput,
+		},
+		{
+			Msg:  `{"exception_type":"Unknown"}`,
+			Type: ErrorTypeInvalid,
+		},
+		{
+			Msg:  `{"exception_type":`,
+			Type: ErrorTypeInvalid,
 		},
 	}
 
