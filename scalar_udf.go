@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"reflect"
 	"runtime"
 	"runtime/cgo"
 	"unsafe"
@@ -50,8 +51,16 @@ type ScalarFuncConfig struct {
 }
 
 // bindData holds bind data accessible during execution.
+//
+// DuckDB keeps one bind data instance per bound expression and reuses it for every execution of a
+// prepared statement, and its worker threads read it concurrently. It must therefore only hold
+// state that is fixed at bind time. In particular, it must not cache the connection context of a
+// statement: the next execution of the same plan runs under a different context.
 type bindData struct {
 	connId uint64
+	// ctx is the child context returned by a custom ScalarBinder, or nil if there is no binder or the
+	// binder returned its parent unchanged. It only supplies values the binder added; cancellation
+	// and statement-scoped values always come from the executing statement (see executionContext).
 	// We ignore the linter because we need to pass the context through C memory.
 	ctx context.Context //nolint:containedctx
 }
@@ -70,14 +79,24 @@ type (
 	RowExecutorFn func(values []driver.Value) (any, error)
 	// RowContextExecutorFn accepts a row-based execution function using a context.
 	// It takes a context and the row values, and returns the row execution result, or error.
+	// The context is the one of the statement currently executing the function: re-executing a
+	// prepared statement passes the context of that execution, not the one it was prepared or
+	// first executed with.
 	RowContextExecutorFn func(ctx context.Context, values []driver.Value) (any, error)
 	// ChunkContextExecutorFn accepts a chunk-based execution function using a context.
 	// It takes a context and the chunk-batched input, and sets the execution result for that chunk.
+	// The context follows the same rules as for RowContextExecutorFn.
 	ChunkContextExecutorFn func(ctx context.Context, chunk *ChunkIteratorState) error
 	// ScalarBinderFn takes a (parent) context and the scalar function's arguments.
 	// It returns the possibly updated child context (can be the same as the parent).
 	// The child context can contain additional arbitrary data available during execution.
 	// Please ensure correct context inheritance.
+	//
+	// The binder runs when the statement is bound, e.g., when it is prepared. A prepared statement can
+	// later execute many times, so the executor does not receive the child context itself: it receives
+	// the context of the executing statement, which falls back to the child context for values the
+	// executing statement does not carry. Cancellation of the binding statement does not affect later
+	// executions.
 	ScalarBinderFn func(parentCtx context.Context, args []ScalarUDFArg) (context.Context, error)
 )
 
@@ -122,27 +141,58 @@ func (s *scalarFuncContext) RowExecutor(info *bindData) (RowExecutorFn, error) {
 		return e.RowExecutor, nil
 	}
 
-	if err := s.setCtx(info); err != nil {
+	ctx, err := s.executionContext(info)
+	if err != nil {
 		return nil, err
 	}
 
 	return func(values []driver.Value) (any, error) {
-		return e.RowContextExecutor(info.ctx, values)
+		return e.RowContextExecutor(ctx, values)
 	}, nil
 }
 
-func (s *scalarFuncContext) setCtx(info *bindData) error {
-	// Parent context cancellation propagates to children,
-	// therefore, it is enough to check the child context here.
-	if info.ctx == nil {
-		// No child context means that there is no custom bind function.
-		// Retrieve the parent context from the connection context store.
-		info.ctx = s.ctxStore.load(info.connId)
-		return nil
+// executionContext returns the context for one invocation of the executor, i.e., the context of
+// the statement that is currently executing the function on info's connection. It is resolved on
+// every call and never stored in info: info is shared by all executions of a prepared statement
+// and by DuckDB's worker threads, so caching it there would hand later executions the context of
+// the statement that ran the function first (typically canceled by then), and race between threads.
+//
+// If a custom binder returned a child context, its values remain visible as a fallback.
+func (s *scalarFuncContext) executionContext(info *bindData) (context.Context, error) {
+	ctx := s.ctxStore.load(info.connId)
+	if info.ctx != nil {
+		ctx = bindValuesContext{Context: ctx, bindCtx: info.ctx}
 	}
-	// Return any potential context error.
 	// If the error is not nil, then set it in the function info outside of this function.
-	return info.ctx.Err()
+	return ctx, ctx.Err()
+}
+
+// bindValuesContext is the executing statement's context, extended with the values of a binder's
+// child context. Deadline, Done, and Err are the executing statement's. Value prefers the executing
+// statement and falls back to the binder's child context, so binder-specific keys stay visible while
+// statement-scoped values (and cancellation) are never taken from the statement that bound the plan.
+type bindValuesContext struct {
+	context.Context //nolint:containedctx // This type is a context wrapper.
+
+	// We ignore the linter because the child context only supplies values.
+	bindCtx context.Context //nolint:containedctx
+}
+
+func (c bindValuesContext) Value(key any) any {
+	if v := c.Context.Value(key); v != nil {
+		return v
+	}
+	return c.bindCtx.Value(key)
+}
+
+// sameContext reports whether a and b are the same context value. Contexts are compared only if
+// their dynamic type is comparable, so a custom non-comparable context never panics here.
+func sameContext(a, b context.Context) bool {
+	ta := reflect.TypeOf(a)
+	if ta == nil || ta != reflect.TypeOf(b) || !ta.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 // RegisterScalarUDF registers a user-defined scalar function.
@@ -294,8 +344,9 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	inputChunk, outputChunk *DataChunk,
 	functionInfo mapping.FunctionInfo, nullInNullOut bool,
 ) {
-	// Set the context.
-	if err := funcCtx.setCtx(bindInfo); err != nil {
+	// Resolve the context of the executing statement.
+	ctx, err := funcCtx.executionContext(bindInfo)
+	if err != nil {
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return
 	}
@@ -315,7 +366,7 @@ func executeChunk(funcCtx *scalarFuncContext, bindInfo *bindData,
 	}
 
 	// Execute the callback. It can use vector access or Rows.
-	if err := funcCtx.f.Executor().ChunkContextExecutor(bindInfo.ctx, chunk); err != nil {
+	if err := funcCtx.f.Executor().ChunkContextExecutor(ctx, chunk); err != nil {
 		mapping.ScalarFunctionSetError(functionInfo, getError(errAPI, err).Error())
 		return
 	}
@@ -454,9 +505,11 @@ func (s *scalarFuncContext) bind(clientCtx mapping.ClientContext, bindInfo mappi
 		return nil, err
 	}
 
-	// Propagate the parent context, if the child context is nil.
-	if ctx != nil && bindCtx == nil {
-		bindCtx = ctx
+	// Keep only a real child context. A nil or unchanged parent carries nothing the executing
+	// statement's context does not, and keeping it would leak this statement's values into later
+	// executions of the plan.
+	if bindCtx == nil || sameContext(bindCtx, ctx) {
+		return nil, nil
 	}
 
 	return bindCtx, nil
