@@ -1,6 +1,9 @@
 name: Tests
 on:
   push:
+    branches:
+      - main
+      - "v[0-9]*"
   pull_request:
   workflow_dispatch:
 
@@ -25,19 +28,18 @@ jobs:
           - linux-arm64
           - windows-amd64
         go: [1.24]
-        # Keep native Intel coverage after merge without delaying PR checks.
-        exclude: &skip-intel-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"}]' || '[]') }}
+        # Keep Intel macOS and Windows AMD64 coverage after merge without delaying PR checks.
+        exclude: &skip-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"},{"platform":"windows-amd64"}]' || '[]') }}
         # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
         # runners when the workflow runs in the duckdb organization. There is no
         # Namespace profile for Intel macOS, so runs-on falls back to github.
         include:
-          # Includes run after exclusions; use an empty array on PRs to avoid
-          # adding the excluded Intel job back.
+          # Includes run after exclusions; do not reintroduce skipped platforms on PRs.
           - &darwin-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","github":"macos-15-intel"}]') }}
           - &darwin-arm64 { platform: darwin-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
           - &linux-amd64 { platform: linux-amd64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
           - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
-          - &windows-amd64 { platform: windows-amd64, github: windows-2025, namespace: namespace-profile-windows-x64 }
+          - &windows-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"windows-amd64","github":"windows-2025","namespace":"namespace-profile-windows-x64"}]') }}
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -107,6 +109,7 @@ jobs:
           - linux-amd64
           - windows-amd64
         go: [1.24]
+        exclude: *skip-on-pr
         include: [*darwin-arm64, *linux-amd64, *windows-amd64]
       fail-fast: false
     steps:
@@ -132,7 +135,7 @@ jobs:
           - darwin-arm64
           - linux-amd64
           - linux-arm64
-        exclude: *skip-intel-on-pr
+        exclude: *skip-on-pr
         include:
           - *darwin-amd64
           - *darwin-arm64
