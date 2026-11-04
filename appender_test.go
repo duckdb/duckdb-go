@@ -474,6 +474,14 @@ func TestAppenderArray(t *testing.T) {
 	require.Equal(t, 2*count, i)
 }
 
+func TestErrAppenderArrayLength(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (string_array VARCHAR[3])`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow([]string{"a", "b"})
+	require.ErrorContains(t, err, "invalid input: expected array of length 3, got array of length 2")
+}
+
 func TestAppenderNested(t *testing.T) {
 	for _, appenderType := range appenderTypes {
 		func() {
