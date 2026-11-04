@@ -322,6 +322,12 @@ go test -tags=duckdb_use_lib ./...
 
 To run only the test you care about, add `-run TestName -v`.
 
+## Cross-Compilation
+
+Cross-compiling `duckdb-go` requires `CGO_ENABLED=1`, a C/C++ toolchain for the target,
+and a compatible DuckDB library. Setting `GOOS` and `GOARCH` alone is not enough.
+See the [cross-compilation guide](docs/cross-compilation.md) for tested recipes and prerequisites.
+
 ## Notes and FAQs
 
 **`undefined: conn`**
@@ -339,7 +345,7 @@ sudo apt-get update && sudo apt-get install build-essential
 ```
 
 Another cause can be cross-compilation since the Go compiler automatically disables CGO when cross-compiling.
-To enable CGO when cross-compiling, use `CC={C cross compiler} CGO_ENABLED=1 {command}` to force-enable CGO and set the right cross-compiler.
+See the [cross-compilation guide](docs/cross-compilation.md) for enabling CGO and selecting a target toolchain.
 
 **`TIMESTAMP vs. TIMESTAMP_TZ`**
 
