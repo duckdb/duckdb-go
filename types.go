@@ -340,6 +340,35 @@ func hugeIntFromNative(i *big.Int) (mapping.HugeInt, error) {
 	return mapping.NewHugeInt(r.Uint64(), q.Int64()), nil
 }
 
+func validateDecimalWidthScale(width, scale uint8) error {
+	if width < 1 || width > max_decimal_width {
+		return errInvalidDecimalWidth
+	}
+	if scale > width {
+		return errInvalidDecimalScale
+	}
+	return nil
+}
+
+func decimalFromNative(d Decimal) (mapping.Decimal, error) {
+	if err := validateDecimalWidthScale(d.Width, d.Scale); err != nil {
+		return mapping.Decimal{}, err
+	}
+	if d.Value == nil {
+		return mapping.Decimal{}, castError("nil Decimal.Value", "*big.Int")
+	}
+	// DuckDB does not validate this: depending on Width, a value with more digits aborts the
+	// process, is truncated, or is stored outside DECIMAL(Width, Scale).
+	if len(new(big.Int).Abs(d.Value).String()) > int(d.Width) {
+		return mapping.Decimal{}, errDecimalValueExceedsWidth
+	}
+	value, err := hugeIntFromNative(d.Value)
+	if err != nil {
+		return mapping.Decimal{}, err
+	}
+	return mapping.NewDecimal(d.Width, d.Scale, value), nil
+}
+
 func inferHugeInt(val any) (mapping.HugeInt, error) {
 	var err error
 	var hi mapping.HugeInt

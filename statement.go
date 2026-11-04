@@ -185,6 +185,14 @@ func (s *Stmt) bindUhugeint(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
+func (s *Stmt) bindDecimal(val Decimal, n int) (mapping.State, error) {
+	dec, err := decimalFromNative(val)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	return mapping.BindDecimal(*s.preparedStmt, mapping.IdxT(n+1), dec), nil
+}
+
 func (s *Stmt) bindBigNum(val *big.Int, n int) (mapping.State, error) {
 	bignum := bigNumFromNative(val)
 	defer mapping.DestroyBigNum(&bignum)
@@ -467,9 +475,12 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		}
 		return s.bindBigNum(v, n)
 	case Decimal:
-		// FIXME: use NamedValueChecker to support this type.
-		name := typeToStringMap[TYPE_DECIMAL]
-		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
+		return s.bindDecimal(v, n)
+	case *Decimal:
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindDecimal(*v, n)
 	case uint8:
 		return mapping.BindUInt8(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case uint16:
