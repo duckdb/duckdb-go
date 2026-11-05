@@ -120,8 +120,8 @@ jobs:
       - name: Run Arrow Tests
         run: go test -v -tags=duckdb_arrow
 
-  test-dynamic-lib:
-    name: Dynamic Lib Tests
+  test-lib:
+    name: Lib Tests
     runs-on: *runner
     timeout-minutes: 15
     defaults:
@@ -130,53 +130,19 @@ jobs:
     strategy:
       matrix:
         go: [1.24]
+        link: [dynamic, static]
         platform:
           - darwin-amd64
           - darwin-arm64
           - linux-amd64
           - linux-arm64
         exclude: *skip-on-pr
-        include:
-          - *darwin-amd64
-          - *darwin-arm64
-          - *linux-amd64
-          - *linux-arm64
-          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","ld_path_env_name":"DYLD_LIBRARY_PATH"}]') }}
-          - platform: "darwin-arm64"
-            ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - platform: "linux-amd64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
-          - platform: "linux-arm64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
+        include: [*darwin-amd64, *darwin-arm64, *linux-amd64, *linux-arm64]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-      - name: Run Dynamic Lib Tests
-        run: |
-          make test.dynamic.lib PLATFORM=${{ matrix.platform }}
-          CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
-
-  test-static-lib-darwin-arm64:
-    name: Static Lib Tests Darwin ARM64
-    runs-on: *runner
-    timeout-minutes: 15
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        go: [1.24]
-        include: [*darwin-arm64]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ matrix.go }}
-      - name: Run Static Lib Tests Darwin ARM64
-        run: |
-          make test.static.lib.darwin.arm64
-          CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_static_extension_loader -lduckdb_httplib -lduckdb_loadable_extensions -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_static -lc++ -L${SRCDIR}static-dir" go test -tags=duckdb_use_static_lib
+      - name: Run Lib Tests
+        run: make test.${{ matrix.link }}
