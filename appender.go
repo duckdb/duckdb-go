@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -15,6 +17,8 @@ type Appender struct {
 	conn *Conn
 	// The DuckDB appender.
 	appender mapping.Appender
+	// The supplied target names for direct table appenders. Empty for query appenders.
+	target string
 	// True, if the appender has been closed.
 	closed bool
 	// The first error after which DuckDB discarded rows. Close reports it until Clear.
@@ -58,7 +62,7 @@ func NewAppender(driverConn driver.Conn, catalog, schema, table string) (*Append
 // of columns, we expose this mostly for backwards compatibility.
 func NewAppenderWithColumns(driverConn driver.Conn, catalog, schema, table string, columns []string) (*Appender, error) {
 	if len(columns) == 0 {
-		return nil, invalidInputError("empty array", "non-empty array")
+		return nil, addAppenderTarget(invalidInputError("empty array", "non-empty array"), tableTarget(catalog, schema, table))
 	}
 	return newTableAppender(driverConn, catalog, schema, table, columns)
 }
@@ -66,7 +70,7 @@ func NewAppenderWithColumns(driverConn driver.Conn, catalog, schema, table strin
 // newTableAppender consolidates the common logic of creating an appender, optionally narrowing
 // it to a subset of columns before fetching types. NewAppender and NewAppenderWithColumns delegate to this helper
 func newTableAppender(driverConn driver.Conn, catalog, schema, table string, columns []string) (*Appender, error) {
-	var a Appender
+	a := Appender{target: tableTarget(catalog, schema, table)}
 	err := a.appenderConn(driverConn)
 	if err != nil {
 		return nil, err
@@ -76,7 +80,7 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 	if state == mapping.StateError {
 		err = errorDataError(mapping.AppenderErrorData(a.appender))
 		mapping.AppenderDestroy(&a.appender)
-		return nil, getError(errAppenderCreation, err)
+		return nil, a.getError(errAppenderCreation, err)
 	}
 
 	// If a subset of columns is provided, activate only those columns on the appender
@@ -109,7 +113,7 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 			err = addIndexToError(unsupportedTypeError(name), int(i)+1)
 			destroyLogicalTypes(a.types)
 			mapping.AppenderDestroy(&a.appender)
-			return nil, getError(errAppenderCreation, err)
+			return nil, a.getError(errAppenderCreation, err)
 		}
 	}
 
@@ -120,20 +124,20 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 func (a *Appender) initTableColumns(columns []string) error {
 	// When the subset is greater than all table columns, early-out with an error.
 	if mapping.AppenderColumnCount(a.appender) < mapping.IdxT(len(columns)) {
-		return getError(errAppenderCreation, errors.New("column count exceeds table column count"))
+		return a.getError(errAppenderCreation, errors.New("column count exceeds table column count"))
 	}
 
 	activatedColumns := make(map[string]struct{}, len(columns))
 	for i, col := range columns {
 		if _, exists := activatedColumns[col]; exists {
 			destroyLogicalTypes(a.types)
-			return getError(errAppenderCreation, errors.New("duplicate column in appender columns list: "+col))
+			return a.getError(errAppenderCreation, errors.New("duplicate column in appender columns list: "+col))
 		}
 
 		if mapping.AppenderAddColumn(a.appender, col) == mapping.StateError {
 			destroyLogicalTypes(a.types)
 			duckError := getDuckDBError(mapping.AppenderError(a.appender))
-			return getError(errAppenderCreation, duckError)
+			return a.getError(errAppenderCreation, duckError)
 		}
 
 		// In DuckDB, when activating a column (`AppenderAddColumn`), we push it to the active types,
@@ -149,7 +153,7 @@ func (a *Appender) initTableColumns(columns []string) error {
 		if name, found := unsupportedValueTypeToStringMap[t]; found {
 			err := addIndexToError(unsupportedTypeError(name), i+1)
 			destroyLogicalTypes(a.types)
-			return getError(errAppenderCreation, err)
+			return a.getError(errAppenderCreation, err)
 		}
 
 		activatedColumns[col] = struct{}{}
@@ -158,7 +162,7 @@ func (a *Appender) initTableColumns(columns []string) error {
 	// Sanity check: active column count should match provided columns
 	if mapping.AppenderColumnCount(a.appender) != mapping.IdxT(len(columns)) {
 		destroyLogicalTypes(a.types)
-		return getError(errAppenderCreation, errors.New("duckdb: column count mismatch after activation"))
+		return a.getError(errAppenderCreation, errors.New("duckdb: column count mismatch after activation"))
 	}
 	return nil
 }
@@ -298,7 +302,7 @@ func (a *Appender) FlushWithCancel(ctx context.Context) error {
 		err = a.flushWithCancel(ctx)
 	}
 	if err != nil {
-		return getError(errAppenderFlush, a.recordDropped(err))
+		return a.getError(errAppenderFlush, a.recordDropped(err))
 	}
 
 	return nil
@@ -312,7 +316,7 @@ func (a *Appender) FlushWithCancel(ctx context.Context) error {
 // but it returns the error and Close keeps reporting earlier dropped rows.
 func (a *Appender) Clear() error {
 	if a.closed {
-		return getError(errAppenderClearAfterClose, nil)
+		return a.getError(errAppenderClearAfterClose, nil)
 	}
 
 	a.chunk.reset(true)
@@ -320,7 +324,7 @@ func (a *Appender) Clear() error {
 
 	if mapping.AppenderClear(a.appender) == mapping.StateError {
 		errClear := getDuckDBError(mapping.AppenderError(a.appender))
-		return getError(invalidatedAppenderClearError(errClear), nil)
+		return a.getError(invalidatedAppenderClearError(errClear), nil)
 	}
 	a.droppedErr = nil
 
@@ -340,7 +344,7 @@ func (a *Appender) Close() error {
 // explicit flush failed and Clear was not called since.
 func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	if a.closed {
-		return getError(errAppenderDoubleClose, nil)
+		return a.getError(errAppenderDoubleClose, nil)
 	}
 	a.closed = true
 
@@ -359,7 +363,7 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 	mapping.AppenderDestroy(&a.appender)
 	err := errors.Join(a.droppedErr, errAppend, errFlush)
 	if err != nil {
-		return getError(errAppenderClose, err)
+		return a.getError(errAppenderClose, err)
 	}
 
 	return nil
@@ -368,15 +372,38 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 // AppendRow loads a row of values into the appender. The values are provided as separate arguments.
 func (a *Appender) AppendRow(args ...driver.Value) error {
 	if a.closed {
-		return getError(errAppenderAppendAfterClose, nil)
+		return a.getError(errAppenderAppendAfterClose, nil)
 	}
 
 	err := a.appendRowSlice(args)
 	if err != nil {
-		return getError(errAppenderAppendRow, err)
+		return a.getError(errAppenderAppendRow, err)
 	}
 
 	return nil
+}
+
+func tableTarget(catalog, schema, table string) string {
+	var parts []string
+	if catalog != "" {
+		parts = append(parts, fmt.Sprintf("catalog: %q", catalog))
+	}
+	if schema != "" {
+		parts = append(parts, fmt.Sprintf("schema: %q", schema))
+	}
+	parts = append(parts, fmt.Sprintf("table: %q", table))
+	return strings.Join(parts, ", ")
+}
+
+func addAppenderTarget(err error, target string) error {
+	if target == "" {
+		return err
+	}
+	return fmt.Errorf("%w (%s)", err, target)
+}
+
+func (a *Appender) getError(errDriver, err error) error {
+	return addAppenderTarget(getError(errDriver, err), a.target)
 }
 
 func (a *Appender) appenderConn(driverConn driver.Conn) error {
@@ -397,7 +424,7 @@ func (a *Appender) initAppenderChunk() (*Appender, error) {
 		a.chunk.close()
 		destroyLogicalTypes(a.types)
 		mapping.AppenderDestroy(&a.appender)
-		return nil, getError(errAppenderCreation, err)
+		return nil, a.getError(errAppenderCreation, err)
 	}
 
 	return a, nil

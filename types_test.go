@@ -762,6 +762,66 @@ func TestBit(t *testing.T) {
 	})
 }
 
+func TestBitScan(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input any
+	}{
+		{"string", "1010101011"},
+		{"bytes", []byte("1010101011")},
+		{"Bit", Bit{Data: []byte{6, 0xFE, 0xAB}}},
+		{"pointer", &Bit{Data: []byte{6, 0xFE, 0xAB}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Bit{Data: []byte{0, 0}}
+			require.NoError(t, got.Scan(tt.input))
+			require.Equal(t, "1010101011", got.String())
+			// Scanning must copy caller-owned storage, not retain an alias.
+			switch input := tt.input.(type) {
+			case []byte:
+				input[0] = '0'
+			case Bit:
+				input.Data[2] = 0
+			case *Bit:
+				input.Data[2] = 0
+			}
+			require.Equal(t, "1010101011", got.String())
+		})
+	}
+
+	for _, input := range []any{nil, (*Bit)(nil)} {
+		got := Bit{Data: []byte{0, 0xAA}}
+		require.NoError(t, got.Scan(input))
+		require.Nil(t, got.Data, "NULL must clear a previously scanned value")
+	}
+
+	for _, tt := range []struct {
+		name  string
+		input any
+		err   string
+	}{
+		{"unsupported type", 42, "invalid Bit value type"},
+		{"empty string", "", "empty bit string"},
+		{"invalid string", "10102", "invalid character"},
+		{"invalid bytes", []byte("10102"), "invalid character"},
+		{"invalid Bit", Bit{Data: []byte{8, 0xAA}}, "invalid padding count"},
+		{"invalid pointer", &Bit{Data: []byte{6, 0x3E, 0xAB}}, "padding bits must be 1s"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Bit
+			require.ErrorContains(t, got.Scan(tt.input), tt.err)
+		})
+	}
+	var nilDestination *Bit
+	require.ErrorContains(t, nilDestination.Scan("1"), "invalid Bit destination")
+
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	got := Bit{Data: []byte{0, 0xAA}}
+	require.NoError(t, db.QueryRow(`SELECT NULL::BIT`).Scan(&got))
+	require.Nil(t, got.Data)
+}
+
 func TestBlob(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -1533,6 +1593,66 @@ func TestBigNum(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, val.String(), res.String())
 	})
+}
+
+func TestBigNumNestedBinding(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	// Nested parameters create DuckDB values instead of using scalar BindBigNum.
+	for _, text := range []string{"0", "340282366920938463463374607431768211457", "-680564733841876926926749214863536422919"} {
+		t.Run(text, func(t *testing.T) {
+			value, ok := new(big.Int).SetString(text, 10)
+			require.True(t, ok)
+			var got string
+			err := db.QueryRow(`SELECT (list_extract(?::BIGNUM[], 1))::VARCHAR`, []any{value}).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+			require.Equal(t, text, value.String(), "binding must not mutate the input")
+		})
+	}
+}
+
+func TestOrderedMapOperations(t *testing.T) {
+	var m OrderedMap
+	m.Set("first", 11)
+	m.Set("second", nil)
+	m.Set("third", 33)
+	m.Set("fourth", 44)
+
+	value, ok := m.Get("first")
+	require.True(t, ok)
+	require.Equal(t, 11, value)
+	value, ok = m.Get("second")
+	require.True(t, ok, "a nil value is distinct from a missing key")
+	require.Nil(t, value)
+	value, ok = m.Get("missing")
+	require.False(t, ok)
+	require.Nil(t, value)
+
+	m.Delete("second")
+	m.Delete("missing")
+	require.Equal(t, []any{"first", "third", "fourth"}, m.Keys())
+	require.Equal(t, []any{11, 33, 44}, m.Values())
+	_, ok = m.Get("second")
+	require.False(t, ok)
+
+	m.Set("third", 333)
+	require.Equal(t, []any{"first", "fourth", "third"}, m.Keys())
+	require.Equal(t, []any{11, 44, 333}, m.Values())
+	value, ok = m.Get("third")
+	require.True(t, ok)
+	require.Equal(t, 333, value)
+
+	for _, key := range []string{"first", "third", "fourth"} {
+		m.Delete(key)
+	}
+	require.Zero(t, m.Len())
+	require.Empty(t, m.Keys())
+	require.Empty(t, m.Values())
+	m.Delete("missing")
+	m.Set("new", 55)
+	require.Equal(t, []any{"new"}, m.Keys())
+	require.Equal(t, []any{55}, m.Values())
 }
 
 func TestOrderedMap(t *testing.T) {

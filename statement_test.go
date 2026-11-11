@@ -832,6 +832,29 @@ func TestPrepareComplexQueryParameter(t *testing.T) {
 	require.Equal(t, [][]any{}, nestedEmptySliceRes.Get())
 }
 
+// Unlike uuid.UUID and *UUID, this array implements Stringer but not Valuer.
+type uuidStringer [16]byte
+
+func (u uuidStringer) String() string {
+	return uuid.UUID(u).String()
+}
+
+func TestBindUUIDStringer(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	for _, text := range []string{"123e4567-e89b-12d3-a456-426614174000", "923e4567-e89b-12d3-a456-426614174000"} {
+		t.Run(text, func(t *testing.T) {
+			var got string
+			err := db.QueryRow(`SELECT (?::UUID)::VARCHAR`, uuidStringer(uuid.MustParse(text))).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+		})
+	}
+	// A non-Stringer array must not silently bind as a UUID.
+	_, err := db.Exec(`SELECT ?::UUID`, [16]byte{})
+	require.Error(t, err)
+}
+
 func TestBindUUID(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

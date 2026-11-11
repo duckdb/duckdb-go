@@ -1052,6 +1052,35 @@ func TestTableUDFNullArguments(t *testing.T) {
 	require.Equal(t, map[string]any{"ARG": nil}, boundNamedArgs)
 }
 
+func TestTableUDFBigNumArgument(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	anyInfo, err := NewTypeInfo(TYPE_ANY)
+	require.NoError(t, err)
+	// ANY preserves the SQL argument type, including BIGNUM, during binding.
+	require.NoError(t, RegisterTableUDF(conn, "bignum_arg", RowTableFunction{
+		Config: TableFunctionConfig{Arguments: []TypeInfo{anyInfo}},
+		BindArguments: func(_ map[string]any, args ...any) (RowTableSource, error) {
+			value, ok := args[0].(*big.Int)
+			if !ok {
+				return nil, fmt.Errorf("expected *big.Int, got %T", args[0])
+			}
+			return &constTableUDF[string]{value: value.String(), t: TYPE_VARCHAR}, nil
+		},
+	}))
+	for _, text := range []string{"0", "340282366920938463463374607431768211457", "-680564733841876926926749214863536422919"} {
+		t.Run(text, func(t *testing.T) {
+			var got string
+			err := conn.QueryRowContext(ctx, `SELECT result FROM bignum_arg('`+text+`'::BIGNUM)`).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+		})
+	}
+}
+
 func TestTableUDFAggregate(t *testing.T) {
 	db := openDbWrapper(t, `?access_mode=READ_WRITE`)
 	defer closeDbWrapper(t, db)

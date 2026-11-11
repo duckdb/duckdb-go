@@ -177,12 +177,105 @@ func TestErrUncomparableMapKey(t *testing.T) {
 	}
 }
 
+func TestAppenderErrorTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		open   func(driver.Conn) (*Appender, error)
+		target string
+	}{
+		{
+			name: "default catalog and schema",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppenderFromConn(conn, "", "test")
+			},
+			target: `table: "test"`,
+		},
+		{
+			name: "explicit catalog with default schema",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppender(conn, "memory", "", "test")
+			},
+			target: `catalog: "memory", table: "test"`,
+		},
+		{
+			name: "qualified target with punctuation",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppender(conn, "memory", "report.ing", `event"s`)
+			},
+			target: `catalog: "memory", schema: "report.ing", table: "event\"s"`,
+		},
+		{
+			name: "selected columns",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppenderWithColumns(conn, "", "report.ing", `event"s`, []string{"i"})
+			},
+			target: `schema: "report.ing", table: "event\"s"`,
+		},
+		{
+			name: "query input is not a target",
+			open: func(conn driver.Conn) (*Appender, error) {
+				info, err := NewTypeInfo(TYPE_INTEGER)
+				if err != nil {
+					return nil, err
+				}
+				return NewQueryAppender(conn, `INSERT INTO test FROM input_rows`, "input_rows", []TypeInfo{info}, nil)
+			},
+		},
+		{
+			name: "query type source is not a target",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewTableAppender(conn, `INSERT INTO test FROM appended_data`, "memory", "report.ing", `event"s`, nil)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnectorWrapper(t, "", nil)
+			db := sql.OpenDB(c)
+			conn := openDriverConnWrapper(t, c)
+			defer cleanupDb(t, c, db, conn)
+			_, err := db.Exec(`CREATE TABLE test (i INTEGER PRIMARY KEY);
+				CREATE SCHEMA "report.ing";
+				CREATE TABLE "report.ing"."event""s" (i INTEGER PRIMARY KEY)`)
+			require.NoError(t, err)
+
+			a, err := tc.open(conn)
+			require.NoError(t, err)
+			defer func() {
+				_ = a.Close()
+			}()
+			appendErr := a.AppendRow()
+			require.ErrorIs(t, appendErr, errAppenderAppendRow)
+			require.ErrorContains(t, appendErr, "could not append row: invalid column count: expected 1, got 0")
+			if tc.target == "" {
+				require.EqualError(t, appendErr, "database/sql/driver: could not append row: invalid column count: expected 1, got 0")
+			}
+			require.NoError(t, a.AppendRow(int32(42)))
+			require.NoError(t, a.AppendRow(int32(42)))
+			flushErr := a.Flush()
+			require.ErrorIs(t, flushErr, errAppenderFlush)
+			require.ErrorContains(t, flushErr, "duplicate key")
+			var duckErr *Error
+			require.ErrorAs(t, flushErr, &duckErr)
+			closeErr := a.Close()
+			require.ErrorIs(t, closeErr, errAppenderClose)
+			require.ErrorIs(t, closeErr, duckErr)
+			for _, err := range []error{appendErr, flushErr, closeErr, a.Close(), a.Clear(), a.AppendRow(int32(1))} {
+				require.Error(t, err)
+				if tc.target != "" {
+					require.True(t, strings.HasSuffix(err.Error(), " ("+tc.target+")"), "%s", err)
+				}
+			}
+		})
+	}
+}
+
 func TestErrAppender(t *testing.T) {
 	t.Run(errInvalidCon.Error(), func(t *testing.T) {
 		var conn driver.Conn
 		a, err := NewAppenderFromConn(conn, "", "test")
 		defer closeAppenderWrapper(t, a)
 		testError(t, err, errInvalidCon.Error())
+		require.EqualError(t, err, "database/sql/driver: not a DuckDB driver connection")
 	})
 
 	t.Run(errClosedCon.Error(), func(t *testing.T) {
@@ -195,6 +288,7 @@ func TestErrAppender(t *testing.T) {
 		a, err := NewAppenderFromConn(conn, "", "test")
 		defer closeAppenderWrapper(t, a)
 		testError(t, err, errClosedCon.Error())
+		require.EqualError(t, err, "database/sql/driver: closed connection")
 	})
 
 	t.Run(errAppenderCreation.Error(), func(t *testing.T) {
@@ -207,6 +301,9 @@ func TestErrAppender(t *testing.T) {
 		a, err := NewAppenderFromConn(conn, "", "does_not_exist")
 		defer closeAppenderWrapper(t, a)
 		testError(t, err, errAppenderCreation.Error())
+		require.ErrorContains(t, err, "could not create appender: ")
+		require.ErrorContains(t, err, `table: "does_not_exist"`)
+		require.ErrorIs(t, err, errAppenderCreation)
 	})
 
 	t.Run(errAppenderCreation.Error(), func(t *testing.T) {
