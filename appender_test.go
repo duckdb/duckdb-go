@@ -1830,7 +1830,12 @@ func TestNewAppenderWithColumnsEmptyColumns(t *testing.T) {
 	defer func() { cleanupDb(t, c, db, conn) }()
 
 	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{})
-	require.Error(t, err)
+	require.EqualError(t, err, `invalid input: expected non-empty array, got empty array (table: "test")`)
+
+	// Empty columns must still be rejected before validating the connection or target.
+	_, err = NewAppenderWithColumns(nil, "warehouse", "report.ing", `event"s`, nil)
+	require.EqualError(t, err, `invalid input: expected non-empty array, got empty array (catalog: "warehouse", schema: "report.ing", table: "event\"s")`)
+	require.NotErrorIs(t, err, errInvalidCon)
 }
 
 func TestNewAppenderWithColumnsDuplicateColumns(t *testing.T) {
