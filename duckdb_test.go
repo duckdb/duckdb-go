@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -897,22 +898,31 @@ func TestInstanceCache(t *testing.T) {
 	// Both opens must use the same configuration to share the cached instance, so the
 	// extension directory workaround is applied once instead of per open.
 	dsn := addExtensionDirWorkaround(t, `instance_cache.db`)
-	openDb := func() *sql.DB {
+	openDb := func() (*sql.DB, error) {
 		db, err := sql.Open(`duckdb`, dsn)
-		require.NoError(t, err)
-		require.NoError(t, db.Ping())
-		return db
+		if err != nil {
+			return nil, err
+		}
+		if err = db.Ping(); err != nil {
+			return nil, errors.Join(err, db.Close())
+		}
+		return db, nil
 	}
 
 	// We loop a few times to try and trigger different concurrent behavior.
 	for range 20 {
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		db := openDb()
+		db, err := openDb()
+		require.NoError(t, err)
 		go func() {
 			defer wg.Done()
-			db1 := openDb()
-			closeDbWrapper(t, db1)
+			// require must not be called outside the test goroutine.
+			db1, err := openDb()
+			if !assert.NoError(t, err) {
+				return
+			}
+			assert.NoError(t, db1.Close())
 		}()
 		closeDbWrapper(t, db)
 		wg.Wait()
