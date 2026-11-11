@@ -727,6 +727,11 @@ func TestBindScalarUDF(t *testing.T) {
 	require.NoError(t, row.Scan(&egg))
 	require.Equal(t, "0", egg)
 
+	// Typed NULLs must also reach the scalar binder as nil.
+	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(NULL::UBIGINT, NULL::UBIGINT) AS egg`)
+	require.NoError(t, row.Scan(&egg))
+	require.Equal(t, "0", egg)
+
 	row = conn.QueryRowContext(context.Background(), `SELECT find_easter_egg(7, (random() * 100)::UBIGINT) AS egg`)
 	err = row.Scan(&egg)
 	require.ErrorContains(t, err, "second argument must be foldable for bindEasterEgg")

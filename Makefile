@@ -1,5 +1,3 @@
-DUCKDB_VERSION=v1.5.6
-
 test.examples:
 	go run examples/appender/main.go
 	go run examples/json/main.go
@@ -8,17 +6,14 @@ test.examples:
 	go run examples/table_udf/main.go
 	go run examples/table_udf_parallel/main.go
 
-test.dynamic.lib:
-	mkdir dynamic-dir && \
-	cd dynamic-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/${FILENAME}.zip && \
-	unzip ${FILENAME}.zip
+test.vendor:
+	./scripts/test-vendor.sh
 
-test.static.lib.darwin.arm64:
-	mkdir static-dir && \
-	cd static-dir && \
-	curl -OL https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/static-libs-osx-arm64.zip && \
-	unzip static-libs-osx-arm64.zip
+test.dynamic:
+	./scripts/test-dynamic.sh
+
+test.static:
+	./scripts/test-static.sh
 
 GOBIN ?= $$(go env GOPATH)/bin
 

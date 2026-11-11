@@ -1,6 +1,9 @@
 name: Tests
 on:
   push:
+    branches:
+      - main
+      - "v[0-9]*"
   pull_request:
   workflow_dispatch:
 
@@ -11,42 +14,60 @@ concurrency:
 jobs:
   go_test:
     name: Main Tests
-    runs-on: ${{ matrix.os }}
+    runs-on: &runner ${{ github.repository_owner == 'duckdb' && matrix.namespace || matrix.github }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-          - macos-15-intel
-          - ubuntu-24.04-arm
+        platform:
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
+          - linux-arm64
+          - windows-amd64
         go: [1.24]
+        # Keep Intel macOS and Windows AMD64 coverage after merge without delaying PR checks.
+        exclude: &skip-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"},{"platform":"windows-amd64"}]' || '[]') }}
+        # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
+        # runners when the workflow runs in the duckdb organization. There is no
+        # Namespace profile for Intel macOS, so runs-on falls back to github.
+        include:
+          # Includes run after exclusions; do not reintroduce skipped platforms on PRs.
+          - &darwin-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"darwin-amd64","github":"macos-15-intel"}]') }}
+          - &darwin-arm64 { platform: darwin-arm64, github: macos-26, namespace: namespace-profile-macos-arm64 }
+          - &linux-amd64 { platform: linux-amd64, github: ubuntu-24.04, namespace: namespace-profile-linux-small }
+          - &linux-arm64 { platform: linux-arm64, github: ubuntu-24.04-arm, namespace: namespace-profile-linux-arm64-small }
+          - &windows-amd64 ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"windows-amd64","github":"windows-2025","namespace":"namespace-profile-windows-x64"}]') }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
         run: go test -v
+      - name: Test Vendored Consumer
+        if: matrix.platform == 'linux-amd64'
+        run: make test.vendor
 
   go_race_test:
     name: Race Tests
-    runs-on: ${{ matrix.os }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        platform: [linux-amd64]
         go: [1.24]
+        include: [*linux-amd64]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Race Tests
@@ -54,19 +75,21 @@ jobs:
 
   test_examples:
     name: Test Examples
-    runs-on: ${{ matrix.os }}
+    runs-on: *runner
+    timeout-minutes: 15
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+        platform:
+          - darwin-arm64
+          - linux-amd64
         go: [1.24]
+        include: [*darwin-arm64, *linux-amd64]
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Test Examples
@@ -74,80 +97,52 @@ jobs:
 
   test-arrow:
     name: Test Arrow
-    runs-on: ${{ matrix.os }}
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        platform:
+          - darwin-arm64
+          - linux-amd64
+          - windows-amd64
         go: [1.24]
+        exclude: *skip-on-pr
+        include: [*darwin-arm64, *linux-amd64, *windows-amd64]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
       - name: Run Arrow Tests
         run: go test -v -tags=duckdb_arrow
 
-  test-dynamic-lib:
-    name: Dynamic Lib Tests
-    runs-on: ${{ matrix.os }}
+  test-lib:
+    name: Lib Tests
+    runs-on: *runner
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     strategy:
       matrix:
         go: [1.24]
-        os:
-          - macos-15-intel
-          - macos-latest
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-        include:
-          - os: "macos-15-intel"
-            filename: "libduckdb-osx-universal"
-            ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - os: "macos-latest"
-            filename: "libduckdb-osx-universal"
-            ld_path_env_name: "DYLD_LIBRARY_PATH"
-          - os: "ubuntu-latest"
-            filename: "libduckdb-linux-amd64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
-          - os: "ubuntu-24.04-arm"
-            filename: "libduckdb-linux-arm64"
-            ld_path_env_name: "LD_LIBRARY_PATH"
+        link: [dynamic, static]
+        platform:
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
+          - linux-arm64
+        exclude: *skip-on-pr
+        include: [*darwin-amd64, *darwin-arm64, *linux-amd64, *linux-arm64]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-      - name: Run Dynamic Lib Tests
-        run: |
-          make test.dynamic.lib FILENAME=${{ matrix.filename }}
-          CGO_ENABLED=1 CGO_LDFLAGS="-lduckdb -L${SRCDIR}dynamic-dir" ${{ matrix.ld_path_env_name }}=${SRCDIR}dynamic-dir go test -tags=duckdb_use_lib
-
-  test-static-lib-darwin-arm64:
-    name: Static Lib Tests Darwin ARM64
-    runs-on: macos-latest
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      matrix:
-        go: [1.24]
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-      - name: Run Static Lib Tests Darwin ARM64
-        run: |
-          make test.static.lib.darwin.arm64
-          CGO_ENABLED=1 CPPFLAGS="-DDUCKDB_STATIC_BUILD" CGO_LDFLAGS="-lduckdb_static -lduckdb_generated_extension_loader -lautocomplete_extension -lcore_functions_extension -licu_extension -ljson_extension -lparquet_extension -ltpcds_extension -ltpch_extension -lduckdb_fastpforlib -lduckdb_fmt -lduckdb_fsst -lduckdb_hyperloglog -lduckdb_mbedtls -lduckdb_miniz -lduckdb_pg_query -lduckdb_re2 -lduckdb_skiplistlib -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_zstd -lc++ -L${SRCDIR}static-dir" go test -tags=duckdb_use_static_lib
+      - name: Run Lib Tests
+        run: make test.${{ matrix.link }}

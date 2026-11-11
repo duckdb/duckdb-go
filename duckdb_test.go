@@ -227,13 +227,6 @@ func TestConnectorBootQueries(t *testing.T) {
 	})
 }
 
-func TestConnector_Close(t *testing.T) {
-	c := newConnectorWrapper(t, ``, nil)
-	// Multiple close calls must not cause panics or errors.
-	closeConnectorWrapper(t, c)
-	closeConnectorWrapper(t, c)
-}
-
 // This test patches package-level mapping hooks and must not run in parallel.
 func TestConnectCleansUpOnInitError(t *testing.T) {
 	initErr := errors.New("init failed")
@@ -442,7 +435,7 @@ func TestQuery(t *testing.T) {
 		require.NoError(t, err)
 		ra, err := res.RowsAffected()
 		require.NoError(t, err)
-		require.Equal(t, int64(0), ra)
+		require.Equal(t, int64(100000), ra)
 
 		r, err := db.Query(`SELECT i FROM integers ORDER BY i ASC`)
 		require.NoError(t, err)

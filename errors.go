@@ -1,10 +1,12 @@
 package duckdb
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -30,6 +32,11 @@ func castErrorForValue(v any, expected string) error {
 
 func conversionError(actual, min, max int) error {
 	return fmt.Errorf("%s: cannot convert %d, minimum: %d, maximum: %d", convertErrMsg, actual, min, max)
+}
+
+func dateRangeError(actual, min, max time.Time) error {
+	return fmt.Errorf("%s: cannot convert %s, minimum: %s, maximum: %s",
+		convertErrMsg, actual.Format(time.DateOnly), min.Format(time.DateOnly), max.Format(time.DateOnly))
 }
 
 func invalidInputError(actual, expected string) error {
@@ -104,7 +111,7 @@ const (
 	setValueErrMsg              = "failed to set value"
 	unprojectedColumnErrMsg     = "unprojected column"
 	unsupportedTypeErrMsg       = "unsupported data type"
-	considerAppenderClearMsg    = "appended and not yet flushed data has been invalidated due to error: consider invoking Appender.Clear followed by Appender.Close in case of unexpected errors to avoid leaking memory"
+	considerAppenderClearMsg    = "the appended rows that were not yet flushed were discarded: call Appender.Clear to acknowledge this, otherwise Appender.Close reports this error"
 	invalidatedAppenderClearMsg = "failed to clear appender's internal data (this likely indicates a bug - please consider opening a bug report at https://github.com/duckdb/duckdb-go/issues)"
 	tryOtherFuncErrMsg          = "please try this function instead"
 	indexErrMsg                 = "index"
@@ -124,10 +131,11 @@ var (
 	errUninitializedVectorView   = errors.New("uninitialized vector view")
 	errUninitializedVectorWriter = errors.New("uninitialized vector writer")
 
-	errConnect      = errors.New("could not connect to database")
-	errParseDSN     = errors.New("could not parse DSN for database")
-	errSetConfig    = errors.New("could not set invalid or local option for global database config")
-	errCreateConfig = errors.New("could not create config for database")
+	errConnect         = errors.New("could not connect to database")
+	errParseDSN        = errors.New("could not parse DSN for database")
+	errSetConfig       = errors.New("could not set invalid or local option for global database config")
+	errCreateConfig    = errors.New("could not create config for database")
+	errClosedConnector = errors.New("closed connector")
 
 	errInvalidCon = errors.New("not a DuckDB driver connection")
 	errClosedCon  = errors.New("closed connection")
@@ -153,19 +161,21 @@ var (
 	errAppenderDoubleClose      = fmt.Errorf("%w: already closed", errAppenderClose)
 	errAppenderAppendRow        = errors.New("could not append row")
 	errAppenderAppendAfterClose = fmt.Errorf("%w: appender already closed", errAppenderAppendRow)
+	errAppenderClearAfterClose  = errors.New("could not clear appender: appender already closed")
 	errAppenderFlush            = errors.New("could not flush appender")
 	errAppenderEmptyQuery       = errors.New("empty query")
 	errAppenderEmptyColumnTypes = errors.New("empty column types")
 	errAppenderColumnMismatch   = errors.New("mismatch between the column types and names")
 	errAppenderDuplicateColumn  = errors.New("duplicate column name")
 
-	errUnsupportedMapKeyType = errors.New("MAP key type not supported")
-	errNullMapKey            = errors.New("MAP keys cannot be NULL")
-	errEmptyName             = errors.New("empty name")
-	errInvalidDecimalWidth   = fmt.Errorf("the DECIMAL with must be between 1 and %d", max_decimal_width)
-	errInvalidDecimalScale   = errors.New("the DECIMAL scale must be less than or equal to the width")
-	errInvalidArraySize      = errors.New("invalid ARRAY size")
-	errSetSQLNULLValue       = errors.New("cannot write to a NULL column")
+	errUnsupportedMapKeyType    = errors.New("MAP key type not supported")
+	errNullMapKey               = errors.New("MAP keys cannot be NULL")
+	errEmptyName                = errors.New("empty name")
+	errInvalidDecimalWidth      = fmt.Errorf("the DECIMAL width must be between 1 and %d", max_decimal_width)
+	errInvalidDecimalScale      = errors.New("the DECIMAL scale must be less than or equal to the width")
+	errDecimalValueExceedsWidth = errors.New("the DECIMAL value has more digits than the width")
+	errInvalidArraySize         = errors.New("invalid ARRAY size")
+	errSetSQLNULLValue          = errors.New("cannot write to a NULL column")
 
 	errScalarUDFCreate          = errors.New("could not create scalar UDF")
 	errScalarUDFNoName          = fmt.Errorf("%w: missing name", errScalarUDFCreate)
@@ -242,6 +252,7 @@ var errorPrefixMap = map[string]ErrorType{
 	"Out of Range Error":           ErrorTypeOutOfRange,
 	"Conversion Error":             ErrorTypeConversion,
 	"Error":                        ErrorTypeUnknownType,
+	"Unknown Type Error":           ErrorTypeUnknownType,
 	"Decimal Error":                ErrorTypeDecimal,
 	"Mismatch Type Error":          ErrorTypeMismatchType,
 	"Divide by Zero Error":         ErrorTypeDivideByZero,
@@ -318,6 +329,18 @@ func getDuckDBError(errMsg string) error {
 	if prefix, _, ok := strings.Cut(errMsg, ": "); ok {
 		if typ, ok := errorPrefixMap[prefix]; ok {
 			errType = typ
+		}
+	}
+
+	// With errors_as_json, the type is in the exception_type field instead of a prefix.
+	if strings.HasPrefix(errMsg, "{") {
+		var jsonErr struct {
+			ExceptionType string `json:"exception_type"` //nolint:tagliatelle // DuckDB's field name.
+		}
+		if json.Unmarshal([]byte(errMsg), &jsonErr) == nil {
+			if typ, ok := errorPrefixMap[jsonErr.ExceptionType+" Error"]; ok {
+				errType = typ
+			}
 		}
 	}
 

@@ -177,6 +177,14 @@ func TestAppenderClose(t *testing.T) {
 	require.NoError(t, a.AppendRow(int32(42)))
 }
 
+func TestAppenderClearAfterClose(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (i INTEGER)`)
+	defer cleanupDb(t, c, db, conn)
+	require.NoError(t, a.AppendRow(int32(42)))
+	require.NoError(t, a.Close())
+	require.ErrorContains(t, a.Clear(), "appender already closed")
+}
+
 func TestAppenderRejectsVariant(t *testing.T) {
 	tests := []struct {
 		name string
@@ -464,6 +472,14 @@ func TestAppenderArray(t *testing.T) {
 		i++
 	}
 	require.Equal(t, 2*count, i)
+}
+
+func TestErrAppenderArrayLength(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (string_array VARCHAR[3])`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow([]string{"a", "b"})
+	require.ErrorContains(t, err, "invalid input: expected array of length 3, got array of length 2")
 }
 
 func TestAppenderNested(t *testing.T) {

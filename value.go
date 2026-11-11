@@ -14,6 +14,11 @@ func createVarchar(s string) mapping.Value {
 }
 
 func getValue(v mapping.Value) (any, error) {
+	// NULL values keep their logical type, and DuckDB rejects reading them.
+	if mapping.IsNullValue(v) {
+		return nil, nil
+	}
+
 	// The logical type is valid as long as v (mapping.Value) is valid,
 	// i.e., it must not be destroyed.
 	lt := mapping.GetValueType(v)
@@ -81,8 +86,6 @@ func getValue(v mapping.Value) (any, error) {
 		return bigNumToNative(&bigNum), nil
 	case TYPE_VARCHAR:
 		return mapping.GetVarchar(v), nil
-	case TYPE_SQLNULL:
-		return nil, nil
 	default:
 		return nil, unsupportedTypeError(typeToStringMap[t])
 	}
@@ -236,7 +239,8 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 			return mapping.Value{}, err
 		}
 		lower, upper := mapping.HugeIntMembers(&vv)
-		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper))
+		// CreateUUID expects unsigned UUID bits, not the sign-flipped internal hugeint.
+		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper)^(1<<63))
 		return mapping.CreateUUID(uHugeInt), nil
 	case TYPE_BIT:
 		vv := v.(Bit)

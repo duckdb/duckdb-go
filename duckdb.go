@@ -50,6 +50,8 @@ type Connector struct {
 	connInitFn func(execer driver.ExecerContext) error
 	// ctxStore stores the context of the current query/exec/etc. of a connection.
 	ctxStore *contextStore
+	// mu guards db and closed. sql.DB can call Close while Connect is still running.
+	mu sync.RWMutex
 	// True, if the connector has been closed, else false.
 	closed bool
 }
@@ -109,7 +111,14 @@ func (*Connector) Driver() driver.Driver {
 
 func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	var mc mapping.Connection
-	if mapping.Connect(c.db, &mc) == mapping.StateError {
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return nil, getError(errClosedConnector, nil)
+	}
+	state := mapping.Connect(c.db, &mc)
+	c.mu.RUnlock()
+	if state == mapping.StateError {
 		return nil, getError(errConnect, nil)
 	}
 
@@ -135,6 +144,8 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 }
 
 func (c *Connector) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.closed {
 		return nil
 	}
