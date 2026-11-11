@@ -9,6 +9,74 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTransactions(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	_, err := conn.ExecContext(ctx, `CREATE TABLE tx_test (value INTEGER)`)
+	require.NoError(t, err)
+
+	for _, commit := range []bool{true, false} {
+		tx, err := conn.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(ctx, `INSERT INTO tx_test VALUES (42)`)
+		require.NoError(t, err)
+		var count int
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM tx_test`).Scan(&count))
+		if commit {
+			require.Equal(t, 1, count)
+			require.NoError(t, tx.Commit())
+		} else {
+			require.Equal(t, 2, count)
+			require.NoError(t, tx.Rollback())
+		}
+		// Both completion paths must leave the same connection usable.
+		require.NoError(t, conn.QueryRowContext(ctx, `SELECT count(*) FROM tx_test`).Scan(&count))
+		require.Equal(t, 1, count)
+	}
+
+	// A second connection observes the committed row, but not the rolled-back row.
+	var values []int
+	rows, err := db.Query(`SELECT value FROM tx_test`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+	for rows.Next() {
+		var value int
+		require.NoError(t, rows.Scan(&value))
+		values = append(values, value)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []int{42}, values)
+}
+
+func TestTransactionOptions(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	for _, tt := range []struct {
+		name string
+		opts sql.TxOptions
+		err  string
+	}{
+		{"read only", sql.TxOptions{ReadOnly: true}, "read-only transactions are not supported"},
+		{"isolation", sql.TxOptions{Isolation: sql.LevelSerializable}, "isolation level not supported"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := conn.BeginTx(ctx, &tt.opts)
+			require.ErrorContains(t, err, tt.err)
+			require.Nil(t, tx)
+			// Rejected options must not leave an active transaction behind.
+			tx, err = conn.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			require.NoError(t, tx.Rollback())
+		})
+	}
+}
+
 func TestMultiStatementParameters(t *testing.T) {
 	intermediateError := errParametersBeforeLastStmt.Error()
 	for _, method := range []string{"exec", "query", "prepare"} {
