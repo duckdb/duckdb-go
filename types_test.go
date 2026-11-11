@@ -1535,6 +1535,23 @@ func TestBigNum(t *testing.T) {
 	})
 }
 
+func TestBigNumNestedBinding(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	// Nested parameters create DuckDB values instead of using scalar BindBigNum.
+	for _, text := range []string{"0", "340282366920938463463374607431768211457", "-680564733841876926926749214863536422919"} {
+		t.Run(text, func(t *testing.T) {
+			value, ok := new(big.Int).SetString(text, 10)
+			require.True(t, ok)
+			var got string
+			err := db.QueryRow(`SELECT (list_extract(?::BIGNUM[], 1))::VARCHAR`, []any{value}).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+			require.Equal(t, text, value.String(), "binding must not mutate the input")
+		})
+	}
+}
+
 func TestOrderedMapOperations(t *testing.T) {
 	var m OrderedMap
 	m.Set("first", 11)
