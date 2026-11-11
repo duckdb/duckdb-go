@@ -762,6 +762,66 @@ func TestBit(t *testing.T) {
 	})
 }
 
+func TestBitScan(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input any
+	}{
+		{"string", "1010101011"},
+		{"bytes", []byte("1010101011")},
+		{"Bit", Bit{Data: []byte{6, 0xFE, 0xAB}}},
+		{"pointer", &Bit{Data: []byte{6, 0xFE, 0xAB}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Bit{Data: []byte{0, 0}}
+			require.NoError(t, got.Scan(tt.input))
+			require.Equal(t, "1010101011", got.String())
+			// Scanning must copy caller-owned storage, not retain an alias.
+			switch input := tt.input.(type) {
+			case []byte:
+				input[0] = '0'
+			case Bit:
+				input.Data[2] = 0
+			case *Bit:
+				input.Data[2] = 0
+			}
+			require.Equal(t, "1010101011", got.String())
+		})
+	}
+
+	for _, input := range []any{nil, (*Bit)(nil)} {
+		got := Bit{Data: []byte{0, 0xAA}}
+		require.NoError(t, got.Scan(input))
+		require.Nil(t, got.Data, "NULL must clear a previously scanned value")
+	}
+
+	for _, tt := range []struct {
+		name  string
+		input any
+		err   string
+	}{
+		{"unsupported type", 42, "invalid Bit value type"},
+		{"empty string", "", "empty bit string"},
+		{"invalid string", "10102", "invalid character"},
+		{"invalid bytes", []byte("10102"), "invalid character"},
+		{"invalid Bit", Bit{Data: []byte{8, 0xAA}}, "invalid padding count"},
+		{"invalid pointer", &Bit{Data: []byte{6, 0x3E, 0xAB}}, "padding bits must be 1s"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Bit
+			require.ErrorContains(t, got.Scan(tt.input), tt.err)
+		})
+	}
+	var nilDestination *Bit
+	require.ErrorContains(t, nilDestination.Scan("1"), "invalid Bit destination")
+
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	got := Bit{Data: []byte{0, 0xAA}}
+	require.NoError(t, db.QueryRow(`SELECT NULL::BIT`).Scan(&got))
+	require.Nil(t, got.Data)
+}
+
 func TestBlob(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
