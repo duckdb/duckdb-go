@@ -1535,6 +1535,49 @@ func TestBigNum(t *testing.T) {
 	})
 }
 
+func TestOrderedMapOperations(t *testing.T) {
+	var m OrderedMap
+	m.Set("first", 11)
+	m.Set("second", nil)
+	m.Set("third", 33)
+	m.Set("fourth", 44)
+
+	value, ok := m.Get("first")
+	require.True(t, ok)
+	require.Equal(t, 11, value)
+	value, ok = m.Get("second")
+	require.True(t, ok, "a nil value is distinct from a missing key")
+	require.Nil(t, value)
+	value, ok = m.Get("missing")
+	require.False(t, ok)
+	require.Nil(t, value)
+
+	m.Delete("second")
+	m.Delete("missing")
+	require.Equal(t, []any{"first", "third", "fourth"}, m.Keys())
+	require.Equal(t, []any{11, 33, 44}, m.Values())
+	_, ok = m.Get("second")
+	require.False(t, ok)
+
+	m.Set("third", 333)
+	require.Equal(t, []any{"first", "fourth", "third"}, m.Keys())
+	require.Equal(t, []any{11, 44, 333}, m.Values())
+	value, ok = m.Get("third")
+	require.True(t, ok)
+	require.Equal(t, 333, value)
+
+	for _, key := range []string{"first", "third", "fourth"} {
+		m.Delete(key)
+	}
+	require.Zero(t, m.Len())
+	require.Empty(t, m.Keys())
+	require.Empty(t, m.Values())
+	m.Delete("missing")
+	m.Set("new", 55)
+	require.Equal(t, []any{"new"}, m.Keys())
+	require.Equal(t, []any{55}, m.Values())
+}
+
 func TestOrderedMap(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
