@@ -814,4 +814,9 @@ var ValidityMaskValueIsValid = bindings.ValidityMaskValueIsValid
 
 // duckdb-go-bindings helper.
 
-var VerifyAllocationCounters = bindings.VerifyAllocationCounters
+var (
+	VerifyAllocationCounters = bindings.VerifyAllocationCounters
+	GetAllocationCount       = bindings.GetAllocationCount
+)
+
+const AllocationCounterPreparedStatement = bindings.AllocationCounterPreparedStatement

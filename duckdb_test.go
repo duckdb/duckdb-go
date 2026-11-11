@@ -894,15 +894,25 @@ func TestQueryTimeout(t *testing.T) {
 }
 
 func TestInstanceCache(t *testing.T) {
+	// Both opens must use the same configuration to share the cached instance, so the
+	// extension directory workaround is applied once instead of per open.
+	dsn := addExtensionDirWorkaround(t, `instance_cache.db`)
+	openDb := func() *sql.DB {
+		db, err := sql.Open(`duckdb`, dsn)
+		require.NoError(t, err)
+		require.NoError(t, db.Ping())
+		return db
+	}
+
 	// We loop a few times to try and trigger different concurrent behavior.
 	for range 20 {
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		db := openDbWrapper(t, `instance_cache.db`)
+		db := openDb()
 		go func() {
-			db1 := openDbWrapper(t, `instance_cache.db`)
+			defer wg.Done()
+			db1 := openDb()
 			closeDbWrapper(t, db1)
-			wg.Done()
 		}()
 		closeDbWrapper(t, db)
 		wg.Wait()

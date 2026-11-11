@@ -5,13 +5,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
@@ -163,32 +159,13 @@ func otherProcessOpens(path string) (bool, string) {
 	return err == nil, string(out)
 }
 
-// osThreadCount returns the number of OS threads of this process, or -1 if it cannot be measured.
-func osThreadCount() int {
-	switch runtime.GOOS {
-	case "linux":
-		entries, err := os.ReadDir("/proc/self/task")
-		if err != nil {
-			return -1
-		}
-		return len(entries)
-	case "darwin":
-		out, err := exec.Command("ps", "-M", "-p", strconv.Itoa(os.Getpid())).Output()
-		if err != nil {
-			return -1
-		}
-		// The first line is the header.
-		return len(strings.Split(strings.TrimSpace(string(out)), "\n")) - 1
-	}
-	return -1
-}
-
-// TestConnCloseReleasesDatabase reproduces https://github.com/duckdb/duckdb-go/issues/185.
-// A statement prepared on a sql.Conn and never closed must not keep the database
-// open (its threads and the file lock) after closing the connection and the database.
+// TestConnCloseReleasesDatabase covers the scenario of https://github.com/duckdb/duckdb-go/issues/185.
+// A statement prepared on a sql.Conn and never closed must not keep the database file
+// locked after closing the connection and the database.
+// Since DuckDB 2, a prepared statement only holds a weak reference to its client context,
+// so this test does not detect a missing statement destruction.
+// TestConnCloseAllocationBalance covers that.
 func TestConnCloseReleasesDatabase(t *testing.T) {
-	const threads = 8
-
 	tests := []struct {
 		name      string
 		closeStmt bool
@@ -202,7 +179,7 @@ func TestConnCloseReleasesDatabase(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "conn_close.db")
 
-			db := openDbWrapper(t, fmt.Sprintf("%s?threads=%d", path, threads))
+			db := openDbWrapper(t, path)
 			conn := openConnWrapper(t, db, ctx)
 			stmt, err := conn.PrepareContext(ctx, `SELECT 42`)
 			require.NoError(t, err)
@@ -210,25 +187,15 @@ func TestConnCloseReleasesDatabase(t *testing.T) {
 			var v int
 			require.NoError(t, stmt.QueryRowContext(ctx).Scan(&v))
 			require.Equal(t, 42, v)
-			during := osThreadCount()
 
 			if tt.closeStmt {
 				require.NoError(t, stmt.Close())
 			}
 			require.NoError(t, conn.Close())
 			require.NoError(t, db.Close())
-			// Measure before spawning the child process, which can start more runtime threads.
-			after := osThreadCount()
 
 			opened, out := otherProcessOpens(path)
 			require.True(t, opened, "another process cannot open the database file after DB.Close:\n%s", out)
-
-			// The worker threads of the database instance are gone. A surviving instance keeps
-			// all of them, so a margin of half the pool tolerates unrelated runtime threads.
-			if during >= 0 && after >= 0 {
-				require.LessOrEqual(t, after, during-threads/2,
-					"threads during=%d after DB.Close=%d", during, after)
-			}
 
 			// Closing the statement after the database is a no-op.
 			if !tt.closeStmt {

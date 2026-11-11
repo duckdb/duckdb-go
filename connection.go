@@ -31,8 +31,8 @@ type Conn struct {
 	stmtsMu sync.Mutex
 	// The prepared statements of this connection that have not been closed yet.
 	// database/sql does not track statements prepared on a single connection
-	// (e.g., via sql.Conn.PrepareContext), and each prepared statement keeps the
-	// database instance alive. Close destroys them before disconnecting.
+	// (e.g., via sql.Conn.PrepareContext), so Close destroys them before
+	// disconnecting. Otherwise, their native handles would leak.
 	stmts map[*Stmt]struct{}
 }
 
@@ -186,8 +186,7 @@ func (conn *Conn) Close() error {
 	}
 	conn.closed = true
 	// Destroy the remaining prepared statements before disconnecting.
-	// Otherwise, they keep the database instance alive after closing the connector,
-	// together with its threads and the lock on the database file.
+	// Otherwise, their native handles leak.
 	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)
