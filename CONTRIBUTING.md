@@ -43,6 +43,15 @@ It downloads and verifies the shared library before running the tests, caching t
 in `dynamic-dir` for subsequent runs, including offline runs.
 `test.static` uses the native module's static libraries.
 
+#### Coverage
+
+Run `make check-coverage`, then open `cover.html` in a browser.
+For a terminal summary, run `go tool cover -func=cover.out`.
+
+CI reports are available in completed
+[Tidy Checks runs](https://github.com/duckdb/duckdb-go/actions/workflows/tidy_checks.yml):
+download the `Cover_html` artifact, extract the ZIP, and open `cover.html`.
+
 ### Go Guidelines
 
 duckdb-go uses [Effective Go](https://go.dev/doc/effective_go) and the 
