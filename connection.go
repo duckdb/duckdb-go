@@ -26,8 +26,10 @@ type Conn struct {
 	// True, if the connection has an open transaction.
 	tx bool
 
-	// stmtsMu guards stmts and the closed state of the statements in stmts,
-	// so that Stmt.Close and Conn.Close never destroy the same statement twice.
+	// stmtsMu guards stmts and serializes statement destruction, so that
+	// Stmt.Close and Conn.Close never destroy the same statement twice.
+	// It does not make Conn or Stmt safe for concurrent use otherwise:
+	// all other state relies on database/sql serializing access per connection.
 	stmtsMu sync.Mutex
 	// The prepared statements of this connection that have not been closed yet.
 	// database/sql does not track statements prepared on a single connection
@@ -41,6 +43,7 @@ func newConn(conn mapping.Connection, ctxStore *contextStore) *Conn {
 		conn:     conn,
 		id:       extractConnId(conn),
 		ctxStore: ctxStore,
+		stmts:    make(map[*Stmt]struct{}),
 	}
 }
 
@@ -185,8 +188,6 @@ func (conn *Conn) Close() error {
 		return errClosedCon
 	}
 	conn.closed = true
-	// Destroy the remaining prepared statements before disconnecting.
-	// Otherwise, their native handles leak.
 	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)
@@ -235,9 +236,6 @@ func (conn *Conn) addStmt(s *Stmt) {
 	conn.stmtsMu.Lock()
 	defer conn.stmtsMu.Unlock()
 
-	if conn.stmts == nil {
-		conn.stmts = make(map[*Stmt]struct{})
-	}
 	conn.stmts[s] = struct{}{}
 }
 
