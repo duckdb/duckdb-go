@@ -75,12 +75,14 @@ func TestConnCloseAllocationBalance(t *testing.T) {
 		conn := openConnWrapper(t, db, ctx)
 		before := preparedStmtCount()
 
-		_, err := conn.PrepareContext(ctx, `SELECT 42`)
+		stmt, err := conn.PrepareContext(ctx, `SELECT 42`)
 		require.NoError(t, err)
 		require.Equal(t, before+1, preparedStmtCount())
 
 		require.NoError(t, conn.Close())
 		require.NoError(t, db.Close())
+		require.Equal(t, before, preparedStmtCount())
+		require.NoError(t, stmt.Close())
 		require.Equal(t, before, preparedStmtCount())
 	})
 
