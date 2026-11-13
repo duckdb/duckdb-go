@@ -48,8 +48,6 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
         run: go test -v
-      - name: Run Allocation Balance Tests
-        run: go test -v -tags=debug_bindings -run '^TestConnCloseAllocationBalance$' .
       - name: Test Vendored Consumer
         if: matrix.platform == 'linux-amd64'
         run: make test.vendor
@@ -73,7 +71,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - name: Run Race Tests
-        run: go test -race -count=1 ./...
+        run: go test -race -tags=debug_bindings -count=1 ./...
 
   test_examples:
     name: Test Examples
