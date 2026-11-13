@@ -1046,8 +1046,9 @@ func TestMixedTypeSliceBinding(t *testing.T) {
 	require.NoError(t, err)
 
 	sameTypeSlice := []any{"hello this is text", "other"}
-	_, err = db.Query("FROM mixed_slice_test WHERE foo IN ?", sameTypeSlice)
+	rows, err := db.Query("FROM mixed_slice_test WHERE foo IN ?", sameTypeSlice)
 	require.NoError(t, err)
+	closeRowsWrapper(t, rows)
 
 	mixedSlice := []any{"hello this is text", 2}
 
