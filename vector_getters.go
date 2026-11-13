@@ -108,8 +108,9 @@ func (vec *vector) getTime(rowIdx mapping.IdxT) time.Time {
 
 func getTime(ti *mapping.Time) time.Time {
 	micros := mapping.TimeMembers(ti)
-	unix := time.UnixMicro(micros).UTC()
-	return time.Date(1, time.January, 1, unix.Hour(), unix.Minute(), unix.Second(), unix.Nanosecond(), time.UTC)
+	// Adding the microseconds instead of taking the time of day keeps TIME '24:00:00', which becomes
+	// 0001-01-02 00:00:00 instead of wrapping around to 0001-01-01 00:00:00.
+	return time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(micros) * time.Microsecond)
 }
 
 func getTimeTZ(ti *mapping.TimeTZ) time.Time {
