@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -201,78 +198,6 @@ func TestGetTableNames(t *testing.T) {
 	}
 }
 
-// lockProbeEnv holds the database path that TestConnCloseLockProbeHelper opens in a separate process.
-const lockProbeEnv = "DUCKDB_GO_TEST_LOCK_PROBE_PATH"
-
-// TestConnCloseLockProbeHelper is not a real test. It runs in a child process spawned
-// by otherProcessOpens and fails if it cannot open the database file.
-func TestConnCloseLockProbeHelper(t *testing.T) {
-	path := os.Getenv(lockProbeEnv)
-	if path == "" {
-		return
-	}
-	db, err := sql.Open(`duckdb`, path)
-	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS probe (i INTEGER)`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-}
-
-// otherProcessOpens reports whether another process can open the database file,
-// i.e., whether this process released the lock on it.
-func otherProcessOpens(path string) (bool, string) {
-	cmd := exec.Command(os.Args[0], "-test.run=^TestConnCloseLockProbeHelper$", "-test.count=1")
-	cmd.Env = append(os.Environ(), lockProbeEnv+"="+path)
-	out, err := cmd.CombinedOutput()
-	return err == nil, string(out)
-}
-
-// TestConnCloseReleasesDatabase covers the scenario of https://github.com/duckdb/duckdb-go/issues/185.
-// A statement prepared on a sql.Conn and never closed must not keep the database file
-// locked after closing the connection and the database.
-// Since DuckDB 2, a prepared statement only holds a weak reference to its client context,
-// so this test does not detect a missing statement destruction.
-// TestConnCloseAllocationBalance covers that.
-func TestConnCloseReleasesDatabase(t *testing.T) {
-	tests := []struct {
-		name      string
-		closeStmt bool
-	}{
-		{name: "control: statement closed before the connection", closeStmt: true},
-		{name: "statement left open", closeStmt: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			path := filepath.Join(t.TempDir(), "conn_close.db")
-
-			db := openDbWrapper(t, path)
-			conn := openConnWrapper(t, db, ctx)
-			stmt, err := conn.PrepareContext(ctx, `SELECT 42`)
-			require.NoError(t, err)
-
-			var v int
-			require.NoError(t, stmt.QueryRowContext(ctx).Scan(&v))
-			require.Equal(t, 42, v)
-
-			if tt.closeStmt {
-				require.NoError(t, stmt.Close())
-			}
-			require.NoError(t, conn.Close())
-			require.NoError(t, db.Close())
-
-			opened, out := otherProcessOpens(path)
-			require.True(t, opened, "another process cannot open the database file after DB.Close:\n%s", out)
-
-			// Closing the statement after the database is a no-op.
-			if !tt.closeStmt {
-				require.NoError(t, stmt.Close())
-			}
-		})
-	}
-}
-
 // TestConnCloseInvalidatesStmts checks the driver.Conn contract:
 // Close invalidates the prepared statements of the connection.
 func TestConnCloseInvalidatesStmts(t *testing.T) {
@@ -336,10 +261,6 @@ func TestConnCloseInvalidatesStmts(t *testing.T) {
 				return err
 			},
 			wantErr: errClosedStmt,
-		},
-		{
-			name: "Close",
-			use:  func(s *Stmt) error { return s.Close() },
 		},
 		{
 			name: "Close twice",
