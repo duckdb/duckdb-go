@@ -513,6 +513,16 @@ for rdr.Next() {
 Any pre-built library in `duckdb-go-bindings` statically links the core functions and the Autocomplete, ICU, JSON, Parquet, TPC-DS, and TPC-H extensions.
 Additionally, automatic extension loading is enabled.
 
+## Updating Go dependencies
+
+Update dependencies without raising the minimum Go version:
+
+```bash
+go_version=$(go list -m -f '{{.GoVersion}}' | sed -E 's/^([0-9]+\.[0-9]+)$/\1.0/')
+go get -u -t ./... "go@$go_version" toolchain@none
+go mod tidy
+```
+
 ## Releasing a New DuckDB Version
 
 Prepare normal releases from `main`. For LTS releases that stay on DuckDB 1.4 Andium, use the `v1.4-andium` branch.
