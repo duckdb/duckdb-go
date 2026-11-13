@@ -1577,6 +1577,7 @@ func TestAppenderUpsert(t *testing.T) {
 
 	// Now re-create and test "normally".
 	aInsert = newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+	defer closeAppenderWrapper(t, aInsert)
 
 	// Append and insert (flush) two rows.
 	require.NoError(t, aInsert.AppendRow(0, Union{Value: "str1", Tag: "str"}))

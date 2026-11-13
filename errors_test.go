@@ -321,6 +321,7 @@ func TestErrAppender(t *testing.T) {
 
 		// Create the table.
 		db := sql.OpenDB(c)
+		defer closeDbWrapper(t, db)
 		_, err = db.Exec(`CREATE TABLE test (i INT)`)
 		require.NoError(t, err)
 
