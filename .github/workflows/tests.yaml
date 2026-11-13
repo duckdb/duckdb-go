@@ -48,6 +48,8 @@ jobs:
           go-version: ${{ matrix.go }}
       - name: Run Main Tests
         run: go test -v
+      - name: Check Cgo Pointer Rules
+        run: GOEXPERIMENT=cgocheck2 go test -count=1 -tags=debug_bindings,duckdb_arrow
       - name: Test Vendored Consumer
         if: matrix.platform == 'linux-amd64'
         run: make test.vendor
