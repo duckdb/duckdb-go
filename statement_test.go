@@ -728,6 +728,23 @@ func TestBindJSON(t *testing.T) {
 	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl`).Scan(&str)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"a": 1}`, str)
+
+	// Named byte slices are not converted to []byte by database/sql either.
+	_, err = db.Exec(`DELETE FROM tbl`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?)`, json.RawMessage(`{"b": 2}`))
+	require.NoError(t, err)
+	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl`).Scan(&str)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"b": 2}`, str)
+
+	// A nil byte slice binds as NULL rather than as an empty, invalid JSON string.
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?), (?)`, json.RawMessage(nil), []byte(nil))
+	require.NoError(t, err)
+	var nulls int
+	err = db.QueryRow(`SELECT count(*) FROM tbl WHERE j IS NULL`).Scan(&nulls)
+	require.NoError(t, err)
+	require.Equal(t, 2, nulls)
 }
 
 type jsonMapValuer map[string]int

@@ -320,8 +320,17 @@ func (s *Stmt) paramIsJSON(n int) (bool, error) {
 }
 
 func (s *Stmt) bindJSON(val driver.Value, n int) (mapping.State, error) {
+	// CheckNamedValue accepts all slice kinds, so named byte slices such as
+	// json.RawMessage arrive without database/sql's conversion to []byte.
+	if rv := reflect.ValueOf(val); rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		val = rv.Bytes()
+	}
 	switch v := val.(type) {
 	case []byte:
+		// An empty string is never valid JSON, so bind a nil slice as NULL.
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), string(v), mapping.IdxT(len(v))), nil
 	case string:
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), v, mapping.IdxT(len(v))), nil
