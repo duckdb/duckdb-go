@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -718,6 +719,21 @@ func TestBindJSON(t *testing.T) {
 	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl WHERE j IS NULL`).Scan(&nilStr)
 	require.NoError(t, err)
 	require.Nil(t, nilStr)
+
+	// A map-kinded driver.Valuer bypasses database/sql's conversion, so the driver must call Value() itself.
+	_, err = db.Exec(`DELETE FROM tbl`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?)`, jsonMapValuer{"a": 1})
+	require.NoError(t, err)
+	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl`).Scan(&str)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"a": 1}`, str)
+}
+
+type jsonMapValuer map[string]int
+
+func (m jsonMapValuer) Value() (driver.Value, error) {
+	return json.Marshal(map[string]int(m))
 }
 
 func TestPrepareComplexQueryParameter(t *testing.T) {
@@ -1035,6 +1051,36 @@ func TestDriverValuer(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO valuer_test (ids) VALUES (?)`, []uuid.UUID{uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), uuid.MustParse("3a92e387-4b7d-4098-b273-967d48f6925f")})
 	require.Error(t, err, "[]uuid.UUID should fail without driver.Valuer")
 	require.Contains(t, err.Error(), castErrMsg)
+}
+
+func TestDriverValuerNilPointer(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE valuer_nil (v VARCHAR, j JSON)`)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// database/sql binds a nil pointer to a value-receiver Valuer as NULL before the driver sees it.
+	// Callers of the driver statement must get the same result instead of a panic.
+	err := conn.Raw(func(driverConn any) error {
+		s, innerErr := driverConn.(*Conn).PrepareContext(context.Background(), `INSERT INTO valuer_nil VALUES (?, ?)`)
+		require.NoError(t, innerErr)
+
+		var list *testUUIDList
+		_, innerErr = s.(*Stmt).ExecContext(context.Background(), []driver.NamedValue{
+			{Ordinal: 1, Value: list},
+			{Ordinal: 2, Value: list},
+		})
+		require.NoError(t, innerErr)
+		return s.Close()
+	})
+	require.NoError(t, err)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM valuer_nil WHERE v IS NULL AND j IS NULL`).Scan(&count))
+	require.Equal(t, 1, count)
 }
 
 func TestMixedTypeSliceBinding(t *testing.T) {
