@@ -612,7 +612,7 @@ func (s *Stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driv
 	var res *mapping.Result
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
 		var executeErr error
-		res, executeErr = s.execute(wctx, nargs)
+		res, executeErr = s.execute(wctx, nargs, false)
 		return executeErr
 	}); err != nil {
 		return nil, err
@@ -710,7 +710,7 @@ func (s *Stmt) ExecBound(ctx context.Context) (driver.Result, error) {
 	var res *mapping.Result
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
 		var executeBoundErr error
-		res, executeBoundErr = s.executeBound(wctx)
+		res, executeBoundErr = s.executeBound(wctx, false)
 		return executeBoundErr
 	}); err != nil {
 		return nil, err
@@ -740,7 +740,7 @@ func (s *Stmt) QueryContext(ctx context.Context, nargs []driver.NamedValue) (dri
 	var res *mapping.Result
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
 		var executeErr error
-		res, executeErr = s.execute(wctx, nargs)
+		res, executeErr = s.execute(wctx, nargs, streamingResults(ctx))
 		return executeErr
 	}); err != nil {
 		return nil, err
@@ -769,7 +769,7 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 	var res *mapping.Result
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
 		var executeBoundErr error
-		res, executeBoundErr = s.executeBound(wctx)
+		res, executeBoundErr = s.executeBound(wctx, streamingResults(ctx))
 		return executeBoundErr
 	}); err != nil {
 		return nil, err
@@ -781,7 +781,10 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 
 // This method executes the query in steps and checks if context is cancelled before executing each step.
 // It uses Pending Result Interface C APIs to achieve this. Reference - https://duckdb.org/docs/api/c/api#pending-result-interface
-func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.Result, error) {
+// streaming selects a streaming result: rows are produced as they are fetched instead of the
+// whole result being materialised first. Only a query run under WithStreamingResults streams;
+// Exec never does, because it reads the changed-row count from a complete result.
+func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue, streaming bool) (*mapping.Result, error) {
 	if s.closed {
 		panic("database/sql/driver: misuse of duckdb driver: ExecContext or QueryContext after Close")
 	}
@@ -796,7 +799,7 @@ func (s *Stmt) execute(ctx context.Context, args []driver.NamedValue) (*mapping.
 		return nil, err
 	}
 
-	return s.executeBound(ctx)
+	return s.executeBound(ctx, streaming)
 }
 
 // interruptRoutine sends at most one interrupt when ctx is canceled before
@@ -816,10 +819,14 @@ func interruptRoutine(mainDoneCh, bgDoneCh *chan struct{}, ctx context.Context, 
 	close(*bgDoneCh)
 }
 
-func (s *Stmt) executeBound(ctx context.Context) (*mapping.Result, error) {
+func (s *Stmt) executeBound(ctx context.Context, streaming bool) (*mapping.Result, error) {
 	var pendingRes mapping.PendingResult
+	pending := mapping.PendingPrepared
+	if streaming {
+		pending = mapping.PendingPreparedStreaming
+	}
 	// Phase 1: create pending result
-	if mapping.PendingPrepared(*s.preparedStmt, &pendingRes) == mapping.StateError {
+	if pending(*s.preparedStmt, &pendingRes) == mapping.StateError {
 		dbErr := getDuckDBError(mapping.PendingError(pendingRes))
 		mapping.DestroyPending(&pendingRes)
 		return nil, dbErr

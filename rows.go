@@ -64,6 +64,12 @@ func (r *rows) Next(dst []driver.Value) error {
 		}
 		chunk := mapping.FetchChunk(r.res)
 		if chunk.Ptr == nil {
+			// A streaming result runs the query as it is fetched, so a failure part-way
+			// through surfaces here, not at execution. Without this check it would read as
+			// the end of the rows and silently truncate the result.
+			if msg := mapping.ResultError(&r.res); msg != "" {
+				return getDuckDBError(msg)
+			}
 			return io.EOF
 		}
 		r.closeChunk = true

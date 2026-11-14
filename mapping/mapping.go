@@ -471,6 +471,7 @@ var (
 
 var (
 	PendingPrepared            = bindings.PendingPrepared
+	PendingPreparedStreaming   = bindings.PendingPreparedStreaming
 	DestroyPending             = bindings.DestroyPending
 	PendingError               = bindings.PendingError
 	PendingExecuteTask         = bindings.PendingExecuteTask
