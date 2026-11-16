@@ -705,6 +705,58 @@ func TestAppenderNullIntAndString(t *testing.T) {
 	}
 }
 
+func TestAppenderRowAfterFailedRow(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
+	CREATE TABLE test (
+		i INT,
+		s VARCHAR,
+		st STRUCT(a INT, b INT),
+		arr STRUCT(x INT)[2],
+		u UNION(num INT, str VARCHAR),
+		l INT[],
+		m MAP(VARCHAR, INT),
+		last INT
+	)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	st := map[string]any{"a": int32(1), "b": int32(2)}
+	arr := []any{map[string]any{"x": int32(3)}, map[string]any{"x": int32(4)}}
+	l := []any{int32(5), int32(6)}
+	m := Map{"k": int32(7)}
+
+	// A row buffered before the failures must survive them.
+	require.NoError(t, a.AppendRow(int32(0), "w", st, arr, Union{Tag: "num", Value: int32(0)}, l, m, int32(0)))
+
+	// Each row writes NULLs into the slot that the next row reuses, then fails:
+	// in top-level columns, the UNION, and LIST and MAP children, failing in the
+	// last column; in a STRUCT field; and in a STRUCT inside an ARRAY.
+	require.Error(t, a.AppendRow(nil, nil, nil, nil, Union{Tag: "num", Value: int32(1)},
+		[]any{nil}, Map{"k": nil}, "bad"))
+	require.Error(t, a.AppendRow(int32(1), "x", map[string]any{"a": nil, "b": "bad"}, arr, nil, l, m, int32(8)))
+	require.Error(t, a.AppendRow(int32(1), "x", st, []any{map[string]any{"x": nil}, map[string]any{"x": "bad"}},
+		nil, l, m, int32(8)))
+
+	// The retried row reuses the failed rows' slot.
+	require.NoError(t, a.AppendRow(int32(1), "x", st, arr, Union{Tag: "str", Value: "y"}, l, m, int32(8)))
+	require.NoError(t, a.Flush())
+
+	res, err := db.Query(`SELECT row(i, s, st, arr, u, l, m, last)::VARCHAR FROM test ORDER BY i`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var got []string
+	for res.Next() {
+		var row string
+		require.NoError(t, res.Scan(&row))
+		got = append(got, row)
+	}
+	require.NoError(t, res.Err())
+	require.Equal(t, []string{
+		"(0, w, {'a': 1, 'b': 2}, [{'x': 3}, {'x': 4}], 0, [5, 6], {k=7}, 0)",
+		"(1, x, {'a': 1, 'b': 2}, [{'x': 3}, {'x': 4}], y, [5, 6], {k=7}, 8)",
+	}, got)
+}
+
 func TestAppenderUUID(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id UUID)`)
 	defer cleanupAppender(t, c, db, conn, a)

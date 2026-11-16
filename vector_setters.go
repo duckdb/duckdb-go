@@ -33,12 +33,36 @@ func isNullInput[S any](val S) bool {
 	return false
 }
 
+// clearRowNulls marks the row valid, including the STRUCT, UNION, and ARRAY
+// children that store their values in the row's slots. Non-NULL writes do not
+// set validity, so a row slot that is written again must be cleared first.
+func (vec *vector) clearRowNulls(rowIdx mapping.IdxT) {
+	vec.clearNull(rowIdx)
+	switch vec.Type {
+	case TYPE_STRUCT, TYPE_UNION:
+		for i := range vec.childVectors {
+			vec.childVectors[i].clearRowNulls(rowIdx)
+		}
+	case TYPE_ARRAY:
+		for i := range vec.arrayLength {
+			vec.childVectors[0].clearRowNulls(rowIdx*vec.arrayLength + i)
+		}
+	}
+}
+
 func (vec *vector) setNull(rowIdx mapping.IdxT) {
 	mapping.ValiditySetRowInvalid(vec.maskPtr, rowIdx)
 	if vec.Type == TYPE_STRUCT || vec.Type == TYPE_UNION {
 		for i := range vec.childVectors {
 			vec.childVectors[i].setNull(rowIdx)
 		}
+	}
+}
+
+// clearNull marks the row valid if an earlier write left it NULL.
+func (vec *vector) clearNull(rowIdx mapping.IdxT) {
+	if vec.getNull(rowIdx) {
+		mapping.ValiditySetRowValid(vec.maskPtr, rowIdx)
 	}
 }
 
