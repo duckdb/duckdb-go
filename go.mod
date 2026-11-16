@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/apache/arrow-go/v18 v18.5.2
-	github.com/duckdb/duckdb-go-bindings v0.20000.0
+	github.com/duckdb/duckdb-go-bindings v0.20000.1-0.20261110174022-faa21b4c6cad
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.12.1
