@@ -916,6 +916,10 @@ func TestBindUUID(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO uuid_test VALUES (?, ?)`, 4, ptrToUUID)
 	require.NoError(t, err)
 
+	// Test 5: Insert a NULL UUID using (*UUID)(nil), whose pointer-receiver Value database/sql calls.
+	_, err = db.Exec(`INSERT INTO uuid_test VALUES (?, ?)`, 5, (*UUID)(nil))
+	require.NoError(t, err)
+
 	// Verify results by scanning back
 	r, err := db.Query(`SELECT id, uuid_col FROM uuid_test ORDER BY id`)
 	require.NoError(t, err)
@@ -929,6 +933,7 @@ func TestBindUUID(t *testing.T) {
 		{2, nil},
 		{3, &u3},
 		{4, &u4},
+		{5, nil},
 	}
 
 	resultIndex := 0
@@ -949,13 +954,13 @@ func TestBindUUID(t *testing.T) {
 		}
 		resultIndex++
 	}
-	require.Equal(t, 4, resultIndex, "incorrect count of results")
+	require.Equal(t, 5, resultIndex, "incorrect count of results")
 
 	// Verify NULL count
 	var nullCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM uuid_test WHERE uuid_col IS NULL`).Scan(&nullCount)
 	require.NoError(t, err)
-	require.Equal(t, 2, nullCount, "incorrect count of NULLs")
+	require.Equal(t, 3, nullCount, "incorrect count of NULLs")
 }
 
 // Define a custom type that shadows the string type
