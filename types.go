@@ -94,8 +94,11 @@ func (u *UUID) String() string {
 	return string(buf)
 }
 
-// Value implements the driver.Valuer interface.
+// Value implements the driver.Valuer interface. A nil *UUID is NULL.
 func (u *UUID) Value() (driver.Value, error) {
+	if u == nil {
+		return nil, nil
+	}
 	return u.String(), nil
 }
 
