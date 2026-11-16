@@ -1261,6 +1261,32 @@ func TestAppenderBlob(t *testing.T) {
 	require.Equal(t, 2, i)
 }
 
+func TestAppenderInvalidUTF8(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (s VARCHAR, l VARCHAR[], b BLOB)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// DuckDB would store each invalid VARCHAR as NULL.
+	require.ErrorIs(t, a.AppendRow("\xff", []string{"ok"}, []byte{0xff}), errInvalidUTF8)
+	require.ErrorIs(t, a.AppendRow([]byte("caf\xc3"), []string{"ok"}, []byte{0xff}), errInvalidUTF8)
+	require.ErrorIs(t, a.AppendRow("ok", []string{"ok", "\xa9"}, []byte{0xff}), errInvalidUTF8)
+
+	// The rejected rows leave no NULL behind, and BLOB bytes are not checked.
+	require.NoError(t, a.AppendRow("café", []string{"ok", "é"}, []byte{0xff}))
+	require.NoError(t, a.Flush())
+
+	var s string
+	var l []any
+	var b []byte
+	require.NoError(t, db.QueryRow(`SELECT s, l, b FROM test`).Scan(&s, &l, &b))
+	require.Equal(t, "café", s)
+	require.Equal(t, []any{"ok", "é"}, l)
+	require.Equal(t, []byte{0xff}, b)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM test`).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
 func TestAppenderBlobTinyInt(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (

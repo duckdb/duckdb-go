@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"reflect"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -259,16 +260,44 @@ func setBignum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	var b []byte
 	switch v := any(val).(type) {
 	case string:
-		// Assign the string directly; converting it to []byte would copy it.
-		mapping.VectorAssignStringElement(vec.vec, rowIdx, v)
+		// Borrow the string's bytes; converting it to []byte would copy it.
+		b = unsafe.Slice(unsafe.StringData(v), len(v))
 	case []byte:
-		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, v)
+		b = v
 	default:
 		return castError(reflect.TypeOf(val).String(), reflect.String.String())
 	}
+	// DuckDB copies the bytes without validating them, so check VARCHAR
+	// (including JSON) here. BLOB and GEOMETRY hold arbitrary bytes.
+	if vec.Type == TYPE_VARCHAR && !validUTF8(b) {
+		return errInvalidUTF8
+	}
+	mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, b)
 	return nil
+}
+
+// utf8CgoCheckLength is the length from which validUTF8 uses DuckDB's check.
+// On amd64 it beats utf8.Valid on non-ASCII text from about this length
+// despite its cgo call; on arm64 it is somewhat slower. 256 keeps the worst
+// case small on both. Revisit when the minimum Go version rises, since newer
+// Go narrows the gap.
+const utf8CgoCheckLength = 256
+
+// validUTF8 reports whether b is valid UTF-8. utf8.Valid and DuckDB's check
+// accept the same inputs.
+func validUTF8(b []byte) bool {
+	if len(b) < utf8CgoCheckLength {
+		return utf8.Valid(b)
+	}
+	errData := mapping.ValidUtf8Check(b)
+	if errData.Ptr == nil {
+		return true
+	}
+	mapping.DestroyErrorData(&errData)
+	return false
 }
 
 func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {

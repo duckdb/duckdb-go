@@ -328,6 +328,7 @@ var (
 	ErrorDataErrorType = bindings.ErrorDataErrorType
 	ErrorDataMessage   = bindings.ErrorDataMessage
 	ErrorDataHasError  = bindings.ErrorDataHasError
+	ValidUtf8Check     = bindings.ValidUtf8Check
 )
 
 // Query execution.
@@ -630,6 +631,10 @@ var (
 	VectorReferenceValue         = bindings.VectorReferenceValue
 	VectorReferenceVector        = bindings.VectorReferenceVector
 )
+
+// UnsafeVectorAssignStringElementLen copies bytes into a string vector without
+// validating UTF-8.
+var UnsafeVectorAssignStringElementLen = bindings.UnsafeVectorAssignStringElementLen
 
 // Validity mask functions.
 

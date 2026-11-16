@@ -176,6 +176,7 @@ var (
 	errDecimalValueExceedsWidth = errors.New("the DECIMAL value has more digits than the width")
 	errInvalidArraySize         = errors.New("invalid ARRAY size")
 	errSetSQLNULLValue          = errors.New("cannot write to a NULL column")
+	errInvalidUTF8              = errors.New("VARCHAR value is not valid UTF-8")
 
 	errScalarUDFCreate          = errors.New("could not create scalar UDF")
 	errScalarUDFNoName          = fmt.Errorf("%w: missing name", errScalarUDFCreate)

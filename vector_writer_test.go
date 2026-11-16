@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -73,7 +74,7 @@ func TestVarcharVectorWriter(t *testing.T) {
 	require.Equal(t, "named string type", actual)
 }
 
-func TestVarcharVectorWriterPreservesInvalidUTF8AsNull(t *testing.T) {
+func TestVarcharVectorWriterRejectsInvalidUTF8(t *testing.T) {
 	state, _, output := newVectorWriterTestState(
 		t,
 		mustTypeInfo(t, TYPE_VARCHAR),
@@ -83,15 +84,16 @@ func TestVarcharVectorWriterPreservesInvalidUTF8AsNull(t *testing.T) {
 	writer, err := GetVectorWriter[string](state.GetResultVector())
 	require.NoError(t, err)
 
-	require.NoError(t, writer.Set(0, string([]byte{0xff})))
-	actual, err := output.GetValue(0, 0)
-	require.NoError(t, err)
-	require.Nil(t, actual)
-
 	require.NoError(t, writer.Set(0, "valid UTF-8"))
-	actual, err = output.GetValue(0, 0)
-	require.NoError(t, err)
-	require.Equal(t, "valid UTF-8", actual)
+
+	// A rejected value leaves the row unchanged, both below and above the
+	// length at which DuckDB's check takes over.
+	for _, invalid := range []string{"\xff", strings.Repeat("é", utf8CgoCheckLength) + "\xff"} {
+		require.ErrorIs(t, writer.Set(0, invalid), errInvalidUTF8)
+		actual, err := output.GetValue(0, 0)
+		require.NoError(t, err)
+		require.Equal(t, "valid UTF-8", actual)
+	}
 }
 
 func TestVectorWriterDefaultNullHandling(t *testing.T) {
