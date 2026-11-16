@@ -294,9 +294,43 @@ func (s *Stmt) bindTime(val driver.NamedValue, t Type, n int) (mapping.State, er
 	return state, nil
 }
 
-func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
-	switch v := val.Value.(type) {
+// driverValue returns v.Value() if v is a driver.Valuer, and reports whether it was one.
+// Like database/sql, it returns nil for a nil pointer whose Value method has a value receiver,
+// instead of panicking.
+func driverValue(v any) (any, bool, error) {
+	valuer, ok := v.(driver.Valuer)
+	if !ok {
+		return v, false, nil
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() &&
+		rv.Type().Elem().Implements(reflect.TypeFor[driver.Valuer]()) {
+		return nil, true, nil
+	}
+	value, err := valuer.Value()
+	return value, true, err
+}
+
+func (s *Stmt) paramIsJSON(n int) (bool, error) {
+	lt, err := s.paramLogicalType(n + 1)
+	defer mapping.DestroyLogicalType(&lt)
+	if err != nil {
+		return false, err
+	}
+	return mapping.LogicalTypeGetAlias(lt) == aliasJSON, nil
+}
+
+func (s *Stmt) bindJSON(val driver.Value, n int) (mapping.State, error) {
+	// CheckNamedValue accepts all slice kinds, so named byte slices such as
+	// json.RawMessage arrive without database/sql's conversion to []byte.
+	if rv := reflect.ValueOf(val); rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		val = rv.Bytes()
+	}
+	switch v := val.(type) {
 	case []byte:
+		// An empty string is never valid JSON, so bind a nil slice as NULL.
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), string(v), mapping.IdxT(len(v))), nil
 	case string:
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), v, mapping.IdxT(len(v))), nil
@@ -386,15 +420,12 @@ func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name strin
 
 func (s *Stmt) bindTypedValue(val TypedValue, n int) (mapping.State, error) {
 	value := val.value
-	// Unwrap driver.Valuer unless the caller already signalled NULL.
-	// Calling Value() on a typed-nil receiver can panic.
+	// Unwrap driver.Valuer unless the caller already signalled NULL,
+	// either with TYPE_SQLNULL or a nil value.
 	if val.typ != TYPE_SQLNULL && !isNil(value) {
-		if valuer, ok := value.(driver.Valuer); ok {
-			driverVal, err := valuer.Value()
-			if err != nil {
-				return mapping.StateError, addIndexToError(err, n+1)
-			}
-			value = driverVal
+		var err error
+		if value, _, err = driverValue(value); err != nil {
+			return mapping.StateError, addIndexToError(err, n+1)
 		}
 	}
 
@@ -444,31 +475,24 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
 	}
 
-	if t != TYPE_INVALID {
-		lt, e := s.paramLogicalType(n + 1)
-		defer mapping.DestroyLogicalType(&lt)
-		if e != nil {
-			return mapping.StateError, e
-		}
-		alias := mapping.LogicalTypeGetAlias(lt)
-		if alias == aliasJSON {
-			return s.bindJSON(val, n)
+	// JSON is an alias of VARCHAR, so only VARCHAR parameters need the logical type.
+	isJSON := false
+	if t == TYPE_VARCHAR {
+		if isJSON, err = s.paramIsJSON(n); err != nil {
+			return mapping.StateError, err
 		}
 	}
 
-	// Check for driver.Valuer interface first (takes precedence over type switching)
-	valueToBind := val.Value
-	isDriverValue := false
-	if valuer, ok := val.Value.(driver.Valuer); ok {
-		driverVal, err := valuer.Value()
-		if err != nil {
-			return mapping.StateError, addIndexToError(err, n+1)
-		}
-		valueToBind = driverVal
-		isDriverValue = true
+	// driver.Valuer takes precedence over type switching, including JSON.
+	value, isValuer, err := driverValue(val.Value)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	if isJSON {
+		return s.bindJSON(value, n)
 	}
 
-	switch v := valueToBind.(type) {
+	switch v := value.(type) {
 	case bool:
 		return mapping.BindBoolean(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case int8:
@@ -531,11 +555,11 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 	}
 
 	// For other types after driver.Valuer conversion, fall back to reflection-based binding
-	if isDriverValue {
+	if isValuer {
 		return s.tryBindComplexValue(driver.NamedValue{
 			Name:    val.Name,
 			Ordinal: val.Ordinal,
-			Value:   valueToBind,
+			Value:   value,
 		}, n)
 	}
 
