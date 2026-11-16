@@ -97,6 +97,19 @@ See also the [duckdb-go-bindings upgrade notes](https://github.com/duckdb/duckdb
 - **Custom static libraries (`duckdb_use_static_lib`):** DuckDB v2 removed the `bundle-library` target.
   Link a static extension loader and the v2 set of archives instead (see [Linking a Static Library](#linking-a-static-library)).
 
+> [!WARNING]
+> **Committing vendored dependencies to GitHub:** `go mod vendor` succeeds
+> and includes prebuilt DuckDB libraries for all supported platforms.
+> However, some individual archives now exceed GitHub's 100 MiB per-file limit,
+> so GitHub rejects pushes containing them.
+>
+> Building with `duckdb_use_lib` or `duckdb_use_static_lib` does not exclude
+> these archives from vendoring. Moving library downloads to `go.duckdb.org`
+> does not resolve this limitation.
+>
+> See [issue #223](https://github.com/duckdb/duckdb-go/issues/223) for discussion
+> of a packaging redesign.
+
 ### Behavior changes
 
 - `RowsAffected` of a `CREATE TABLE ... AS` statement returns the number of created rows instead of 0.
