@@ -197,7 +197,4 @@ jobs:
             $setting >> $env:GITHUB_ENV
           }
       - name: Run Lib Tests
-        run: make test.${{ matrix.link }}
-      - name: Run ARM64 Arrow Lib Tests
-        if: matrix.platform == 'windows-arm64'
         run: TAGS=duckdb_arrow make test.${{ matrix.link }}
