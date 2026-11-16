@@ -447,6 +447,11 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 	for i, val := range args {
 		err := a.chunk.SetValue(i, a.rowCount, val)
 		if err != nil {
+			// The next row reuses this slot, so clear the NULLs written by the
+			// columns this attempt reached.
+			for j := range a.chunk.columns[:i+1] {
+				a.chunk.columns[j].clearRowNulls(mapping.IdxT(a.rowCount))
+			}
 			return err
 		}
 	}
