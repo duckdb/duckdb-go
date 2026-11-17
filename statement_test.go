@@ -2011,6 +2011,28 @@ func TestBindCompositeNullElements(t *testing.T) {
 	}
 }
 
+func TestBindListElementTypeMismatch(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  string
+	}{
+		{name: "int32 into inferred VARCHAR[]", query: `SELECT list_contains(?, e) FROM (VALUES ('A')) t(e)`, arg: []any{int32(1)}, want: "cannot cast int32 to VARCHAR"},
+		{name: "string into INTEGER[]", query: `SELECT ?::INTEGER[]`, arg: []any{"a"}, want: "cannot cast string to INTEGER"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestBindInferredListNullElements(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
