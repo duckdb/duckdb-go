@@ -131,35 +131,44 @@ func createPrimitiveValue(t mapping.Type, v any) (mapping.Value, error) {
 	return checkCreatedValue(value)
 }
 
+// createAs returns a cast error when v is not the Go type that create expects.
+func createAs[T any](t mapping.Type, v any, create func(T) mapping.Value) (mapping.Value, error) {
+	vv, ok := v.(T)
+	if !ok {
+		return mapping.Value{}, castErrorForValue(v, typeName(t))
+	}
+	return create(vv), nil
+}
+
 //nolint:gocyclo
 func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 	switch t {
 	case TYPE_SQLNULL:
 		return mapping.CreateNullValue(), nil
 	case TYPE_BOOLEAN:
-		return mapping.CreateBool(v.(bool)), nil
+		return createAs(t, v, mapping.CreateBool)
 	case TYPE_TINYINT:
-		return mapping.CreateInt8(v.(int8)), nil
+		return createAs(t, v, mapping.CreateInt8)
 	case TYPE_SMALLINT:
-		return mapping.CreateInt16(v.(int16)), nil
+		return createAs(t, v, mapping.CreateInt16)
 	case TYPE_INTEGER:
-		return mapping.CreateInt32(v.(int32)), nil
+		return createAs(t, v, mapping.CreateInt32)
 	case TYPE_BIGINT:
-		return mapping.CreateInt64(v.(int64)), nil
+		return createAs(t, v, mapping.CreateInt64)
 	case TYPE_UTINYINT:
-		return mapping.CreateUInt8(v.(uint8)), nil
+		return createAs(t, v, mapping.CreateUInt8)
 	case TYPE_USMALLINT:
-		return mapping.CreateUInt16(v.(uint16)), nil
+		return createAs(t, v, mapping.CreateUInt16)
 	case TYPE_UINTEGER:
-		return mapping.CreateUInt32(v.(uint32)), nil
+		return createAs(t, v, mapping.CreateUInt32)
 	case TYPE_UBIGINT:
-		return mapping.CreateUInt64(v.(uint64)), nil
+		return createAs(t, v, mapping.CreateUInt64)
 	case TYPE_FLOAT:
-		return mapping.CreateFloat(v.(float32)), nil
+		return createAs(t, v, mapping.CreateFloat)
 	case TYPE_DOUBLE:
-		return mapping.CreateDouble(v.(float64)), nil
+		return createAs(t, v, mapping.CreateDouble)
 	case TYPE_VARCHAR:
-		return createVarchar(v.(string)), nil
+		return createAs(t, v, createVarchar)
 	case TYPE_TIMESTAMP:
 		vv, err := inferTimestamp(t, v)
 		if err != nil {
@@ -243,7 +252,10 @@ func createPrimitiveValueRaw(t mapping.Type, v any) (mapping.Value, error) {
 		uHugeInt := mapping.NewUHugeInt(lower, uint64(upper)^(1<<63))
 		return mapping.CreateUUID(uHugeInt), nil
 	case TYPE_BIT:
-		vv := v.(Bit)
+		vv, ok := v.(Bit)
+		if !ok {
+			return mapping.Value{}, castErrorForValue(v, typeName(t))
+		}
 		bit := mapping.NewBit(vv.Data)
 		defer mapping.DestroyBit(&bit)
 		return mapping.CreateBit(bit), nil
