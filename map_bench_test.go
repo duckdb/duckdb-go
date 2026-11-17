@@ -48,3 +48,59 @@ func BenchmarkMapScan(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkMapWrite measures one map written to a reusable DataChunk or bound
+// through a prepared statement. Input construction is outside the timed region.
+func BenchmarkMapWrite(b *testing.B) {
+	for _, path := range []string{"DataChunk", "Bind"} {
+		for _, inputType := range []string{"OrderedMap", "Map"} {
+			for _, size := range []int{1, 8, 1_000, 10_000} {
+				b.Run(fmt.Sprintf("%s/%s/%d", path, inputType, size), func(b *testing.B) {
+					var input any
+					if inputType == "OrderedMap" {
+						m := OrderedMap{keys: make([]any, size), values: make([]any, size)}
+						for i := range size {
+							m.keys[i], m.values[i] = int64(i), int64(i*3)
+						}
+						input = m
+					} else {
+						m := make(Map, size)
+						for i := range size {
+							m[int64(i)] = int64(i * 3)
+						}
+						input = m
+					}
+
+					var write func() error
+					if path == "DataChunk" {
+						info, err := NewMapInfo(mustTypeInfo(b, TYPE_BIGINT), mustTypeInfo(b, TYPE_BIGINT))
+						require.NoError(b, err)
+						chunk := newTestChunk(b, info.logicalType())
+						write = func() error {
+							chunk.reset(true)
+							return chunk.SetValue(0, 0, input)
+						}
+					} else {
+						db := openDbWrapper(b, ``)
+						defer closeDbWrapper(b, db)
+						stmt, err := db.Prepare(`SELECT ?::MAP(BIGINT, BIGINT)`)
+						require.NoError(b, err)
+						defer closePreparedWrapper(b, stmt)
+						write = func() error {
+							_, err := stmt.Exec(input)
+							return err
+						}
+					}
+
+					b.ReportAllocs()
+					b.ResetTimer()
+					for b.Loop() {
+						if err := write(); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		}
+	}
+}

@@ -523,6 +523,16 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 // Deprecated: Use OrderedMap instead to preserve key order.
 type Map map[any]any
 
+func orderedMapFromMap(m Map) OrderedMap {
+	om := OrderedMap{keys: make([]any, 0, len(m)), values: make([]any, 0, len(m))}
+	// Go maps already have unique keys, so repeated Set calls are unnecessary.
+	for key, value := range m {
+		om.keys = append(om.keys, key)
+		om.values = append(om.values, value)
+	}
+	return om
+}
+
 func (m *Map) Scan(v any) error {
 	data, ok := v.(OrderedMap)
 	if !ok {
@@ -692,14 +702,6 @@ func (om *OrderedMap) UnmarshalJSON(data []byte) error {
 	}
 	_, err = dec.Token() // closing '}'
 	return err
-}
-
-func mapKeysField() string {
-	return "key"
-}
-
-func mapValuesField() string {
-	return "value"
 }
 
 type Interval struct {
