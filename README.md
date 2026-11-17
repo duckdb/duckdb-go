@@ -497,28 +497,36 @@ If you want to use it, you can enable it by passing `-tags=duckdb_arrow` to `go 
 go build -tags="duckdb_arrow"
 ```
 
-You can obtain a new `Arrow` by passing a DuckDB connection to `NewArrowFromConn()`.
+You can obtain an `Arrow` from a `database/sql` connection using `sql.Conn.Raw()`.
 
 ```go
-c, err := duckdb.NewConnector("", nil)
-defer c.Close()
+db, err := sql.Open("duckdb", "")
+defer db.Close()
 
-conn, err := c.Connect(context.Background())
+conn, err := db.Conn(context.Background())
 defer conn.Close()
 
-// Obtain the Arrow from the connection.
-arrow, err := duckdb.NewArrowFromConn(conn)
+err = conn.Raw(func(driverConn any) error {
+  arrow, err := duckdb.NewArrowFromConn(driverConn.(*duckdb.Conn))
+  if err != nil {
+    return err
+  }
 
-rdr, err := arrow.QueryContext(context.Background(), "SELECT * FROM generate_series(1, 10)")
-defer rdr.Release()
+  rdr, err := arrow.QueryContext(context.Background(), "SELECT * FROM generate_series(1, 10)")
+  if err != nil {
+    return err
+  }
+  defer rdr.Release()
 
-for rdr.Next() {
-  // Process each record.
-}
+  for rdr.Next() {
+    // Process each record.
+  }
+  return rdr.Err()
+})
 ```
 
 > [!WARNING]  
-> Arrow connections are not safe for concurrent use, and do not benefit from `database/sql` connection pooling.
+> Keep the Arrow and its reader inside the [`sql.Conn.Raw`](https://pkg.go.dev/database/sql#Conn.Raw) callback, including reader iteration and release.
 
 ## DuckDB Extensions
 
