@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -1653,6 +1655,23 @@ func TestOrderedMapOperations(t *testing.T) {
 	m.Set("new", 55)
 	require.Equal(t, []any{"new"}, m.Keys())
 	require.Equal(t, []any{55}, m.Values())
+}
+
+func TestOrderedMapDeleteReleasesEntry(t *testing.T) {
+	type payload [1024]byte // Larger than Go's tiny-object allocation batches.
+	var m OrderedMap
+	key, value := func() (weak.Pointer[payload], weak.Pointer[payload]) {
+		k, v := new(payload), new(payload)
+		m.Set("keep", 11)
+		m.Set(k, v)
+		m.Delete(k)
+		return weak.Make(k), weak.Make(v)
+	}()
+
+	runtime.GC()
+	require.Nil(t, key.Value(), "deleted key is still reachable")
+	require.Nil(t, value.Value(), "deleted value is still reachable")
+	runtime.KeepAlive(m)
 }
 
 func TestOrderedMap(t *testing.T) {

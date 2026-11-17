@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -601,8 +602,8 @@ func (om *OrderedMap) Get(k any) (any, bool) {
 func (om *OrderedMap) Delete(k any) {
 	for i, key := range om.keys {
 		if key == k {
-			om.keys = append(om.keys[:i], om.keys[i+1:]...)
-			om.values = append(om.values[:i], om.values[i+1:]...)
+			om.keys = slices.Delete(om.keys, i, i+1)
+			om.values = slices.Delete(om.values, i, i+1)
 			return
 		}
 	}
