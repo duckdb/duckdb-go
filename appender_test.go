@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -703,6 +704,87 @@ func TestAppenderNullIntAndString(t *testing.T) {
 		}
 		i++
 	}
+}
+
+func TestAppenderNullableValues(t *testing.T) {
+	timestamp := time.Date(2026, 11, 17, 12, 34, 56, 123456000, time.UTC)
+	tests := []struct {
+		name, sqlType, want string
+		valid, invalid      driver.Value
+	}{
+		{"NullString", "VARCHAR", "nullable", sql.NullString{String: "nullable", Valid: true}, sql.NullString{String: "ignored"}},
+		{"NullInt64", "BIGINT", "1234567890123", sql.NullInt64{Int64: 1234567890123, Valid: true}, sql.NullInt64{Int64: 99}},
+		{"NullInt32", "INTEGER", "-12000", sql.NullInt32{Int32: -12000, Valid: true}, sql.NullInt32{Int32: 99}},
+		{"NullInt16", "SMALLINT", "1234", sql.NullInt16{Int16: 1234, Valid: true}, sql.NullInt16{Int16: 99}},
+		{"NullByte", "UTINYINT", "200", sql.NullByte{Byte: 200, Valid: true}, sql.NullByte{Byte: 99}},
+		{"NullFloat64", "DOUBLE", "-12.75", sql.NullFloat64{Float64: -12.75, Valid: true}, sql.NullFloat64{Float64: 99}},
+		{"NullBool", "BOOLEAN", "false", sql.NullBool{Bool: false, Valid: true}, sql.NullBool{Bool: true}},
+		{"NullTime", "TIMESTAMP", "2026-11-17 12:34:56.123456", sql.NullTime{Time: timestamp, Valid: true}, sql.NullTime{Time: timestamp}},
+		{"Null[string]", "VARCHAR", "generic", sql.Null[string]{V: "generic", Valid: true}, sql.Null[string]{V: "ignored"}},
+		{"Null[int64]", "BIGINT", "-5678", sql.Null[int64]{V: -5678, Valid: true}, sql.Null[int64]{V: 99}},
+		{"pointer", "VARCHAR", "pointer", &sql.NullString{String: "pointer", Valid: true}, (*sql.NullString)(nil)},
+		{"JSON", "JSON", `"nullable"`, sql.NullString{String: "nullable", Valid: true}, sql.NullString{String: "ignored"}},
+		{"Valuer before MarshalJSON", "JSON", `"valuer"`, appenderValuer{value: "valuer"}, appenderValuer{}},
+	}
+	for _, appenderType := range appenderTypes {
+		for _, tt := range tests {
+			t.Run(appenderType+"/"+tt.name, func(t *testing.T) {
+				c, db, conn, a := prepareAppender(t, appenderType,
+					`CREATE TABLE test (id INTEGER, value `+tt.sqlType+`)`)
+				defer cleanupAppender(t, c, db, conn, a)
+
+				for i, value := range []driver.Value{tt.valid, tt.invalid, tt.valid} {
+					require.NoError(t, a.AppendRow(i, value))
+				}
+				require.NoError(t, a.Flush())
+
+				rows, err := db.Query(`SELECT value::VARCHAR FROM test ORDER BY id`)
+				require.NoError(t, err)
+				defer closeRowsWrapper(t, rows)
+				var got []any
+				for rows.Next() {
+					var value any
+					require.NoError(t, rows.Scan(&value))
+					got = append(got, value)
+				}
+				require.NoError(t, rows.Err())
+				require.Equal(t, []any{tt.want, nil, tt.want}, got)
+			})
+		}
+	}
+}
+
+type appenderValuer struct {
+	value driver.Value
+	err   error
+}
+
+func (v appenderValuer) Value() (driver.Value, error) {
+	return v.value, v.err
+}
+
+func (appenderValuer) MarshalJSON() ([]byte, error) {
+	return []byte(`"marshaler"`), nil
+}
+
+func TestAppenderValuerError(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault,
+		`CREATE TABLE test (str VARCHAR, num BIGINT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	valuerErr := errors.New("cannot convert value")
+	err := a.AppendRow(nil, appenderValuer{value: int64(99), err: valuerErr})
+	require.ErrorIs(t, err, valuerErr)
+	require.ErrorContains(t, err, "at row 0, col 1")
+	require.NoError(t, a.AppendRow("recovered", appenderValuer{value: int64(42)}))
+	require.NoError(t, a.Flush())
+
+	var str string
+	var num, count int64
+	require.NoError(t, db.QueryRow(`SELECT str, num, count(*) OVER () FROM test`).Scan(&str, &num, &count))
+	require.Equal(t, "recovered", str)
+	require.Equal(t, int64(42), num)
+	require.Equal(t, int64(1), count)
 }
 
 func TestAppenderRowAfterFailedRow(t *testing.T) {

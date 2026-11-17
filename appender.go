@@ -370,6 +370,7 @@ func (a *Appender) CloseWithCancel(ctx context.Context) error {
 }
 
 // AppendRow loads a row of values into the appender. The values are provided as separate arguments.
+// It also accepts driver.Valuer implementations such as the database/sql nullable types.
 func (a *Appender) AppendRow(args ...driver.Value) error {
 	if a.closed {
 		return a.getError(errAppenderAppendAfterClose, nil)
@@ -445,7 +446,16 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 
 	// Set all values.
 	for i, val := range args {
-		err := a.chunk.SetValue(i, a.rowCount, val)
+		var err error
+		// Keep native UUIDs in their binary form instead of converting them to strings.
+		if _, ok := val.(*UUID); !ok {
+			val, _, err = driverValue(val)
+		}
+		if err != nil {
+			err = setValueError(i, a.rowCount, err)
+		} else {
+			err = a.chunk.SetValue(i, a.rowCount, val)
+		}
 		if err != nil {
 			// The next row reuses this slot, so clear the NULLs written by the
 			// columns this attempt reached.
