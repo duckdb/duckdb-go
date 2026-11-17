@@ -7,7 +7,10 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
+	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1695,6 +1698,104 @@ func TestOrderedMap(t *testing.T) {
 
 	require.Equal(t, orderedMap.Keys(), result.Keys())
 	require.Equal(t, orderedMap.Values(), result.Values())
+}
+
+func TestOrderedMapScan(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("converted keys retain last occurrence", func(t *testing.T) {
+		var m OrderedMap
+		err := db.QueryRow(`SELECT MAP(
+			['1'::JSON, '2'::JSON, 'null'::JSON, '1.0'::JSON, '"x"'::JSON, 'null '::JSON],
+			['first', 'middle', 'null1', 'last', 'string', 'null2'])`).Scan(&m)
+		require.NoError(t, err)
+		require.Equal(t, []any{float64(2), float64(1), "x", nil}, m.Keys())
+		require.Equal(t, []any{"middle", "last", "string", "null2"}, m.Values())
+	})
+
+	t.Run("NaN key survives", func(t *testing.T) {
+		var m OrderedMap
+		err := db.QueryRow(`SELECT MAP([2, 'nan'::DOUBLE, 1], ['two', 'nan', 'one'])`).Scan(&m)
+		require.NoError(t, err)
+		require.Equal(t, []any{"two", "nan", "one"}, m.Values())
+		keys := m.Keys()
+		require.Equal(t, float64(2), keys[0])
+		require.True(t, math.IsNaN(keys[1].(float64)))
+		require.Equal(t, float64(1), keys[2])
+	})
+
+	t.Run("nested values and row offsets", func(t *testing.T) {
+		rows, err := db.Query(`SELECT m FROM (VALUES
+			(1, MAP{'z': {'items': [3, NULL]}, 'a': {'items': [9]}}),
+			(2, MAP{}),
+			(3, NULL),
+			(4, MAP{'last': NULL, 'first': {'items': [7, 8]}})) t(id, m)
+			ORDER BY id`)
+		require.NoError(t, err)
+		defer closeRowsWrapper(t, rows)
+
+		expected := []any{
+			OrderedMap{
+				keys: []any{"z", "a"},
+				values: []any{
+					map[string]any{"items": []any{int32(3), nil}},
+					map[string]any{"items": []any{int32(9)}},
+				},
+			},
+			OrderedMap{},
+			nil,
+			OrderedMap{
+				keys:   []any{"last", "first"},
+				values: []any{nil, map[string]any{"items": []any{int32(7), int32(8)}}},
+			},
+		}
+		for _, want := range expected {
+			require.True(t, rows.Next())
+			var got any
+			require.NoError(t, rows.Scan(&got))
+			require.Equal(t, want, got)
+		}
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Err())
+	})
+}
+
+func TestOrderedMapScanReleasesDiscardedStorage(t *testing.T) {
+	// Isolate live-heap measurements from allocations made by other tests.
+	const childEnv = "DUCKDB_TEST_MAP_RETENTION"
+	if os.Getenv(childEnv) == "" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestOrderedMapScanReleasesDiscardedStorage$", "-test.v")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		t.Logf("%s", output)
+		return
+	}
+
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	// Scan into any to retain the driver's map directly. OrderedMap.Scan
+	// copies the slices and would hide retention of overwritten values.
+	var retained any
+	require.NoError(t, db.QueryRow(`SELECT MAP(['1'::JSON, '1.0'::JSON],
+		[repeat('x', 16777216), 'last'])`).Scan(&retained))
+	m := retained.(OrderedMap)
+	require.Equal(t, []any{float64(1)}, m.Keys())
+	require.Equal(t, []any{"last"}, m.Values())
+
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(retained)
+	delta := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	t.Logf("live Go heap delta: %d bytes", delta)
+	require.Less(t, delta, int64(8*1024*1024), "scanned map retains overwritten values")
 }
 
 func TestMap(t *testing.T) {

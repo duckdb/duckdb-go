@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 	"unsafe"
@@ -291,37 +292,86 @@ func (vec *vector) getStruct(rowIdx mapping.IdxT) (map[string]any, error) {
 	return m, nil
 }
 
+// Benchmarks favor linear search through 16 entries for BIGINT and VARCHAR keys.
+const mapScanLinearSearchLimit = 16
+
 func (vec *vector) getMap(rowIdx mapping.IdxT) (OrderedMap, error) {
-	list, err := vec.getList(rowIdx)
-	if err != nil {
-		return OrderedMap{}, err
+	entry := getPrimitive[mapping.ListEntry](vec, rowIdx)
+	offset, length := mapping.ListEntryMembers(&entry)
+	if length == 0 {
+		return OrderedMap{}, nil
 	}
 
-	m := OrderedMap{}
-	for i := range list {
-		mapItem := list[i].(map[string]any)
-		key := mapItem[mapKeysField()]
-		val := mapItem[mapValuesField()]
+	// Read the key/value children directly, without materializing a Go STRUCT map
+	// for every entry. Keep the child getters for nested values and NULL handling.
+	children := vec.childVectors[0].childVectors
+	keys, values := &children[0], &children[1]
+	m := OrderedMap{keys: make([]any, length), values: make([]any, length)}
+	for i := range length {
+		idx := mapping.IdxT(offset + i)
+		key, err := keys.getFn(keys, idx)
+		if err != nil {
+			return OrderedMap{}, err
+		}
+		val, err := values.getFn(values, idx)
+		if err != nil {
+			return OrderedMap{}, err
+		}
+		m.keys[i], m.values[i] = key, val
+	}
+
+	// Match Set's last-occurrence ordering in linear time. Distinct DuckDB keys
+	// can compare equal after conversion (e.g. JSON 1 and 1.0 both become float64(1)).
+	// A short linear search avoids hashing overhead for small maps.
+	var seen map[any]struct{}
+	if length > mapScanLinearSearchLimit {
+		seen = make(map[any]struct{}, length)
+	}
+	start := len(m.keys)
+	for i, key := range slices.Backward(m.keys) {
 		if !comparableMapKey(key) {
 			// The column index is added by the callers of getFn, so adding it here
 			// would report it twice.
 			return OrderedMap{}, errUnsupportedMapKeyType
 		}
-		m.Set(key, val)
+		if seen != nil {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		} else if slices.Contains(m.keys[start:], key) {
+			continue
+		}
+		start--
+		m.keys[start], m.values[start] = key, m.values[i]
+	}
+	// Shrink like a dynamic array: once fewer than half the slots stay live,
+	// copy them into right-sized arrays, because a subslice would keep the
+	// whole backing array alive. Otherwise compact in place, which wastes at
+	// most 2x capacity, no more than append's growth slack. This runs once per
+	// scan, so the half threshold cannot thrash the way it could when inserts
+	// and deletes alternate, which is why dynamic arrays often wait for 1/4.
+	if start > len(m.keys)-start {
+		m.keys, m.values = slices.Clone(m.keys[start:]), slices.Clone(m.values[start:])
+	} else if start > 0 {
+		// Keep spare capacity usable for later inserts and release discarded references.
+		n := copy(m.keys, m.keys[start:])
+		copy(m.values, m.values[start:])
+		clear(m.keys[n:])
+		clear(m.values[n:])
+		m.keys, m.values = m.keys[:n], m.values[:n]
 	}
 	return m, nil
 }
 
-// comparableMapKey reports whether key can be compared with ==, which OrderedMap.Set
-// does via Delete. It asks the scanned value itself instead of the DuckDB type ID,
+// comparableMapKey reports whether key supports Go equality and hashing.
+// It asks the scanned value itself instead of the DuckDB type ID,
 // because the two do not map 1:1: UUID keys scan to []byte (hugeIntToUUID returns
 // val[:]), and JSON-aliased keys report TYPE_VARCHAR yet scan to whatever json.Unmarshal
 // produces, which is map[string]any for a JSON object.
 //
-// DuckDB rejects NULL map keys ("Map keys can not be NULL"), so key is never nil here.
-// The check stays because reflect.TypeOf(nil) returns nil, and calling Comparable on it
-// would trade one panic for another. A nil key is comparable: == on interface values
-// with different dynamic types compares the type descriptors and never reaches the data.
+// DuckDB rejects SQL NULL map keys, but JSON null scans to nil, which is comparable.
+// Handle it before calling Comparable, since reflect.TypeOf(nil) returns nil.
 func comparableMapKey(key any) bool {
 	if key == nil {
 		return true
