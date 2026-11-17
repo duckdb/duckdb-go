@@ -449,23 +449,28 @@ func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	case OrderedMap:
 		m = v
 	case Map:
-		m = OrderedMap{}
-		for key, value := range v {
-			m.Set(key, value)
-		}
+		m = orderedMapFromMap(v)
 	default:
 		return castError(reflect.TypeOf(val).String(), reflectTypeMap.String())
 	}
 
-	// Create a LIST of STRUCT values.
-	list := make([]any, m.Len())
-	keys := m.Keys()
-	vals := m.Values()
-	for i := range keys {
-		list[i] = map[string]any{mapKeysField(): keys[i], mapValuesField(): vals[i]}
-	}
+	// Reserve the MAP's LIST storage, then write its key/value children directly.
+	childVectorSize := mapping.ListVectorGetSize(vec.vec)
+	listEntry := mapping.NewListEntry(uint64(childVectorSize), uint64(m.Len()))
+	setPrimitive(vec, rowIdx, listEntry)
+	vec.resizeListVector(childVectorSize + mapping.IdxT(m.Len()))
 
-	return setList(vec, rowIdx, list)
+	children := vec.childVectors[0].childVectors
+	for i, key := range m.keys {
+		idx := childVectorSize + mapping.IdxT(i)
+		if err := setVectorVal(&children[0], idx, key); err != nil {
+			return err
+		}
+		if err := setVectorVal(&children[1], idx, m.values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setArray[S any](vec *vector, rowIdx mapping.IdxT, val S) error {

@@ -549,10 +549,7 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	case OrderedMap:
 		m = v
 	case Map:
-		m = OrderedMap{}
-		for key, value := range v {
-			m.Set(key, value)
-		}
+		m = orderedMapFromMap(v)
 	default:
 		return mapping.Value{}, castError(reflect.TypeOf(val).String(), reflectTypeMap.Name())
 	}
@@ -564,7 +561,7 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 
 	keys := make([]mapping.Value, m.Len())
 	defer destroyValueSlice(keys)
-	for i, k := range m.Keys() {
+	for i, k := range m.keys {
 		if isNil(k) {
 			return mapping.Value{}, errNullMapKey
 		}
@@ -577,7 +574,7 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 
 	values := make([]mapping.Value, m.Len())
 	defer destroyValueSlice(values)
-	for i, v := range m.Values() {
+	for i, v := range m.values {
 		vv, err := createValue(valueType, v)
 		if err != nil {
 			return mapping.Value{}, err
