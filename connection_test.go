@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func TestTransactions(t *testing.T) {
@@ -139,6 +141,30 @@ func TestMultiStatementParameters(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestWithNativeConnection(t *testing.T) {
+	connector, err := NewConnector(":memory:", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connector.Close()) })
+	owned, err := connector.Connect(context.Background())
+	require.NoError(t, err)
+	conn := owned.(*Conn)
+
+	want := errors.New("callback error")
+	err = WithNativeConnection(conn, func(handle mapping.Connection) error {
+		require.Equal(t, conn.id, extractConnId(handle))
+		return want
+	})
+	require.Same(t, want, err)
+	require.Error(t, WithNativeConnection(conn, nil))
+	require.NoError(t, conn.Close())
+	invalid := func(mapping.Connection) error {
+		t.Fatal("invalid connection reached callback")
+		return nil
+	}
+	require.ErrorIs(t, WithNativeConnection(conn, invalid), errClosedCon)
+	require.ErrorIs(t, WithNativeConnection(nil, invalid), errInvalidCon)
 }
 
 func TestGetTableNames(t *testing.T) {
