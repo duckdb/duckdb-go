@@ -775,7 +775,8 @@ func TestAppenderValuerError(t *testing.T) {
 	valuerErr := errors.New("cannot convert value")
 	err := a.AppendRow(nil, appenderValuer{value: int64(99), err: valuerErr})
 	require.ErrorIs(t, err, valuerErr)
-	require.ErrorContains(t, err, "at row 0, col 1")
+	require.ErrorContains(t, err, "at row 0, col 1:")
+	require.ErrorContains(t, err, `(column: "num")`)
 	require.NoError(t, a.AppendRow("recovered", appenderValuer{value: int64(42)}))
 	require.NoError(t, a.Flush())
 

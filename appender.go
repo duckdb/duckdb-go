@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -117,6 +118,17 @@ func newTableAppender(driverConn driver.Conn, catalog, schema, table string, col
 		}
 	}
 
+	var desc mapping.TableDescription
+	state = mapping.TableDescriptionCreateExt(a.conn.conn, catalog, schema, table, &desc)
+	defer mapping.TableDescriptionDestroy(&desc)
+	// Table descriptions include generated columns, but direct appenders skip them.
+	// Without a generated-column flag in the C API, only use names when indices align.
+	if state == mapping.StateSuccess && mapping.TableDescriptionGetColumnCount(desc) == columnCount {
+		for i := range uint64(columnCount) {
+			a.chunk.columnNames = append(a.chunk.columnNames, mapping.TableDescriptionGetColumnName(desc, mapping.IdxT(i)))
+		}
+	}
+
 	return a.initAppenderChunk()
 }
 
@@ -164,6 +176,7 @@ func (a *Appender) initTableColumns(columns []string) error {
 		destroyLogicalTypes(a.types)
 		return a.getError(errAppenderCreation, errors.New("duckdb: column count mismatch after activation"))
 	}
+	a.chunk.columnNames = slices.Clone(columns)
 	return nil
 }
 
@@ -209,6 +222,7 @@ func NewQueryAppender(driverConn driver.Conn, query, table string, colTypes []Ty
 		return nil, getError(errAppenderCreation, err)
 	}
 
+	a.chunk.columnNames = slices.Clone(colNames)
 	return a.initAppenderChunk()
 }
 
@@ -461,6 +475,13 @@ func (a *Appender) appendRowSlice(args []driver.Value) error {
 			// columns this attempt reached.
 			for j := range a.chunk.columns[:i+1] {
 				a.chunk.columns[j].clearRowNulls(mapping.IdxT(a.rowCount))
+			}
+			if inBounds(a.chunk.columnNames, i) {
+				return fmt.Errorf("%w (column: %q)", err, a.chunk.columnNames[i])
+			}
+			// Query appenders default to col1, col2, ... when names are not supplied.
+			if a.target == "" {
+				return fmt.Errorf("%w (column: \"col%d\")", err, i+1)
 			}
 			return err
 		}
