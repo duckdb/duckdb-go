@@ -150,6 +150,11 @@ func TestWithNativeConnection(t *testing.T) {
 	owned, err := connector.Connect(context.Background())
 	require.NoError(t, err)
 	conn := owned.(*Conn)
+	t.Cleanup(func() {
+		if !conn.closed {
+			require.NoError(t, conn.Close())
+		}
+	})
 
 	want := errors.New("callback error")
 	err = WithNativeConnection(conn, func(handle mapping.Connection) error {
@@ -165,6 +170,8 @@ func TestWithNativeConnection(t *testing.T) {
 	}
 	require.ErrorIs(t, WithNativeConnection(conn, invalid), errClosedCon)
 	require.ErrorIs(t, WithNativeConnection(nil, invalid), errInvalidCon)
+	require.ErrorIs(t, WithNativeConnection((*Conn)(nil), invalid), errInvalidCon)
+	require.ErrorIs(t, WithNativeConnection(&Conn{}, invalid), errInvalidCon)
 }
 
 func TestGetTableNames(t *testing.T) {

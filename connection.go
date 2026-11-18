@@ -49,7 +49,7 @@ func newConn(conn mapping.Connection, ctxStore *contextStore) *Conn {
 
 // WithNativeConnection calls fn with the underlying DuckDB connection and returns its error.
 // The caller must own driverConn exclusively, for example inside [sql.Conn.Raw].
-// The handle is borrowed until fn returns. Do not disconnect it, change transaction state,
+// The handle is borrowed until fn returns. Do not retain or disconnect it, change transaction state,
 // or invalidate objects owned by the driver. Changes to the session persist after fn returns.
 func WithNativeConnection(driverConn driver.Conn, fn func(mapping.Connection) error) error {
 	conn, ok := driverConn.(*Conn)
@@ -58,6 +58,9 @@ func WithNativeConnection(driverConn driver.Conn, fn func(mapping.Connection) er
 	}
 	if conn.closed {
 		return errClosedCon
+	}
+	if conn.conn.Ptr == nil {
+		return errInvalidCon
 	}
 	if fn == nil {
 		return errors.New("nil native connection callback")
