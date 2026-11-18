@@ -3,11 +3,82 @@ package duckdb
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTransactions(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	_, err := conn.ExecContext(ctx, `CREATE TABLE tx_test (value INTEGER)`)
+	require.NoError(t, err)
+
+	for _, commit := range []bool{true, false} {
+		tx, err := conn.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		_, err = tx.ExecContext(ctx, `INSERT INTO tx_test VALUES (42)`)
+		require.NoError(t, err)
+		var count int
+		require.NoError(t, tx.QueryRowContext(ctx, `SELECT count(*) FROM tx_test`).Scan(&count))
+		if commit {
+			require.Equal(t, 1, count)
+			require.NoError(t, tx.Commit())
+		} else {
+			require.Equal(t, 2, count)
+			require.NoError(t, tx.Rollback())
+		}
+		// Both completion paths must leave the same connection usable.
+		require.NoError(t, conn.QueryRowContext(ctx, `SELECT count(*) FROM tx_test`).Scan(&count))
+		require.Equal(t, 1, count)
+	}
+
+	// A second connection observes the committed row, but not the rolled-back row.
+	var values []int
+	rows, err := db.Query(`SELECT value FROM tx_test`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+	for rows.Next() {
+		var value int
+		require.NoError(t, rows.Scan(&value))
+		values = append(values, value)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []int{42}, values)
+}
+
+func TestTransactionOptions(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	for _, tt := range []struct {
+		name string
+		opts sql.TxOptions
+		err  string
+	}{
+		{"read only", sql.TxOptions{ReadOnly: true}, "read-only transactions are not supported"},
+		{"isolation", sql.TxOptions{Isolation: sql.LevelSerializable}, "isolation level not supported"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := conn.BeginTx(ctx, &tt.opts)
+			require.ErrorContains(t, err, tt.err)
+			require.Nil(t, tx)
+			// Rejected options must not leave an active transaction behind.
+			tx, err = conn.BeginTx(ctx, nil)
+			require.NoError(t, err)
+			require.NoError(t, tx.Rollback())
+		})
+	}
+}
 
 func TestMultiStatementParameters(t *testing.T) {
 	intermediateError := errParametersBeforeLastStmt.Error()
@@ -124,5 +195,194 @@ func TestGetTableNames(t *testing.T) {
 				assert.ElementsMatch(t, tt.expectedTables, tableNames)
 			}
 		})
+	}
+}
+
+// TestConnCloseInvalidatesStmts checks the driver.Conn contract:
+// Close invalidates the prepared statements of the connection.
+func TestConnCloseInvalidatesStmts(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	tests := []struct {
+		name    string
+		use     func(s *Stmt) error
+		wantErr error
+	}{
+		{
+			name: "ExecContext",
+			use: func(s *Stmt) error {
+				_, err := s.ExecContext(context.Background(), nil)
+				return err
+			},
+			wantErr: errClosedStmt,
+		},
+		{
+			name: "QueryContext",
+			use: func(s *Stmt) error {
+				_, err := s.QueryContext(context.Background(), nil)
+				return err
+			},
+			wantErr: errClosedStmt,
+		},
+		{
+			name: "ExecBound",
+			use: func(s *Stmt) error {
+				_, err := s.ExecBound(context.Background())
+				return err
+			},
+			wantErr: errClosedCon,
+		},
+		{
+			name: "QueryBound",
+			use: func(s *Stmt) error {
+				_, err := s.QueryBound(context.Background())
+				return err
+			},
+			wantErr: errClosedCon,
+		},
+		{
+			name:    "Bind",
+			use:     func(s *Stmt) error { return s.Bind(nil) },
+			wantErr: errClosedStmt,
+		},
+		{
+			name: "ColumnCount",
+			use: func(s *Stmt) error {
+				_, err := s.ColumnCount()
+				return err
+			},
+			wantErr: errClosedStmt,
+		},
+		{
+			name: "StatementType",
+			use: func(s *Stmt) error {
+				_, err := s.StatementType()
+				return err
+			},
+			wantErr: errClosedStmt,
+		},
+		{
+			name: "Close twice",
+			use: func(s *Stmt) error {
+				return errors.Join(s.Close(), s.Close())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			driverConn := openDriverConnWrapper(t, c)
+			conn := driverConn.(*Conn)
+			s, err := conn.PrepareContext(context.Background(), `SELECT 42`)
+			require.NoError(t, err)
+			stmt := s.(*Stmt)
+
+			require.NoError(t, conn.Close())
+			require.True(t, stmt.closed)
+			require.Empty(t, conn.stmts)
+			require.Equal(t, -1, stmt.NumInput())
+
+			err = tt.use(stmt)
+			if tt.wantErr == nil {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+// TestConnCloseStmtBookkeeping checks that the connection only keeps the statements that are still open.
+func TestConnCloseStmtBookkeeping(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	driverConn := openDriverConnWrapper(t, c)
+	conn := driverConn.(*Conn)
+
+	closed, err := conn.PrepareContext(context.Background(), `SELECT 1`)
+	require.NoError(t, err)
+	open, err := conn.PrepareContext(context.Background(), `SELECT 2`)
+	require.NoError(t, err)
+	require.Len(t, conn.stmts, 2)
+
+	// Statements used internally by ExecContext and QueryContext do not stay behind.
+	_, err = conn.ExecContext(context.Background(), `SELECT 3; SELECT 4`, nil)
+	require.NoError(t, err)
+	rows, err := conn.QueryContext(context.Background(), `SELECT 5`, nil)
+	require.NoError(t, err)
+	require.Len(t, conn.stmts, 3)
+	require.NoError(t, rows.Close())
+	require.Len(t, conn.stmts, 2)
+
+	// A statement closed by the caller is not destroyed again by Conn.Close.
+	require.NoError(t, closed.Close())
+	require.Len(t, conn.stmts, 1)
+	require.Contains(t, conn.stmts, open.(*Stmt))
+	require.Panics(t, func() { _ = closed.Close() })
+
+	require.NoError(t, conn.Close())
+	require.False(t, closed.(*Stmt).closedByConn)
+	require.True(t, open.(*Stmt).closedByConn)
+}
+
+// TestConnCloseWithActiveRows closes a connection while the rows of one of its statements are still open.
+func TestConnCloseWithActiveRows(t *testing.T) {
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	driverConn := openDriverConnWrapper(t, c)
+	conn := driverConn.(*Conn)
+
+	rows, err := conn.QueryContext(context.Background(), `SELECT range AS i FROM range(3)`, nil)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	// The result is still readable, and closing the rows (and with them the statement) is safe.
+	dest := make([]driver.Value, 1)
+	require.NoError(t, rows.Next(dest))
+	require.Equal(t, int64(0), dest[0])
+	require.NoError(t, rows.Close())
+}
+
+// TestConnCloseConcurrentStmtClose closes statements and their connection concurrently.
+// Each statement must be destroyed exactly once. Run with -race.
+func TestConnCloseConcurrentStmtClose(t *testing.T) {
+	const (
+		rounds   = 20
+		numStmts = 16
+	)
+
+	c := newConnectorWrapper(t, ``, nil)
+	defer closeConnectorWrapper(t, c)
+
+	for range rounds {
+		driverConn := openDriverConnWrapper(t, c)
+		conn := driverConn.(*Conn)
+
+		stmts := make([]driver.Stmt, numStmts)
+		for i := range stmts {
+			s, err := conn.PrepareContext(context.Background(), `SELECT 42`)
+			require.NoError(t, err)
+			stmts[i] = s
+		}
+
+		var wg sync.WaitGroup
+		errs := make([]error, numStmts)
+		for i, s := range stmts {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = s.Close()
+			}()
+		}
+		require.NoError(t, conn.Close())
+		wg.Wait()
+
+		for _, err := range errs {
+			require.NoError(t, err)
+		}
+		require.Empty(t, conn.stmts)
 	}
 }

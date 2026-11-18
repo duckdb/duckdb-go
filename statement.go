@@ -53,6 +53,8 @@ type Stmt struct {
 	bound            bool
 	closed           bool
 	rows             bool
+	// True, if Conn.Close destroyed the statement, else false.
+	closedByConn bool
 }
 
 // checkState checks if the statement is closed or uninitialized.
@@ -72,11 +74,20 @@ func (s *Stmt) Close() error {
 	if s.rows {
 		panic("database/sql/driver: misuse of duckdb driver: Close with active Rows")
 	}
+
+	s.conn.stmtsMu.Lock()
+	defer s.conn.stmtsMu.Unlock()
+
+	// Conn.Close already destroyed the statement.
+	if s.closedByConn {
+		return nil
+	}
 	if s.closed {
 		panic("database/sql/driver: misuse of duckdb driver: double Close of Stmt")
 	}
 
 	s.closed = true
+	delete(s.conn.stmts, s)
 	mapping.DestroyPrepare(s.preparedStmt)
 	return nil
 }
@@ -84,6 +95,11 @@ func (s *Stmt) Close() error {
 // NumInput returns the number of placeholder parameters.
 // Implements the driver.Stmt interface.
 func (s *Stmt) NumInput() int {
+	// The number of parameters is unknown after Conn.Close destroyed the statement.
+	// Executing the statement returns an error.
+	if s.closedByConn {
+		return -1
+	}
 	if s.closed {
 		panic("database/sql/driver: misuse of duckdb driver: NumInput after Close")
 	}
@@ -185,6 +201,14 @@ func (s *Stmt) bindUhugeint(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
+func (s *Stmt) bindDecimal(val Decimal, n int) (mapping.State, error) {
+	dec, err := decimalFromNative(val)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	return mapping.BindDecimal(*s.preparedStmt, mapping.IdxT(n+1), dec), nil
+}
+
 func (s *Stmt) bindBigNum(val *big.Int, n int) (mapping.State, error) {
 	bignum := bigNumFromNative(val)
 	defer mapping.DestroyBigNum(&bignum)
@@ -270,9 +294,43 @@ func (s *Stmt) bindTime(val driver.NamedValue, t Type, n int) (mapping.State, er
 	return state, nil
 }
 
-func (s *Stmt) bindJSON(val driver.NamedValue, n int) (mapping.State, error) {
-	switch v := val.Value.(type) {
+// driverValue returns v.Value() if v is a driver.Valuer, and reports whether it was one.
+// Like database/sql, it returns nil for a nil pointer whose Value method has a value receiver,
+// instead of panicking.
+func driverValue(v any) (any, bool, error) {
+	valuer, ok := v.(driver.Valuer)
+	if !ok {
+		return v, false, nil
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() &&
+		rv.Type().Elem().Implements(reflect.TypeFor[driver.Valuer]()) {
+		return nil, true, nil
+	}
+	value, err := valuer.Value()
+	return value, true, err
+}
+
+func (s *Stmt) paramIsJSON(n int) (bool, error) {
+	lt, err := s.paramLogicalType(n + 1)
+	defer mapping.DestroyLogicalType(&lt)
+	if err != nil {
+		return false, err
+	}
+	return mapping.LogicalTypeGetAlias(lt) == aliasJSON, nil
+}
+
+func (s *Stmt) bindJSON(val driver.Value, n int) (mapping.State, error) {
+	// CheckNamedValue accepts all slice kinds, so named byte slices such as
+	// json.RawMessage arrive without database/sql's conversion to []byte.
+	if rv := reflect.ValueOf(val); rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		val = rv.Bytes()
+	}
+	switch v := val.(type) {
 	case []byte:
+		// An empty string is never valid JSON, so bind a nil slice as NULL.
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), string(v), mapping.IdxT(len(v))), nil
 	case string:
 		return mapping.BindVarcharLength(*s.preparedStmt, mapping.IdxT(n+1), v, mapping.IdxT(len(v))), nil
@@ -362,15 +420,12 @@ func (s *Stmt) bindComplexValue(val driver.NamedValue, n int, t Type, name strin
 
 func (s *Stmt) bindTypedValue(val TypedValue, n int) (mapping.State, error) {
 	value := val.value
-	// Unwrap driver.Valuer unless the caller already signalled NULL.
-	// Calling Value() on a typed-nil receiver can panic.
+	// Unwrap driver.Valuer unless the caller already signalled NULL,
+	// either with TYPE_SQLNULL or a nil value.
 	if val.typ != TYPE_SQLNULL && !isNil(value) {
-		if valuer, ok := value.(driver.Valuer); ok {
-			driverVal, err := valuer.Value()
-			if err != nil {
-				return mapping.StateError, addIndexToError(err, n+1)
-			}
-			value = driverVal
+		var err error
+		if value, _, err = driverValue(value); err != nil {
+			return mapping.StateError, addIndexToError(err, n+1)
 		}
 	}
 
@@ -420,31 +475,24 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
 	}
 
-	if t != TYPE_INVALID {
-		lt, e := s.paramLogicalType(n + 1)
-		defer mapping.DestroyLogicalType(&lt)
-		if e != nil {
-			return mapping.StateError, e
-		}
-		alias := mapping.LogicalTypeGetAlias(lt)
-		if alias == aliasJSON {
-			return s.bindJSON(val, n)
+	// JSON is an alias of VARCHAR, so only VARCHAR parameters need the logical type.
+	isJSON := false
+	if t == TYPE_VARCHAR {
+		if isJSON, err = s.paramIsJSON(n); err != nil {
+			return mapping.StateError, err
 		}
 	}
 
-	// Check for driver.Valuer interface first (takes precedence over type switching)
-	valueToBind := val.Value
-	isDriverValue := false
-	if valuer, ok := val.Value.(driver.Valuer); ok {
-		driverVal, err := valuer.Value()
-		if err != nil {
-			return mapping.StateError, addIndexToError(err, n+1)
-		}
-		valueToBind = driverVal
-		isDriverValue = true
+	// driver.Valuer takes precedence over type switching, including JSON.
+	value, isValuer, err := driverValue(val.Value)
+	if err != nil {
+		return mapping.StateError, addIndexToError(err, n+1)
+	}
+	if isJSON {
+		return s.bindJSON(value, n)
 	}
 
-	switch v := valueToBind.(type) {
+	switch v := value.(type) {
 	case bool:
 		return mapping.BindBoolean(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case int8:
@@ -467,9 +515,12 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 		}
 		return s.bindBigNum(v, n)
 	case Decimal:
-		// FIXME: use NamedValueChecker to support this type.
-		name := typeToStringMap[TYPE_DECIMAL]
-		return mapping.StateError, addIndexToError(unsupportedTypeError(name), n+1)
+		return s.bindDecimal(v, n)
+	case *Decimal:
+		if v == nil {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindDecimal(*v, n)
 	case uint8:
 		return mapping.BindUInt8(*s.preparedStmt, mapping.IdxT(n+1), v), nil
 	case uint16:
@@ -504,11 +555,11 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 	}
 
 	// For other types after driver.Valuer conversion, fall back to reflection-based binding
-	if isDriverValue {
+	if isValuer {
 		return s.tryBindComplexValue(driver.NamedValue{
 			Name:    val.Name,
 			Ordinal: val.Ordinal,
-			Value:   valueToBind,
+			Value:   value,
 		}, n)
 	}
 
@@ -574,6 +625,11 @@ func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
 // ExecContext executes a query that doesn't return rows, such as an INSERT or UPDATE.
 // It implements the driver.StmtExecContext interface.
 func (s *Stmt) ExecContext(ctx context.Context, nargs []driver.NamedValue) (driver.Result, error) {
+	// Do not touch the closed connection.
+	if s.closedByConn {
+		return nil, errClosedStmt
+	}
+
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 
@@ -697,6 +753,11 @@ func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.StmtQueryContext interface.
 func (s *Stmt) QueryContext(ctx context.Context, nargs []driver.NamedValue) (driver.Rows, error) {
+	// Do not touch the closed connection.
+	if s.closedByConn {
+		return nil, errClosedStmt
+	}
+
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 

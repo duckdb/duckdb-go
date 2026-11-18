@@ -115,6 +115,9 @@ var errArrowScan = errors.New("could not register arrow view due to arrow scan A
 
 // RegisterView registers an Arrow record reader as a view with the given name in DuckDB.
 // The returned release function must be called to release the memory once the view is no longer needed.
+// DuckDB keeps pointers to the reader's buffers until then, so allocate them in C memory,
+// such as with arrow-go's mallocator package. Buffers from Go allocators violate the cgo
+// pointer rules, which is fatal under GOEXPERIMENT=cgocheck2.
 func (a *Arrow) RegisterView(reader array.RecordReader, name string) (release func(), err error) {
 	if a.conn.closed {
 		return nil, errClosedCon

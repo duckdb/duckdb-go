@@ -328,6 +328,7 @@ var (
 	ErrorDataErrorType = bindings.ErrorDataErrorType
 	ErrorDataMessage   = bindings.ErrorDataMessage
 	ErrorDataHasError  = bindings.ErrorDataHasError
+	ValidUtf8Check     = bindings.ValidUtf8Check
 )
 
 // Query execution.
@@ -632,6 +633,10 @@ var (
 	VectorReferenceVector        = bindings.VectorReferenceVector
 )
 
+// UnsafeVectorAssignStringElementLen copies bytes into a string vector without
+// validating UTF-8.
+var UnsafeVectorAssignStringElementLen = bindings.UnsafeVectorAssignStringElementLen
+
 // Validity mask functions.
 
 var (
@@ -815,4 +820,9 @@ var ValidityMaskValueIsValid = bindings.ValidityMaskValueIsValid
 
 // duckdb-go-bindings helper.
 
-var VerifyAllocationCounters = bindings.VerifyAllocationCounters
+var (
+	VerifyAllocationCounters = bindings.VerifyAllocationCounters
+	GetAllocationCount       = bindings.GetAllocationCount
+)
+
+const AllocationCounterPreparedStatement = bindings.AllocationCounterPreparedStatement

@@ -429,14 +429,14 @@ func (vec *vector) initMap(logicalType mapping.LogicalType, colIdx int) error {
 	}
 
 	// DuckDB supports more MAP key types than Go, which only supports comparable types.
-	// comparableMapKey in getMap is the guard: it asks the scanned value whether == is
-	// safe, so it covers every key type without this switch having to enumerate them.
+	// comparableMapKey in getMap checks whether the scanned value supports equality
+	// and hashing, without this switch having to enumerate every key type.
 	//
 	// TYPE_UNION cannot be left to that guard. getUnion returns a Union, a struct with a
 	// driver.Value field, and a struct type with interface fields is comparable by Go's
-	// rules, so reflect reports it as comparable. == still panics once the interface holds
-	// an uncomparable dynamic value, which MAP(UNION(b BLOB), ...) produces. Rejecting the
-	// type ID up front is the only place that case can be caught.
+	// rules, so reflect reports it as comparable. Comparing or hashing it still panics
+	// when the interface holds an uncomparable value, as in MAP(UNION(b BLOB), ...).
+	// Reject that type ID before scanning.
 	//
 	// The remaining IDs are redundant with comparableMapKey, but they fail before the first
 	// row is scanned and report the column index, so they stay as a fast path.

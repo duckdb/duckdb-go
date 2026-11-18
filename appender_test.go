@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -474,6 +475,14 @@ func TestAppenderArray(t *testing.T) {
 	require.Equal(t, 2*count, i)
 }
 
+func TestErrAppenderArrayLength(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (string_array VARCHAR[3])`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow([]string{"a", "b"})
+	require.ErrorContains(t, err, "invalid input: expected array of length 3, got array of length 2")
+}
+
 func TestAppenderNested(t *testing.T) {
 	for _, appenderType := range appenderTypes {
 		func() {
@@ -695,6 +704,139 @@ func TestAppenderNullIntAndString(t *testing.T) {
 		}
 		i++
 	}
+}
+
+func TestAppenderNullableValues(t *testing.T) {
+	timestamp := time.Date(2026, 11, 17, 12, 34, 56, 123456000, time.UTC)
+	tests := []struct {
+		name, sqlType, want string
+		valid, invalid      driver.Value
+	}{
+		{"NullString", "VARCHAR", "nullable", sql.NullString{String: "nullable", Valid: true}, sql.NullString{String: "ignored"}},
+		{"NullInt64", "BIGINT", "1234567890123", sql.NullInt64{Int64: 1234567890123, Valid: true}, sql.NullInt64{Int64: 99}},
+		{"NullInt32", "INTEGER", "-12000", sql.NullInt32{Int32: -12000, Valid: true}, sql.NullInt32{Int32: 99}},
+		{"NullInt16", "SMALLINT", "1234", sql.NullInt16{Int16: 1234, Valid: true}, sql.NullInt16{Int16: 99}},
+		{"NullByte", "UTINYINT", "200", sql.NullByte{Byte: 200, Valid: true}, sql.NullByte{Byte: 99}},
+		{"NullFloat64", "DOUBLE", "-12.75", sql.NullFloat64{Float64: -12.75, Valid: true}, sql.NullFloat64{Float64: 99}},
+		{"NullBool", "BOOLEAN", "false", sql.NullBool{Bool: false, Valid: true}, sql.NullBool{Bool: true}},
+		{"NullTime", "TIMESTAMP", "2026-11-17 12:34:56.123456", sql.NullTime{Time: timestamp, Valid: true}, sql.NullTime{Time: timestamp}},
+		{"Null[string]", "VARCHAR", "generic", sql.Null[string]{V: "generic", Valid: true}, sql.Null[string]{V: "ignored"}},
+		{"Null[int64]", "BIGINT", "-5678", sql.Null[int64]{V: -5678, Valid: true}, sql.Null[int64]{V: 99}},
+		{"pointer", "VARCHAR", "pointer", &sql.NullString{String: "pointer", Valid: true}, (*sql.NullString)(nil)},
+		{"JSON", "JSON", `"nullable"`, sql.NullString{String: "nullable", Valid: true}, sql.NullString{String: "ignored"}},
+		{"Valuer before MarshalJSON", "JSON", `"valuer"`, appenderValuer{value: "valuer"}, appenderValuer{}},
+	}
+	for _, appenderType := range appenderTypes {
+		for _, tt := range tests {
+			t.Run(appenderType+"/"+tt.name, func(t *testing.T) {
+				c, db, conn, a := prepareAppender(t, appenderType,
+					`CREATE TABLE test (id INTEGER, value `+tt.sqlType+`)`)
+				defer cleanupAppender(t, c, db, conn, a)
+
+				for i, value := range []driver.Value{tt.valid, tt.invalid, tt.valid} {
+					require.NoError(t, a.AppendRow(i, value))
+				}
+				require.NoError(t, a.Flush())
+
+				rows, err := db.Query(`SELECT value::VARCHAR FROM test ORDER BY id`)
+				require.NoError(t, err)
+				defer closeRowsWrapper(t, rows)
+				var got []any
+				for rows.Next() {
+					var value any
+					require.NoError(t, rows.Scan(&value))
+					got = append(got, value)
+				}
+				require.NoError(t, rows.Err())
+				require.Equal(t, []any{tt.want, nil, tt.want}, got)
+			})
+		}
+	}
+}
+
+type appenderValuer struct {
+	value driver.Value
+	err   error
+}
+
+func (v appenderValuer) Value() (driver.Value, error) {
+	return v.value, v.err
+}
+
+func (appenderValuer) MarshalJSON() ([]byte, error) {
+	return []byte(`"marshaler"`), nil
+}
+
+func TestAppenderValuerError(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault,
+		`CREATE TABLE test (str VARCHAR, num BIGINT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	valuerErr := errors.New("cannot convert value")
+	err := a.AppendRow(nil, appenderValuer{value: int64(99), err: valuerErr})
+	require.ErrorIs(t, err, valuerErr)
+	require.ErrorContains(t, err, "at row 0, col 1")
+	require.NoError(t, a.AppendRow("recovered", appenderValuer{value: int64(42)}))
+	require.NoError(t, a.Flush())
+
+	var str string
+	var num, count int64
+	require.NoError(t, db.QueryRow(`SELECT str, num, count(*) OVER () FROM test`).Scan(&str, &num, &count))
+	require.Equal(t, "recovered", str)
+	require.Equal(t, int64(42), num)
+	require.Equal(t, int64(1), count)
+}
+
+func TestAppenderRowAfterFailedRow(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
+	CREATE TABLE test (
+		i INT,
+		s VARCHAR,
+		st STRUCT(a INT, b INT),
+		arr STRUCT(x INT)[2],
+		u UNION(num INT, str VARCHAR),
+		l INT[],
+		m MAP(VARCHAR, INT),
+		last INT
+	)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	st := map[string]any{"a": int32(1), "b": int32(2)}
+	arr := []any{map[string]any{"x": int32(3)}, map[string]any{"x": int32(4)}}
+	l := []any{int32(5), int32(6)}
+	m := Map{"k": int32(7)}
+
+	// A row buffered before the failures must survive them.
+	require.NoError(t, a.AppendRow(int32(0), "w", st, arr, Union{Tag: "num", Value: int32(0)}, l, m, int32(0)))
+
+	// Each row writes NULLs into the slot that the next row reuses, then fails:
+	// in top-level columns, the UNION, and LIST and MAP children, failing in the
+	// last column; in a STRUCT field; and in a STRUCT inside an ARRAY.
+	require.Error(t, a.AppendRow(nil, nil, nil, nil, Union{Tag: "num", Value: int32(1)},
+		[]any{nil}, Map{"k": nil}, "bad"))
+	require.Error(t, a.AppendRow(int32(1), "x", map[string]any{"a": nil, "b": "bad"}, arr, nil, l, m, int32(8)))
+	require.Error(t, a.AppendRow(int32(1), "x", st, []any{map[string]any{"x": nil}, map[string]any{"x": "bad"}},
+		nil, l, m, int32(8)))
+
+	// The retried row reuses the failed rows' slot.
+	require.NoError(t, a.AppendRow(int32(1), "x", st, arr, Union{Tag: "str", Value: "y"}, l, m, int32(8)))
+	require.NoError(t, a.Flush())
+
+	res, err := db.Query(`SELECT row(i, s, st, arr, u, l, m, last)::VARCHAR FROM test ORDER BY i`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, res)
+
+	var got []string
+	for res.Next() {
+		var row string
+		require.NoError(t, res.Scan(&row))
+		got = append(got, row)
+	}
+	require.NoError(t, res.Err())
+	require.Equal(t, []string{
+		"(0, w, {'a': 1, 'b': 2}, [{'x': 3}, {'x': 4}], 0, [5, 6], {k=7}, 0)",
+		"(1, x, {'a': 1, 'b': 2}, [{'x': 3}, {'x': 4}], y, [5, 6], {k=7}, 8)",
+	}, got)
 }
 
 func TestAppenderUUID(t *testing.T) {
@@ -1201,6 +1343,32 @@ func TestAppenderBlob(t *testing.T) {
 	require.Equal(t, 2, i)
 }
 
+func TestAppenderInvalidUTF8(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (s VARCHAR, l VARCHAR[], b BLOB)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// DuckDB would store each invalid VARCHAR as NULL.
+	require.ErrorIs(t, a.AppendRow("\xff", []string{"ok"}, []byte{0xff}), errInvalidUTF8)
+	require.ErrorIs(t, a.AppendRow([]byte("caf\xc3"), []string{"ok"}, []byte{0xff}), errInvalidUTF8)
+	require.ErrorIs(t, a.AppendRow("ok", []string{"ok", "\xa9"}, []byte{0xff}), errInvalidUTF8)
+
+	// The rejected rows leave no NULL behind, and BLOB bytes are not checked.
+	require.NoError(t, a.AppendRow("café", []string{"ok", "é"}, []byte{0xff}))
+	require.NoError(t, a.Flush())
+
+	var s string
+	var l []any
+	var b []byte
+	require.NoError(t, db.QueryRow(`SELECT s, l, b FROM test`).Scan(&s, &l, &b))
+	require.Equal(t, "café", s)
+	require.Equal(t, []any{"ok", "é"}, l)
+	require.Equal(t, []byte{0xff}, b)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM test`).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
 func TestAppenderBlobTinyInt(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (
@@ -1569,6 +1737,7 @@ func TestAppenderUpsert(t *testing.T) {
 
 	// Now re-create and test "normally".
 	aInsert = newQueryAppenderWrapper(t, &conn, query, "", colTypes, []string{})
+	defer closeAppenderWrapper(t, aInsert)
 
 	// Append and insert (flush) two rows.
 	require.NoError(t, aInsert.AppendRow(0, Union{Value: "str1", Tag: "str"}))
@@ -1822,7 +1991,12 @@ func TestNewAppenderWithColumnsEmptyColumns(t *testing.T) {
 	defer func() { cleanupDb(t, c, db, conn) }()
 
 	_, err := NewAppenderWithColumns(conn, "", "", "test", []string{})
-	require.Error(t, err)
+	require.EqualError(t, err, `invalid input: expected non-empty array, got empty array (table: "test")`)
+
+	// Empty columns must still be rejected before validating the connection or target.
+	_, err = NewAppenderWithColumns(nil, "warehouse", "report.ing", `event"s`, nil)
+	require.EqualError(t, err, `invalid input: expected non-empty array, got empty array (catalog: "warehouse", schema: "report.ing", table: "event\"s")`)
+	require.NotErrorIs(t, err, errInvalidCon)
 }
 
 func TestNewAppenderWithColumnsDuplicateColumns(t *testing.T) {

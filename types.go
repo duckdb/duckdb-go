@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,8 +95,11 @@ func (u *UUID) String() string {
 	return string(buf)
 }
 
-// Value implements the driver.Valuer interface.
+// Value implements the driver.Valuer interface. A nil *UUID is NULL.
 func (u *UUID) Value() (driver.Value, error) {
+	if u == nil {
+		return nil, nil
+	}
 	return u.String(), nil
 }
 
@@ -340,6 +344,35 @@ func hugeIntFromNative(i *big.Int) (mapping.HugeInt, error) {
 	return mapping.NewHugeInt(r.Uint64(), q.Int64()), nil
 }
 
+func validateDecimalWidthScale(width, scale uint8) error {
+	if width < 1 || width > max_decimal_width {
+		return errInvalidDecimalWidth
+	}
+	if scale > width {
+		return errInvalidDecimalScale
+	}
+	return nil
+}
+
+func decimalFromNative(d Decimal) (mapping.Decimal, error) {
+	if err := validateDecimalWidthScale(d.Width, d.Scale); err != nil {
+		return mapping.Decimal{}, err
+	}
+	if d.Value == nil {
+		return mapping.Decimal{}, castError("nil Decimal.Value", "*big.Int")
+	}
+	// DuckDB does not validate this: depending on Width, a value with more digits aborts the
+	// process, is truncated, or is stored outside DECIMAL(Width, Scale).
+	if len(new(big.Int).Abs(d.Value).String()) > int(d.Width) {
+		return mapping.Decimal{}, errDecimalValueExceedsWidth
+	}
+	value, err := hugeIntFromNative(d.Value)
+	if err != nil {
+		return mapping.Decimal{}, err
+	}
+	return mapping.NewDecimal(d.Width, d.Scale, value), nil
+}
+
 func inferHugeInt(val any) (mapping.HugeInt, error) {
 	var err error
 	var hi mapping.HugeInt
@@ -490,6 +523,16 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 // Deprecated: Use OrderedMap instead to preserve key order.
 type Map map[any]any
 
+func orderedMapFromMap(m Map) OrderedMap {
+	om := OrderedMap{keys: make([]any, 0, len(m)), values: make([]any, 0, len(m))}
+	// Go maps already have unique keys, so repeated Set calls are unnecessary.
+	for key, value := range m {
+		om.keys = append(om.keys, key)
+		om.values = append(om.values, value)
+	}
+	return om
+}
+
 func (m *Map) Scan(v any) error {
 	data, ok := v.(OrderedMap)
 	if !ok {
@@ -569,8 +612,8 @@ func (om *OrderedMap) Get(k any) (any, bool) {
 func (om *OrderedMap) Delete(k any) {
 	for i, key := range om.keys {
 		if key == k {
-			om.keys = append(om.keys[:i], om.keys[i+1:]...)
-			om.values = append(om.values[:i], om.values[i+1:]...)
+			om.keys = slices.Delete(om.keys, i, i+1)
+			om.values = slices.Delete(om.values, i, i+1)
 			return
 		}
 	}
@@ -659,14 +702,6 @@ func (om *OrderedMap) UnmarshalJSON(data []byte) error {
 	}
 	_, err = dec.Token() // closing '}'
 	return err
-}
-
-func mapKeysField() string {
-	return "key"
-}
-
-func mapValuesField() string {
-	return "value"
 }
 
 type Interval struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory/mallocator"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,7 +146,10 @@ func TestArrow(t *testing.T) {
 			ar, err := NewArrowFromConn(innerConn)
 			require.NoError(t, err)
 
-			pool := memory.NewGoAllocator()
+			// DuckDB retains pointers to the exported buffers, so they must live in C memory.
+			pool := mallocator.NewMallocator()
+			defer pool.AssertSize(t, 0)
+
 			schema := arrow.NewSchema(
 				[]arrow.Field{
 					{Name: "f1_i32", Type: arrow.PrimitiveTypes.Int32},

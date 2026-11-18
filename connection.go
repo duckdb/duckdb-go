@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/big"
 	"reflect"
+	"sync"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -24,6 +25,17 @@ type Conn struct {
 	closed bool
 	// True, if the connection has an open transaction.
 	tx bool
+
+	// stmtsMu guards stmts and serializes statement destruction, so that
+	// Stmt.Close and Conn.Close never destroy the same statement twice.
+	// It does not make Conn or Stmt safe for concurrent use otherwise:
+	// all other state relies on database/sql serializing access per connection.
+	stmtsMu sync.Mutex
+	// The prepared statements of this connection that have not been closed yet.
+	// database/sql does not track statements prepared on a single connection
+	// (e.g., via sql.Conn.PrepareContext), so Close destroys them before
+	// disconnecting. Otherwise, their native handles would leak.
+	stmts map[*Stmt]struct{}
 }
 
 func newConn(conn mapping.Connection, ctxStore *contextStore) *Conn {
@@ -31,13 +43,14 @@ func newConn(conn mapping.Connection, ctxStore *contextStore) *Conn {
 		conn:     conn,
 		id:       extractConnId(conn),
 		ctxStore: ctxStore,
+		stmts:    make(map[*Stmt]struct{}),
 	}
 }
 
 // CheckNamedValue implements the driver.NamedValueChecker interface.
 func (conn *Conn) CheckNamedValue(nv *driver.NamedValue) error {
 	switch nv.Value.(type) {
-	case TypedValue, *TypedValue, *big.Int, Interval, Bit, *Bit, []any, []bool, []int8, []int16, []int32, []int64, []int, []uint8, []uint16,
+	case TypedValue, *TypedValue, *big.Int, Decimal, *Decimal, Interval, Bit, *Bit, []any, []bool, []int8, []int16, []int32, []int64, []int, []uint8, []uint16,
 		[]uint32, []uint64, []uint, []float32, []float64, []string, map[string]any, OrderedMap:
 		return nil
 	}
@@ -167,11 +180,15 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 
 // Close closes the connection to the database.
 // It implements the driver.Conn interface.
+// As required by driver.Conn, it invalidates all prepared statements of the connection
+// that are still open. Using such a statement afterward returns an error,
+// and closing it is a no-op.
 func (conn *Conn) Close() error {
 	if conn.closed {
 		return errClosedCon
 	}
 	conn.closed = true
+	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)
 
@@ -209,7 +226,30 @@ func (conn *Conn) prepareExtractedStmt(ctx context.Context, extractedStmts mappi
 		mapping.DestroyPrepare(&stmt)
 		return nil, err
 	}
-	return &Stmt{conn: conn, preparedStmt: &stmt}, nil
+	s := &Stmt{conn: conn, preparedStmt: &stmt}
+	conn.addStmt(s)
+	return s, nil
+}
+
+// addStmt records a prepared statement of the connection.
+func (conn *Conn) addStmt(s *Stmt) {
+	conn.stmtsMu.Lock()
+	defer conn.stmtsMu.Unlock()
+
+	conn.stmts[s] = struct{}{}
+}
+
+// closeStmts destroys all prepared statements of the connection that are still open.
+func (conn *Conn) closeStmts() {
+	conn.stmtsMu.Lock()
+	defer conn.stmtsMu.Unlock()
+
+	for s := range conn.stmts {
+		s.closed = true
+		s.closedByConn = true
+		mapping.DestroyPrepare(s.preparedStmt)
+	}
+	conn.stmts = nil
 }
 
 func (conn *Conn) prepareStmts(ctx context.Context, query string) (*Stmt, error) {

@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"fmt"
+	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -37,16 +38,20 @@ func (writer VectorWriter[T]) Len() int {
 	return writer.vector.logicalCount
 }
 
-// Set writes value at row. DuckDB copies valid values. Invalid UTF-8 can
-// produce SQL NULL.
+// Set writes value at row. DuckDB copies the value. Set returns an error if
+// value is not valid UTF-8 and leaves the row unchanged.
 func (writer VectorWriter[T]) Set(row int, value T) error {
 	if err := writer.checkRow(row); err != nil {
 		return getError(errAPI, err)
 	}
 
+	b := unsafe.Slice(unsafe.StringData(string(value)), len(value))
+	if !validUTF8(b) {
+		return getError(errAPI, errInvalidUTF8)
+	}
 	rowIdx := mapping.IdxT(row)
 	mapping.ValiditySetRowValidity(writer.vector.v.maskPtr, rowIdx, true)
-	mapping.VectorAssignStringElement(writer.vector.v.vec, rowIdx, string(value))
+	mapping.UnsafeVectorAssignStringElementLen(writer.vector.v.vec, rowIdx, b)
 	return nil
 }
 

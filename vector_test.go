@@ -3,6 +3,7 @@ package duckdb
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -541,6 +542,34 @@ func TestDataChunkGetValueReturnsJSONDecodeError(t *testing.T) {
 	require.ErrorIs(t, err, errAPI)
 	var syntaxErr *json.SyntaxError
 	require.ErrorAs(t, err, &syntaxErr)
+}
+
+func TestDataChunkMapScanRetainsLastOccurrence(t *testing.T) {
+	for _, size := range []int{5, 6, mapScanLinearSearchLimit, mapScanLinearSearchLimit + 1, 100} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			info, err := NewMapInfo(mustTypeInfo(t, TYPE_VARCHAR), mustTypeInfo(t, TYPE_INTEGER))
+			require.NoError(t, err)
+			chunk := newTestChunk(t, info.logicalType())
+
+			// DataChunk writes need not pass through DuckDB's unique-key validation.
+			// Exercise both small and large maps, with varying amounts of compaction.
+			input := OrderedMap{keys: make([]any, size), values: make([]any, size)}
+			for i := range size - 5 {
+				input.keys[i], input.values[i] = "c", int32(-i)
+			}
+			copy(input.keys[size-5:], []any{"b", "a", "c", "a", "b"})
+			copy(input.values[size-5:], []any{int32(1), int32(2), int32(3), int32(4), int32(5)})
+			require.NoError(t, SetChunkValue(chunk, 0, 0, input))
+			value, err := chunk.GetValue(0, 0)
+			require.NoError(t, err)
+			got := value.(OrderedMap)
+			require.Equal(t, []any{"c", "a", "b"}, got.Keys())
+			require.Equal(t, []any{int32(3), int32(4), int32(5)}, got.Values())
+			// Compaction keeps at most twice the retained entries' capacity.
+			require.LessOrEqual(t, cap(got.keys), 2*got.Len(), "oversized key array")
+			require.LessOrEqual(t, cap(got.values), 2*got.Len(), "oversized value array")
+		})
+	}
 }
 
 func TestRowsNextBubblesGetterErrors(t *testing.T) {

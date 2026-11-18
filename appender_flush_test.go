@@ -29,6 +29,9 @@ func prepareAutomaticFlushFailure(
 	for i := range rowCount {
 		if err := a.AppendRow(int32(i)); err != nil {
 			require.ErrorContains(t, err, "duplicate key")
+			if appenderType == appenderTypeDefault {
+				require.ErrorContains(t, err, `(table: "test")`)
+			}
 			appendErr = err
 		}
 	}

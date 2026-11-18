@@ -2,10 +2,11 @@ package duckdb
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"reflect"
-	"strconv"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -33,12 +34,36 @@ func isNullInput[S any](val S) bool {
 	return false
 }
 
+// clearRowNulls marks the row valid, including the STRUCT, UNION, and ARRAY
+// children that store their values in the row's slots. Non-NULL writes do not
+// set validity, so a row slot that is written again must be cleared first.
+func (vec *vector) clearRowNulls(rowIdx mapping.IdxT) {
+	vec.clearNull(rowIdx)
+	switch vec.Type {
+	case TYPE_STRUCT, TYPE_UNION:
+		for i := range vec.childVectors {
+			vec.childVectors[i].clearRowNulls(rowIdx)
+		}
+	case TYPE_ARRAY:
+		for i := range vec.arrayLength {
+			vec.childVectors[0].clearRowNulls(rowIdx*vec.arrayLength + i)
+		}
+	}
+}
+
 func (vec *vector) setNull(rowIdx mapping.IdxT) {
 	mapping.ValiditySetRowInvalid(vec.maskPtr, rowIdx)
 	if vec.Type == TYPE_STRUCT || vec.Type == TYPE_UNION {
 		for i := range vec.childVectors {
 			vec.childVectors[i].setNull(rowIdx)
 		}
+	}
+}
+
+// clearNull marks the row valid if an earlier write left it NULL.
+func (vec *vector) clearNull(rowIdx mapping.IdxT) {
+	if vec.getNull(rowIdx) {
+		mapping.ValiditySetRowValid(vec.maskPtr, rowIdx)
 	}
 }
 
@@ -235,16 +260,44 @@ func setBignum[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setBytes[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	var b []byte
 	switch v := any(val).(type) {
 	case string:
-		// Assign the string directly; converting it to []byte would copy it.
-		mapping.VectorAssignStringElement(vec.vec, rowIdx, v)
+		// Borrow the string's bytes; converting it to []byte would copy it.
+		b = unsafe.Slice(unsafe.StringData(v), len(v))
 	case []byte:
-		mapping.VectorAssignStringElementLen(vec.vec, rowIdx, v)
+		b = v
 	default:
 		return castError(reflect.TypeOf(val).String(), reflect.String.String())
 	}
+	// DuckDB copies the bytes without validating them, so check VARCHAR
+	// (including JSON) here. BLOB and GEOMETRY hold arbitrary bytes.
+	if vec.Type == TYPE_VARCHAR && !validUTF8(b) {
+		return errInvalidUTF8
+	}
+	mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, b)
 	return nil
+}
+
+// utf8CgoCheckLength is the length from which validUTF8 uses DuckDB's check.
+// On amd64 it beats utf8.Valid on non-ASCII text from about this length
+// despite its cgo call; on arm64 it is somewhat slower. 256 keeps the worst
+// case small on both. Revisit when the minimum Go version rises, since newer
+// Go narrows the gap.
+const utf8CgoCheckLength = 256
+
+// validUTF8 reports whether b is valid UTF-8. utf8.Valid and DuckDB's check
+// accept the same inputs.
+func validUTF8(b []byte) bool {
+	if len(b) < utf8CgoCheckLength {
+		return utf8.Valid(b)
+	}
+	errData := mapping.ValidUtf8Check(b)
+	if errData.Ptr == nil {
+		return true
+	}
+	mapping.DestroyErrorData(&errData)
+	return false
 }
 
 func setBit[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
@@ -396,23 +449,28 @@ func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	case OrderedMap:
 		m = v
 	case Map:
-		m = OrderedMap{}
-		for key, value := range v {
-			m.Set(key, value)
-		}
+		m = orderedMapFromMap(v)
 	default:
 		return castError(reflect.TypeOf(val).String(), reflectTypeMap.String())
 	}
 
-	// Create a LIST of STRUCT values.
-	list := make([]any, m.Len())
-	keys := m.Keys()
-	vals := m.Values()
-	for i := range keys {
-		list[i] = map[string]any{mapKeysField(): keys[i], mapValuesField(): vals[i]}
-	}
+	// Reserve the MAP's LIST storage, then write its key/value children directly.
+	childVectorSize := mapping.ListVectorGetSize(vec.vec)
+	listEntry := mapping.NewListEntry(uint64(childVectorSize), uint64(m.Len()))
+	setPrimitive(vec, rowIdx, listEntry)
+	vec.resizeListVector(childVectorSize + mapping.IdxT(m.Len()))
 
-	return setList(vec, rowIdx, list)
+	children := vec.childVectors[0].childVectors
+	for i, key := range m.keys {
+		idx := childVectorSize + mapping.IdxT(i)
+		if err := setVectorVal(&children[0], idx, key); err != nil {
+			return err
+		}
+		if err := setVectorVal(&children[1], idx, m.values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setArray[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
@@ -421,7 +479,7 @@ func setArray[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		return err
 	}
 	if len(array) != int(vec.arrayLength) {
-		return invalidInputError(strconv.Itoa(len(array)), strconv.Itoa(int(vec.arrayLength)))
+		return invalidInputError(fmt.Sprintf("array of length %d", len(array)), fmt.Sprintf("array of length %d", vec.arrayLength))
 	}
 	return setSliceChildren(vec, array, rowIdx*vec.arrayLength)
 }

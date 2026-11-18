@@ -7,11 +7,16 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
+	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -760,6 +765,66 @@ func TestBit(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, res)
 	})
+}
+
+func TestBitScan(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input any
+	}{
+		{"string", "1010101011"},
+		{"bytes", []byte("1010101011")},
+		{"Bit", Bit{Data: []byte{6, 0xFE, 0xAB}}},
+		{"pointer", &Bit{Data: []byte{6, 0xFE, 0xAB}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Bit{Data: []byte{0, 0}}
+			require.NoError(t, got.Scan(tt.input))
+			require.Equal(t, "1010101011", got.String())
+			// Scanning must copy caller-owned storage, not retain an alias.
+			switch input := tt.input.(type) {
+			case []byte:
+				input[0] = '0'
+			case Bit:
+				input.Data[2] = 0
+			case *Bit:
+				input.Data[2] = 0
+			}
+			require.Equal(t, "1010101011", got.String())
+		})
+	}
+
+	for _, input := range []any{nil, (*Bit)(nil)} {
+		got := Bit{Data: []byte{0, 0xAA}}
+		require.NoError(t, got.Scan(input))
+		require.Nil(t, got.Data, "NULL must clear a previously scanned value")
+	}
+
+	for _, tt := range []struct {
+		name  string
+		input any
+		err   string
+	}{
+		{"unsupported type", 42, "invalid Bit value type"},
+		{"empty string", "", "empty bit string"},
+		{"invalid string", "10102", "invalid character"},
+		{"invalid bytes", []byte("10102"), "invalid character"},
+		{"invalid Bit", Bit{Data: []byte{8, 0xAA}}, "invalid padding count"},
+		{"invalid pointer", &Bit{Data: []byte{6, 0x3E, 0xAB}}, "padding bits must be 1s"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Bit
+			require.ErrorContains(t, got.Scan(tt.input), tt.err)
+		})
+	}
+	var nilDestination *Bit
+	require.ErrorContains(t, nilDestination.Scan("1"), "invalid Bit destination")
+
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	got := Bit{Data: []byte{0, 0xAA}}
+	require.NoError(t, db.QueryRow(`SELECT NULL::BIT`).Scan(&got))
+	require.Nil(t, got.Data)
 }
 
 func TestBlob(t *testing.T) {
@@ -1535,6 +1600,83 @@ func TestBigNum(t *testing.T) {
 	})
 }
 
+func TestBigNumNestedBinding(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	// Nested parameters create DuckDB values instead of using scalar BindBigNum.
+	for _, text := range []string{"0", "340282366920938463463374607431768211457", "-680564733841876926926749214863536422919"} {
+		t.Run(text, func(t *testing.T) {
+			value, ok := new(big.Int).SetString(text, 10)
+			require.True(t, ok)
+			var got string
+			err := db.QueryRow(`SELECT (list_extract(?::BIGNUM[], 1))::VARCHAR`, []any{value}).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+			require.Equal(t, text, value.String(), "binding must not mutate the input")
+		})
+	}
+}
+
+func TestOrderedMapOperations(t *testing.T) {
+	var m OrderedMap
+	m.Set("first", 11)
+	m.Set("second", nil)
+	m.Set("third", 33)
+	m.Set("fourth", 44)
+
+	value, ok := m.Get("first")
+	require.True(t, ok)
+	require.Equal(t, 11, value)
+	value, ok = m.Get("second")
+	require.True(t, ok, "a nil value is distinct from a missing key")
+	require.Nil(t, value)
+	value, ok = m.Get("missing")
+	require.False(t, ok)
+	require.Nil(t, value)
+
+	m.Delete("second")
+	m.Delete("missing")
+	require.Equal(t, []any{"first", "third", "fourth"}, m.Keys())
+	require.Equal(t, []any{11, 33, 44}, m.Values())
+	_, ok = m.Get("second")
+	require.False(t, ok)
+
+	m.Set("third", 333)
+	require.Equal(t, []any{"first", "fourth", "third"}, m.Keys())
+	require.Equal(t, []any{11, 44, 333}, m.Values())
+	value, ok = m.Get("third")
+	require.True(t, ok)
+	require.Equal(t, 333, value)
+
+	for _, key := range []string{"first", "third", "fourth"} {
+		m.Delete(key)
+	}
+	require.Zero(t, m.Len())
+	require.Empty(t, m.Keys())
+	require.Empty(t, m.Values())
+	m.Delete("missing")
+	m.Set("new", 55)
+	require.Equal(t, []any{"new"}, m.Keys())
+	require.Equal(t, []any{55}, m.Values())
+}
+
+func TestOrderedMapDeleteReleasesEntry(t *testing.T) {
+	type payload [1024]byte // Larger than Go's tiny-object allocation batches.
+	var m OrderedMap
+	key, value := func() (weak.Pointer[payload], weak.Pointer[payload]) {
+		k, v := new(payload), new(payload)
+		m.Set("keep", 11)
+		m.Set(k, v)
+		m.Delete(k)
+		return weak.Make(k), weak.Make(v)
+	}()
+
+	runtime.GC()
+	require.Nil(t, key.Value(), "deleted key is still reachable")
+	require.Nil(t, value.Value(), "deleted value is still reachable")
+	runtime.KeepAlive(m)
+}
+
 func TestOrderedMap(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -1556,6 +1698,104 @@ func TestOrderedMap(t *testing.T) {
 
 	require.Equal(t, orderedMap.Keys(), result.Keys())
 	require.Equal(t, orderedMap.Values(), result.Values())
+}
+
+func TestOrderedMapScan(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	t.Run("converted keys retain last occurrence", func(t *testing.T) {
+		var m OrderedMap
+		err := db.QueryRow(`SELECT MAP(
+			['1'::JSON, '2'::JSON, 'null'::JSON, '1.0'::JSON, '"x"'::JSON, 'null '::JSON],
+			['first', 'middle', 'null1', 'last', 'string', 'null2'])`).Scan(&m)
+		require.NoError(t, err)
+		require.Equal(t, []any{float64(2), float64(1), "x", nil}, m.Keys())
+		require.Equal(t, []any{"middle", "last", "string", "null2"}, m.Values())
+	})
+
+	t.Run("NaN key survives", func(t *testing.T) {
+		var m OrderedMap
+		err := db.QueryRow(`SELECT MAP([2, 'nan'::DOUBLE, 1], ['two', 'nan', 'one'])`).Scan(&m)
+		require.NoError(t, err)
+		require.Equal(t, []any{"two", "nan", "one"}, m.Values())
+		keys := m.Keys()
+		require.Equal(t, float64(2), keys[0])
+		require.True(t, math.IsNaN(keys[1].(float64)))
+		require.Equal(t, float64(1), keys[2])
+	})
+
+	t.Run("nested values and row offsets", func(t *testing.T) {
+		rows, err := db.Query(`SELECT m FROM (VALUES
+			(1, MAP{'z': {'items': [3, NULL]}, 'a': {'items': [9]}}),
+			(2, MAP{}),
+			(3, NULL),
+			(4, MAP{'last': NULL, 'first': {'items': [7, 8]}})) t(id, m)
+			ORDER BY id`)
+		require.NoError(t, err)
+		defer closeRowsWrapper(t, rows)
+
+		expected := []any{
+			OrderedMap{
+				keys: []any{"z", "a"},
+				values: []any{
+					map[string]any{"items": []any{int32(3), nil}},
+					map[string]any{"items": []any{int32(9)}},
+				},
+			},
+			OrderedMap{},
+			nil,
+			OrderedMap{
+				keys:   []any{"last", "first"},
+				values: []any{nil, map[string]any{"items": []any{int32(7), int32(8)}}},
+			},
+		}
+		for _, want := range expected {
+			require.True(t, rows.Next())
+			var got any
+			require.NoError(t, rows.Scan(&got))
+			require.Equal(t, want, got)
+		}
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Err())
+	})
+}
+
+func TestOrderedMapScanReleasesDiscardedStorage(t *testing.T) {
+	// Isolate live-heap measurements from allocations made by other tests.
+	const childEnv = "DUCKDB_TEST_MAP_RETENTION"
+	if os.Getenv(childEnv) == "" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestOrderedMapScanReleasesDiscardedStorage$", "-test.v")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		t.Logf("%s", output)
+		return
+	}
+
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	// Scan into any to retain the driver's map directly. OrderedMap.Scan
+	// copies the slices and would hide retention of overwritten values.
+	var retained any
+	require.NoError(t, db.QueryRow(`SELECT MAP(['1'::JSON, '1.0'::JSON],
+		[repeat('x', 16777216), 'last'])`).Scan(&retained))
+	m := retained.(OrderedMap)
+	require.Equal(t, []any{float64(1)}, m.Keys())
+	require.Equal(t, []any{"last"}, m.Values())
+
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(retained)
+	delta := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	t.Logf("live Go heap delta: %d bytes", delta)
+	require.Less(t, delta, int64(8*1024*1024), "scanned map retains overwritten values")
 }
 
 func TestMap(t *testing.T) {

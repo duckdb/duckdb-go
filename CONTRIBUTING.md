@@ -21,6 +21,37 @@ Adhering to these guidelines is not a complete guarantee that your pull request 
 `duckdb-go` aims to contain tests that are fast, cover a significant portion of the code, 
 are comprehensible, and can serve as documentation.
 
+On Linux or macOS, run the tests against the libraries that the bindings pin
+for the current platform:
+
+```sh
+make test.dynamic
+make test.static
+```
+
+The targets run `scripts/test-dynamic.sh` and `scripts/test-static.sh`.
+To pass `go test` arguments, invoke either script directly, for example:
+
+```sh
+./scripts/test-dynamic.sh -run TestOpen -v
+```
+
+Do not pass `-tags` or `-ldflags`; they replace the scripts' library and linker settings.
+
+`test.dynamic` requires `curl`, `jq`, `tar`, and `sha256sum` or `shasum`.
+It downloads and verifies the shared library before running the tests, caching the archive
+in `dynamic-dir` for subsequent runs, including offline runs.
+`test.static` uses the native module's static libraries.
+
+#### Coverage
+
+Run `make check-coverage`, then open `cover.html` in a browser.
+For a terminal summary, run `go tool cover -func=cover.out`.
+
+CI reports are available in completed
+[Tidy Checks runs](https://github.com/duckdb/duckdb-go/actions/workflows/tidy_checks.yml):
+download the `Cover_html` artifact, extract the ZIP, and open `cover.html`.
+
 ### Go Guidelines
 
 duckdb-go uses [Effective Go](https://go.dev/doc/effective_go) and the 

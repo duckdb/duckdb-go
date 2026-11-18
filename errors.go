@@ -1,6 +1,7 @@
 package duckdb
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -167,13 +168,15 @@ var (
 	errAppenderColumnMismatch   = errors.New("mismatch between the column types and names")
 	errAppenderDuplicateColumn  = errors.New("duplicate column name")
 
-	errUnsupportedMapKeyType = errors.New("MAP key type not supported")
-	errNullMapKey            = errors.New("MAP keys cannot be NULL")
-	errEmptyName             = errors.New("empty name")
-	errInvalidDecimalWidth   = fmt.Errorf("the DECIMAL with must be between 1 and %d", max_decimal_width)
-	errInvalidDecimalScale   = errors.New("the DECIMAL scale must be less than or equal to the width")
-	errInvalidArraySize      = errors.New("invalid ARRAY size")
-	errSetSQLNULLValue       = errors.New("cannot write to a NULL column")
+	errUnsupportedMapKeyType    = errors.New("MAP key type not supported")
+	errNullMapKey               = errors.New("MAP keys cannot be NULL")
+	errEmptyName                = errors.New("empty name")
+	errInvalidDecimalWidth      = fmt.Errorf("the DECIMAL width must be between 1 and %d", max_decimal_width)
+	errInvalidDecimalScale      = errors.New("the DECIMAL scale must be less than or equal to the width")
+	errDecimalValueExceedsWidth = errors.New("the DECIMAL value has more digits than the width")
+	errInvalidArraySize         = errors.New("invalid ARRAY size")
+	errSetSQLNULLValue          = errors.New("cannot write to a NULL column")
+	errInvalidUTF8              = errors.New("VARCHAR value is not valid UTF-8")
 
 	errScalarUDFCreate          = errors.New("could not create scalar UDF")
 	errScalarUDFNoName          = fmt.Errorf("%w: missing name", errScalarUDFCreate)
@@ -250,6 +253,7 @@ var errorPrefixMap = map[string]ErrorType{
 	"Out of Range Error":           ErrorTypeOutOfRange,
 	"Conversion Error":             ErrorTypeConversion,
 	"Error":                        ErrorTypeUnknownType,
+	"Unknown Type Error":           ErrorTypeUnknownType,
 	"Decimal Error":                ErrorTypeDecimal,
 	"Mismatch Type Error":          ErrorTypeMismatchType,
 	"Divide by Zero Error":         ErrorTypeDivideByZero,
@@ -326,6 +330,18 @@ func getDuckDBError(errMsg string) error {
 	if prefix, _, ok := strings.Cut(errMsg, ": "); ok {
 		if typ, ok := errorPrefixMap[prefix]; ok {
 			errType = typ
+		}
+	}
+
+	// With errors_as_json, the type is in the exception_type field instead of a prefix.
+	if strings.HasPrefix(errMsg, "{") {
+		var jsonErr struct {
+			ExceptionType string `json:"exception_type"` //nolint:tagliatelle // DuckDB's field name.
+		}
+		if json.Unmarshal([]byte(errMsg), &jsonErr) == nil {
+			if typ, ok := errorPrefixMap[jsonErr.ExceptionType+" Error"]; ok {
+				errType = typ
+			}
 		}
 	}
 

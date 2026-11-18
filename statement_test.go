@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -717,6 +719,38 @@ func TestBindJSON(t *testing.T) {
 	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl WHERE j IS NULL`).Scan(&nilStr)
 	require.NoError(t, err)
 	require.Nil(t, nilStr)
+
+	// A map-kinded driver.Valuer bypasses database/sql's conversion, so the driver must call Value() itself.
+	_, err = db.Exec(`DELETE FROM tbl`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?)`, jsonMapValuer{"a": 1})
+	require.NoError(t, err)
+	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl`).Scan(&str)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"a": 1}`, str)
+
+	// Named byte slices are not converted to []byte by database/sql either.
+	_, err = db.Exec(`DELETE FROM tbl`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?)`, json.RawMessage(`{"b": 2}`))
+	require.NoError(t, err)
+	err = db.QueryRow(`SELECT j::VARCHAR FROM tbl`).Scan(&str)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"b": 2}`, str)
+
+	// A nil byte slice binds as NULL rather than as an empty, invalid JSON string.
+	_, err = db.Exec(`INSERT INTO tbl VALUES (?), (?)`, json.RawMessage(nil), []byte(nil))
+	require.NoError(t, err)
+	var nulls int
+	err = db.QueryRow(`SELECT count(*) FROM tbl WHERE j IS NULL`).Scan(&nulls)
+	require.NoError(t, err)
+	require.Equal(t, 2, nulls)
+}
+
+type jsonMapValuer map[string]int
+
+func (m jsonMapValuer) Value() (driver.Value, error) {
+	return json.Marshal(map[string]int(m))
 }
 
 func TestPrepareComplexQueryParameter(t *testing.T) {
@@ -831,6 +865,29 @@ func TestPrepareComplexQueryParameter(t *testing.T) {
 	require.Equal(t, [][]any{}, nestedEmptySliceRes.Get())
 }
 
+// Unlike uuid.UUID and *UUID, this array implements Stringer but not Valuer.
+type uuidStringer [16]byte
+
+func (u uuidStringer) String() string {
+	return uuid.UUID(u).String()
+}
+
+func TestBindUUIDStringer(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	for _, text := range []string{"123e4567-e89b-12d3-a456-426614174000", "923e4567-e89b-12d3-a456-426614174000"} {
+		t.Run(text, func(t *testing.T) {
+			var got string
+			err := db.QueryRow(`SELECT (?::UUID)::VARCHAR`, uuidStringer(uuid.MustParse(text))).Scan(&got)
+			require.NoError(t, err)
+			require.Equal(t, text, got)
+		})
+	}
+	// A non-Stringer array must not silently bind as a UUID.
+	_, err := db.Exec(`SELECT ?::UUID`, [16]byte{})
+	require.Error(t, err)
+}
+
 func TestBindUUID(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -859,6 +916,10 @@ func TestBindUUID(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO uuid_test VALUES (?, ?)`, 4, ptrToUUID)
 	require.NoError(t, err)
 
+	// Test 5: Insert a NULL UUID using (*UUID)(nil), whose pointer-receiver Value database/sql calls.
+	_, err = db.Exec(`INSERT INTO uuid_test VALUES (?, ?)`, 5, (*UUID)(nil))
+	require.NoError(t, err)
+
 	// Verify results by scanning back
 	r, err := db.Query(`SELECT id, uuid_col FROM uuid_test ORDER BY id`)
 	require.NoError(t, err)
@@ -872,6 +933,7 @@ func TestBindUUID(t *testing.T) {
 		{2, nil},
 		{3, &u3},
 		{4, &u4},
+		{5, nil},
 	}
 
 	resultIndex := 0
@@ -892,13 +954,13 @@ func TestBindUUID(t *testing.T) {
 		}
 		resultIndex++
 	}
-	require.Equal(t, 4, resultIndex, "incorrect count of results")
+	require.Equal(t, 5, resultIndex, "incorrect count of results")
 
 	// Verify NULL count
 	var nullCount int
 	err = db.QueryRow(`SELECT COUNT(*) FROM uuid_test WHERE uuid_col IS NULL`).Scan(&nullCount)
 	require.NoError(t, err)
-	require.Equal(t, 2, nullCount, "incorrect count of NULLs")
+	require.Equal(t, 3, nullCount, "incorrect count of NULLs")
 }
 
 // Define a custom type that shadows the string type
@@ -1013,6 +1075,36 @@ func TestDriverValuer(t *testing.T) {
 	require.Contains(t, err.Error(), castErrMsg)
 }
 
+func TestDriverValuerNilPointer(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	createTable(t, db, `CREATE TABLE valuer_nil (v VARCHAR, j JSON)`)
+
+	conn := openConnWrapper(t, db, context.Background())
+	defer closeConnWrapper(t, conn)
+
+	// database/sql binds a nil pointer to a value-receiver Valuer as NULL before the driver sees it.
+	// Callers of the driver statement must get the same result instead of a panic.
+	err := conn.Raw(func(driverConn any) error {
+		s, innerErr := driverConn.(*Conn).PrepareContext(context.Background(), `INSERT INTO valuer_nil VALUES (?, ?)`)
+		require.NoError(t, innerErr)
+
+		var list *testUUIDList
+		_, innerErr = s.(*Stmt).ExecContext(context.Background(), []driver.NamedValue{
+			{Ordinal: 1, Value: list},
+			{Ordinal: 2, Value: list},
+		})
+		require.NoError(t, innerErr)
+		return s.Close()
+	})
+	require.NoError(t, err)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM valuer_nil WHERE v IS NULL AND j IS NULL`).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
 func TestMixedTypeSliceBinding(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -1022,8 +1114,9 @@ func TestMixedTypeSliceBinding(t *testing.T) {
 	require.NoError(t, err)
 
 	sameTypeSlice := []any{"hello this is text", "other"}
-	_, err = db.Query("FROM mixed_slice_test WHERE foo IN ?", sameTypeSlice)
+	rows, err := db.Query("FROM mixed_slice_test WHERE foo IN ?", sameTypeSlice)
 	require.NoError(t, err)
+	closeRowsWrapper(t, rows)
 
 	mixedSlice := []any{"hello this is text", 2}
 
@@ -1918,6 +2011,28 @@ func TestBindCompositeNullElements(t *testing.T) {
 	}
 }
 
+func TestBindListElementTypeMismatch(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  string
+	}{
+		{name: "int32 into inferred VARCHAR[]", query: `SELECT list_contains(?, e) FROM (VALUES ('A')) t(e)`, arg: []any{int32(1)}, want: "cannot cast int32 to VARCHAR"},
+		{name: "string into INTEGER[]", query: `SELECT ?::INTEGER[]`, arg: []any{"a"}, want: "cannot cast string to INTEGER"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestBindInferredListNullElements(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -2098,4 +2213,97 @@ func TestBindRejectedValues(t *testing.T) {
 			require.ErrorIs(t, err, errCreateValue)
 		})
 	}
+}
+
+func TestBindDecimal(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// maxUnscaled returns the largest unscaled value with the given number of digits.
+	maxUnscaled := func(width int64) *big.Int {
+		return new(big.Int).Sub(new(big.Int).Exp(big.NewInt(10), big.NewInt(width), nil), big.NewInt(1))
+	}
+
+	tests := []struct {
+		name     string
+		val      Decimal
+		wantType string
+	}{
+		{name: "fraction", val: Decimal{Width: 7, Scale: 4, Value: big.NewInt(1234500)}, wantType: "DECIMAL(7,4)"},
+		{name: "negative", val: Decimal{Width: 5, Scale: 2, Value: big.NewInt(-12345)}, wantType: "DECIMAL(5,2)"},
+		{name: "zero", val: Decimal{Width: 1, Scale: 0, Value: big.NewInt(0)}, wantType: "DECIMAL(1,0)"},
+		{name: "scale equals width", val: Decimal{Width: 4, Scale: 4, Value: new(big.Int).Neg(maxUnscaled(4))}, wantType: "DECIMAL(4,4)"},
+		// The storage type changes after widths 4, 9 and 18.
+		{name: "negative max width 4", val: Decimal{Width: 4, Scale: 1, Value: new(big.Int).Neg(maxUnscaled(4))}, wantType: "DECIMAL(4,1)"},
+		{name: "negative max width 9", val: Decimal{Width: 9, Scale: 2, Value: new(big.Int).Neg(maxUnscaled(9))}, wantType: "DECIMAL(9,2)"},
+		{name: "negative max width 18", val: Decimal{Width: 18, Scale: 3, Value: new(big.Int).Neg(maxUnscaled(18))}, wantType: "DECIMAL(18,3)"},
+		{name: "negative max width 19", val: Decimal{Width: 19, Scale: 4, Value: new(big.Int).Neg(maxUnscaled(19))}, wantType: "DECIMAL(19,4)"},
+		{name: "max width", val: Decimal{Width: 38, Scale: 0, Value: maxUnscaled(38)}, wantType: "DECIMAL(38,0)"},
+		{name: "negative max width 38", val: Decimal{Width: 38, Scale: 0, Value: new(big.Int).Neg(maxUnscaled(38))}, wantType: "DECIMAL(38,0)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var typ string
+			var got Decimal
+			require.NoError(t, db.QueryRow(`SELECT typeof(?), ?`, tt.val, tt.val).Scan(&typ, &got))
+			require.Equal(t, tt.wantType, typ)
+			compareDecimal(t, tt.val, got)
+		})
+	}
+
+	t.Run("pointer", func(t *testing.T) {
+		val := Decimal{Width: 7, Scale: 4, Value: big.NewInt(-1234500)}
+		var typ string
+		var got Decimal
+		require.NoError(t, db.QueryRow(`SELECT typeof(?), ?`, &val, &val).Scan(&typ, &got))
+		require.Equal(t, "DECIMAL(7,4)", typ)
+		compareDecimal(t, val, got)
+	})
+
+	t.Run("nil pointer", func(t *testing.T) {
+		var got *Decimal
+		require.NoError(t, db.QueryRow(`SELECT ?::DECIMAL(7,4)`, (*Decimal)(nil)).Scan(&got))
+		require.Nil(t, got)
+	})
+}
+
+func TestBindDecimalErrors(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name    string
+		val     Decimal
+		wantErr error
+	}{
+		{name: "width zero", val: Decimal{Width: 0, Value: big.NewInt(0)}, wantErr: errInvalidDecimalWidth},
+		{name: "width too large", val: Decimal{Width: 39, Value: big.NewInt(0)}, wantErr: errInvalidDecimalWidth},
+		{name: "scale exceeds width", val: Decimal{Width: 2, Scale: 3, Value: big.NewInt(1)}, wantErr: errInvalidDecimalScale},
+		{name: "value exceeds width", val: Decimal{Width: 2, Value: big.NewInt(100)}, wantErr: errDecimalValueExceedsWidth},
+		{name: "negative value exceeds width", val: Decimal{Width: 2, Value: big.NewInt(-100)}, wantErr: errDecimalValueExceedsWidth},
+		{name: "value exceeds small width", val: Decimal{Width: 4, Value: big.NewInt(100000)}, wantErr: errDecimalValueExceedsWidth},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Decimal
+			err := db.QueryRow(`SELECT ?`, tt.val).Scan(&got)
+			require.ErrorIs(t, err, tt.wantErr)
+			require.ErrorContains(t, err, "index: 1")
+		})
+	}
+
+	t.Run("nil value", func(t *testing.T) {
+		var got Decimal
+		err := db.QueryRow(`SELECT ?`, Decimal{Width: 2}).Scan(&got)
+		require.ErrorContains(t, err, "nil Decimal.Value")
+	})
+
+	t.Run("second parameter", func(t *testing.T) {
+		var a, b Decimal
+		ok := Decimal{Width: 2, Value: big.NewInt(99)}
+		bad := Decimal{Width: 2, Value: big.NewInt(100)}
+		err := db.QueryRow(`SELECT ?, ?`, ok, &bad).Scan(&a, &b)
+		require.ErrorIs(t, err, errDecimalValueExceedsWidth)
+		require.ErrorContains(t, err, "index: 2")
+	})
 }
