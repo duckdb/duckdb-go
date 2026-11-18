@@ -174,6 +174,33 @@ func TestWithNativeConnection(t *testing.T) {
 	require.ErrorIs(t, WithNativeConnection(&Conn{}, invalid), errInvalidCon)
 }
 
+func TestWithNativeConnectionPoolReuse(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	db.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	err := conn.Raw(func(driverConn any) error {
+		return WithNativeConnection(driverConn.(driver.Conn), func(handle mapping.Connection) error {
+			var res mapping.Result
+			defer mapping.DestroyResult(&res)
+			if mapping.Query(handle, `SET VARIABLE pooled_value = 42`, &res) == mapping.StateError {
+				return errors.New(mapping.ResultError(&res))
+			}
+			return nil
+		})
+	})
+	closeConnWrapper(t, conn)
+	require.NoError(t, err)
+
+	conn = openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	var value int
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT getvariable('pooled_value')`).Scan(&value))
+	require.Equal(t, 42, value)
+}
+
 func TestGetTableNames(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
