@@ -4,11 +4,14 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func testErrorInternal(t *testing.T, actual error, contains []string) {
@@ -267,6 +270,153 @@ func TestAppenderErrorTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAppenderErrorColumnName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		open      func(driver.Conn) (*Appender, error)
+		column    string
+		generated bool
+	}{
+		{
+			name: "all columns",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppender(conn, "memory", "report.ing", `event"s`)
+			},
+			column: `amount"due`,
+		},
+		{
+			name: "reordered columns",
+			open: func(conn driver.Conn) (*Appender, error) {
+				columns := []string{"description", "id", `amount"due`}
+				a, err := NewAppenderWithColumns(conn, "memory", "report.ing", `event"s`, columns)
+				columns[1] = "changed after creation"
+				return a, err
+			},
+			column: "id",
+		},
+		{
+			name: "query input names",
+			open: func(conn driver.Conn) (*Appender, error) {
+				info, err := NewTypeInfo(TYPE_INTEGER)
+				if err != nil {
+					return nil, err
+				}
+				columns := []string{"input_id", `input"amount`, "input_other"}
+				a, err := NewQueryAppender(conn, `INSERT INTO test FROM appended_data`, "",
+					[]TypeInfo{info, info, info}, columns)
+				columns[1] = "changed after creation"
+				return a, err
+			},
+			column: `input"amount`,
+		},
+		{
+			name: "default query input names",
+			open: func(conn driver.Conn) (*Appender, error) {
+				info, err := NewTypeInfo(TYPE_INTEGER)
+				if err != nil {
+					return nil, err
+				}
+				return NewQueryAppender(conn, `INSERT INTO test FROM appended_data`, "",
+					[]TypeInfo{info, info, info}, nil)
+			},
+			column: "col2",
+		},
+		{
+			name: "table-derived query input",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewTableAppender(conn, `INSERT INTO test FROM appended_data`, "memory", "report.ing", `event"s`, nil)
+			},
+			column: "col2",
+		},
+		{
+			name: "table-derived selected input in table order",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewTableAppender(conn, `INSERT INTO test FROM appended_data`, "", "", "type_source",
+					[]string{"description", "id", "amount"})
+			},
+			column: "col2",
+		},
+		{
+			name: "generated columns have no reliable name mapping",
+			open: func(conn driver.Conn) (*Appender, error) {
+				return NewAppenderFromConn(conn, "", "generated")
+			},
+			generated: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newConnectorWrapper(t, "", nil)
+			db := sql.OpenDB(c)
+			conn := openDriverConnWrapper(t, c)
+			defer cleanupDb(t, c, db, conn)
+			_, err := db.Exec(`CREATE SCHEMA "report.ing";
+				CREATE TABLE "report.ing"."event""s" (id INTEGER, "amount""due" INTEGER, description INTEGER);
+				CREATE TABLE test (id INTEGER, amount INTEGER, description INTEGER);
+				CREATE TABLE type_source (id INTEGER, omitted INTEGER, amount INTEGER, description INTEGER);
+				CREATE TABLE generated (id INTEGER, computed INTEGER AS (id + 1), amount INTEGER, description INTEGER)`)
+			require.NoError(t, err)
+			a, err := tc.open(conn)
+			require.NoError(t, err)
+			defer closeAppenderWrapper(t, a)
+
+			// Different row and column indices catch swapped position arguments.
+			for range 2 {
+				require.NoError(t, a.AppendRow(1, 2, 3))
+			}
+			const sensitive = "private row value"
+			err = a.AppendRow(4, sensitive, 6)
+			require.ErrorIs(t, err, errAppenderAppendRow)
+			require.ErrorContains(t, err, "at row 2, col 1:")
+			require.ErrorContains(t, err, "cannot cast string to int32")
+			require.NotContains(t, err.Error(), sensitive)
+			if tc.generated {
+				require.NotContains(t, err.Error(), "computed")
+			} else {
+				require.ErrorContains(t, err, fmt.Sprintf("(column: %q)", tc.column))
+			}
+			require.NoError(t, a.AppendRow(4, 5, 6))
+			require.NoError(t, a.Flush())
+			// Column names survive chunk resets, too.
+			err = a.AppendRow(7, sensitive, 9)
+			require.ErrorContains(t, err, "at row 0, col 1:")
+			if !tc.generated {
+				require.ErrorContains(t, err, fmt.Sprintf("(column: %q)", tc.column))
+			}
+			require.NotContains(t, err.Error(), sensitive)
+		})
+	}
+}
+
+func TestAppenderWithoutColumnMetadata(t *testing.T) {
+	c := newConnectorWrapper(t, "", nil)
+	db := sql.OpenDB(c)
+	conn := openDriverConnWrapper(t, c)
+	defer cleanupDb(t, c, db, conn)
+	_, err := db.Exec(`CREATE TABLE test (amount INTEGER)`)
+	require.NoError(t, err)
+
+	// Return a real failed description while leaving appender creation intact.
+	createDescription := mapping.TableDescriptionCreateExt
+	mapping.TableDescriptionCreateExt = func(conn mapping.Connection, catalog, schema, _ string, out *mapping.TableDescription) mapping.State {
+		return createDescription(conn, catalog, schema, "missing_metadata", out)
+	}
+	defer func() { mapping.TableDescriptionCreateExt = createDescription }()
+
+	a, err := NewAppenderFromConn(conn, "", "test")
+	require.NoError(t, err)
+	defer closeAppenderWrapper(t, a)
+	err = a.AppendRow("private row value")
+	require.ErrorIs(t, err, errAppenderAppendRow)
+	require.ErrorContains(t, err, "at row 0, col 0:")
+	require.NotContains(t, err.Error(), "column:")
+	require.NotContains(t, err.Error(), "private row value")
+	require.NoError(t, a.AppendRow(42))
+	require.NoError(t, a.Flush())
+	var amount int
+	require.NoError(t, db.QueryRow(`SELECT amount FROM test`).Scan(&amount))
+	require.Equal(t, 42, amount)
 }
 
 func TestErrAppender(t *testing.T) {
