@@ -25,6 +25,11 @@ type Conn struct {
 	closed bool
 	// True, if the connection has an open transaction.
 	tx bool
+	// txCtx is the context passed to BeginTx for the open transaction.
+	txCtx context.Context //nolint:containedctx
+	// txErr is set if the open transaction can no longer commit,
+	// because a streaming query in it failed after its rows were closed.
+	txErr error
 
 	// stmtsMu guards stmts and serializes statement destruction, so that
 	// Stmt.Close and Conn.Close never destroy the same statement twice.
@@ -174,6 +179,8 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		return nil, err
 	}
 	conn.tx = true
+	conn.txCtx = ctx
+	conn.txErr = nil
 
 	return &tx{conn}, nil
 }

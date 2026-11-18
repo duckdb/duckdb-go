@@ -758,19 +758,9 @@ func (s *Stmt) QueryContext(ctx context.Context, nargs []driver.NamedValue) (dri
 		return nil, errClosedStmt
 	}
 
-	cleanupCtx := s.conn.setContext(ctx)
-	defer cleanupCtx()
-
-	var res *mapping.Result
-	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
-		var executeErr error
-		res, executeErr = s.execute(wctx, nargs, streamingResults(ctx))
-		return executeErr
-	}); err != nil {
-		return nil, err
-	}
-	s.rows = true
-	return newRowsWithStmt(*res, s), nil
+	return s.query(ctx, func(wctx context.Context, streaming bool) (*mapping.Result, error) {
+		return s.execute(wctx, nargs, streaming)
+	})
 }
 
 // QueryBound executes a bound query that may return rows, such as a SELECT.
@@ -787,20 +777,33 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 		return nil, errNotBound
 	}
 
+	return s.query(ctx, s.executeBound)
+}
+
+// query runs exec and returns its result as rows.
+// Under WithStreamingResults, the rows take over the query scope, see newStream.
+func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, streaming bool) (*mapping.Result, error)) (driver.Rows, error) {
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 
 	var res *mapping.Result
+	var st *stream
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
-		var executeBoundErr error
-		res, executeBoundErr = s.executeBound(wctx, streamingResults(ctx))
-		return executeBoundErr
+		streaming := streamingResults(wctx)
+		var execErr error
+		res, execErr = exec(wctx, streaming)
+		if execErr == nil && streaming {
+			st = s.conn.newStream(wctx)
+		}
+		return execErr
 	}); err != nil {
 		return nil, err
 	}
 
 	s.rows = true
-	return newRowsWithStmt(*res, s), nil
+	r := newRowsWithStmt(*res, s)
+	r.stream = st
+	return r, nil
 }
 
 // This method executes the query in steps and checks if context is cancelled before executing each step.
