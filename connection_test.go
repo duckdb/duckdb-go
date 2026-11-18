@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 func TestTransactions(t *testing.T) {
@@ -139,6 +141,64 @@ func TestMultiStatementParameters(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestWithNativeConnection(t *testing.T) {
+	connector, err := NewConnector(":memory:", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connector.Close()) })
+	owned, err := connector.Connect(context.Background())
+	require.NoError(t, err)
+	conn := owned.(*Conn)
+	t.Cleanup(func() {
+		if !conn.closed {
+			require.NoError(t, conn.Close())
+		}
+	})
+
+	want := errors.New("callback error")
+	err = WithNativeConnection(conn, func(handle mapping.Connection) error {
+		require.Equal(t, conn.id, extractConnId(handle))
+		return want
+	})
+	require.Same(t, want, err)
+	require.Error(t, WithNativeConnection(conn, nil))
+	require.NoError(t, conn.Close())
+	invalid := func(mapping.Connection) error {
+		t.Fatal("invalid connection reached callback")
+		return nil
+	}
+	require.ErrorIs(t, WithNativeConnection(conn, invalid), errClosedCon)
+	require.ErrorIs(t, WithNativeConnection(nil, invalid), errInvalidCon)
+	require.ErrorIs(t, WithNativeConnection((*Conn)(nil), invalid), errInvalidCon)
+	require.ErrorIs(t, WithNativeConnection(&Conn{}, invalid), errInvalidCon)
+}
+
+func TestWithNativeConnectionPoolReuse(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+	db.SetMaxOpenConns(1)
+
+	ctx := context.Background()
+	conn := openConnWrapper(t, db, ctx)
+	err := conn.Raw(func(driverConn any) error {
+		return WithNativeConnection(driverConn.(driver.Conn), func(handle mapping.Connection) error {
+			var res mapping.Result
+			defer mapping.DestroyResult(&res)
+			if mapping.Query(handle, `SET VARIABLE pooled_value = 42`, &res) == mapping.StateError {
+				return errors.New(mapping.ResultError(&res))
+			}
+			return nil
+		})
+	})
+	closeConnWrapper(t, conn)
+	require.NoError(t, err)
+
+	conn = openConnWrapper(t, db, ctx)
+	defer closeConnWrapper(t, conn)
+	var value int
+	require.NoError(t, conn.QueryRowContext(ctx, `SELECT getvariable('pooled_value')`).Scan(&value))
+	require.Equal(t, 42, value)
 }
 
 func TestGetTableNames(t *testing.T) {
