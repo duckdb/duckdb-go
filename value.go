@@ -402,6 +402,10 @@ func inferPrimitiveType(v any) (Type, any) {
 		t = TYPE_TIMESTAMP_TZ
 	case Interval:
 		t = TYPE_INTERVAL
+	case HugeInt:
+		t = TYPE_HUGEINT
+	case UHugeInt:
+		t = TYPE_UHUGEINT
 	case *big.Int:
 		t = TYPE_HUGEINT
 	case Decimal:

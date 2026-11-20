@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
@@ -20,7 +21,8 @@ import (
 )
 
 // duckdb-go exports the following type wrappers:
-// UUID, Bit, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
+// UUID, Bit, HugeInt, UHugeInt, Map, Interval, Decimal, Union,
+// Composite (optional, used to scan LIST and STRUCT).
 
 // Pre-computed reflect type values to avoid repeated allocations.
 var (
@@ -276,6 +278,22 @@ func (b Bit) String() string {
 	return sb.String()
 }
 
+// HugeInt is a signed 128-bit integer with value Upper * 2^64 + Lower.
+// It can be used for parameter binding, appends, and typed vector access
+// without converting through *big.Int. Ordinary query results remain *big.Int.
+type HugeInt struct {
+	Lower uint64
+	Upper int64
+}
+
+// UHugeInt is an unsigned 128-bit integer with value Upper * 2^64 + Lower.
+// It can be used for parameter binding, appends, and typed vector access
+// without converting through *big.Int. Ordinary query results remain *big.Int.
+type UHugeInt struct {
+	Lower uint64
+	Upper uint64
+}
+
 func hugeIntToNative(hugeInt *mapping.HugeInt) *big.Int {
 	lower, upper := mapping.HugeIntMembers(hugeInt)
 	i := big.NewInt(upper)
@@ -377,6 +395,17 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 	var err error
 	var hi mapping.HugeInt
 	switch v := val.(type) {
+	case HugeInt:
+		hi = mapping.NewHugeInt(v.Lower, v.Upper)
+	case *HugeInt:
+		return inferHugeInt(*v)
+	case UHugeInt:
+		if v.Upper > math.MaxInt64 {
+			return mapping.HugeInt{}, fmt.Errorf("UHugeInt is too big for HUGEINT")
+		}
+		hi = mapping.NewHugeInt(v.Lower, int64(v.Upper))
+	case *UHugeInt:
+		return inferHugeInt(*v)
 	case uint8:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int8:
@@ -472,6 +501,17 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 	var err error
 	var uhi mapping.UHugeInt
 	switch v := val.(type) {
+	case UHugeInt:
+		uhi = mapping.NewUHugeInt(v.Lower, v.Upper)
+	case *UHugeInt:
+		return inferUHugeInt(*v)
+	case HugeInt:
+		if v.Upper < 0 {
+			return mapping.UHugeInt{}, fmt.Errorf("negative HugeInt cannot be converted to UHUGEINT")
+		}
+		uhi = mapping.NewUHugeInt(v.Lower, uint64(v.Upper))
+	case *HugeInt:
+		return inferUHugeInt(*v)
 	case uint8:
 		uhi = mapping.NewUHugeInt(uint64(v), 0)
 	case int8:
