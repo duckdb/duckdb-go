@@ -280,7 +280,12 @@ func (r *recordReader) Next() bool {
 		if err != nil {
 			r.rows.failed = true
 			// Report a cancellation as such, as rows.Next does.
-			r.err = errors.Join(r.ctx.Err(), err)
+			cancelErr := r.ctx.Err()
+			if r.rows.stream != nil {
+				// Also covers the transaction's context.
+				cancelErr = r.rows.stream.canceled()
+			}
+			r.err = errors.Join(cancelErr, err)
 			return false
 		}
 		defer mapping.DestroyDataChunk(&chunk)

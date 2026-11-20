@@ -78,7 +78,7 @@ func (r *rows) Next(dst []driver.Value) error {
 			r.failed = true
 			if r.stream != nil {
 				// Report a cancellation as such, as executeBound does.
-				err = errors.Join(r.stream.ctx.Err(), err)
+				err = errors.Join(r.stream.canceled(), err)
 			}
 			return err
 		}

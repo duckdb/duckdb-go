@@ -783,13 +783,16 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 // query runs exec and returns its result as rows.
 // Under WithStreamingResults, the rows take over the query scope, see newStream.
 func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, streaming bool) (*mapping.Result, error)) (driver.Rows, error) {
+	streaming := streamingResults(ctx)
+	ctx, releaseTxCancel := s.conn.withTxCancel(ctx)
+	defer releaseTxCancel()
+
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
 
 	var res *mapping.Result
 	var st *stream
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
-		streaming := streamingResults(wctx)
 		var execErr error
 		res, execErr = exec(wctx, streaming)
 		if execErr == nil && streaming {

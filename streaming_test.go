@@ -386,9 +386,10 @@ func TestStreamingResultsCancelAbandonsTheRest(t *testing.T) {
 
 				start := time.Now()
 				// Draining would never end, so a timely Close shows that it abandoned the query.
+				// Close reports the cancellation, as the unread work did not run.
 				vals, _, closeErr := path.run(t, c, ctx, endlessQuery, 1, cancel)
 				require.Len(t, vals, 1)
-				require.NoError(t, closeErr)
+				require.ErrorIs(t, closeErr, context.Canceled)
 				require.Less(t, time.Since(start), 10*time.Second)
 			})
 		}
@@ -410,7 +411,9 @@ func TestStreamingResultsCancelAbandonsTheRest(t *testing.T) {
 		cancel()
 		// database/sql closes the rows and rolls back once the transaction context is canceled.
 		require.Eventually(t, func() bool { return errors.Is(tx.Commit(), sql.ErrTxDone) }, 10*time.Second, 10*time.Millisecond)
+		// database/sql has closed the rows already, and reports the cancellation by Err.
 		require.NoError(t, rows.Close())
+		require.ErrorIs(t, rows.Err(), context.Canceled)
 		require.Less(t, time.Since(start), 10*time.Second)
 	})
 }
@@ -448,4 +451,127 @@ func countTableRows(t *testing.T, db *sql.DB) int64 {
 	var n int64
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM t`).Scan(&n))
 	return n
+}
+
+// Canceling the transaction context must interrupt a streaming query that runs under a
+// separate query context, both while it is fetched and while Close runs the rest of it.
+func TestStreamingResultsTxCancelInterrupts(t *testing.T) {
+	t.Run("in-flight Next", func(t *testing.T) {
+		db := openDbWrapper(t, ``)
+		defer closeDbWrapper(t, db)
+
+		txCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		tx, err := db.BeginTx(txCtx, nil)
+		require.NoError(t, err)
+		rows, err := tx.QueryContext(WithStreamingResults(context.Background()), endlessCountQuery)
+		require.NoError(t, err)
+
+		time.AfterFunc(100*time.Millisecond, cancel)
+		start := time.Now()
+		require.False(t, rows.Next())
+		require.ErrorIs(t, rows.Err(), context.Canceled)
+		require.Less(t, time.Since(start), 10*time.Second)
+		require.ErrorIs(t, tx.Commit(), sql.ErrTxDone)
+	})
+
+	t.Run("close-time drain", func(t *testing.T) {
+		db := openDbWrapper(t, ``)
+		defer closeDbWrapper(t, db)
+
+		txCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		tx, err := db.BeginTx(txCtx, nil)
+		require.NoError(t, err)
+		rows, err := tx.QueryContext(WithStreamingResults(context.Background()), endlessQuery)
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+
+		time.AfterFunc(100*time.Millisecond, cancel)
+		start := time.Now()
+		require.ErrorIs(t, rows.Close(), context.Canceled)
+		require.Less(t, time.Since(start), 10*time.Second)
+		require.ErrorIs(t, tx.Commit(), sql.ErrTxDone)
+	})
+
+	t.Run("driver", func(t *testing.T) {
+		db := openDbWrapper(t, ``)
+		defer closeDbWrapper(t, db)
+		c := openConnWrapper(t, db, context.Background())
+		defer closeConnWrapper(t, c)
+
+		for _, query := range []string{endlessCountQuery, endlessQuery} {
+			require.NoError(t, c.Raw(func(driverConn any) error {
+				conn := driverConn.(*Conn)
+				txCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				tx, err := conn.BeginTx(txCtx, driver.TxOptions{})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, tx.Rollback()) }()
+
+				s, err := conn.PrepareContext(context.Background(), query)
+				require.NoError(t, err)
+				stmt := s.(*Stmt)
+				defer func() { require.NoError(t, stmt.Close()) }()
+				rows, err := stmt.QueryContext(WithStreamingResults(context.Background()), nil)
+				require.NoError(t, err)
+
+				time.AfterFunc(100*time.Millisecond, cancel)
+				start := time.Now()
+				dst := make([]driver.Value, 1)
+				var closeErr error
+				if err = rows.Next(dst); err == nil {
+					// endlessQuery: the first row arrives, and Close runs the rest.
+					closeErr = rows.Close()
+				} else {
+					closeErr = rows.Close()
+					require.ErrorIs(t, err, context.Canceled)
+				}
+				require.ErrorIs(t, errors.Join(err, closeErr), context.Canceled)
+				require.Less(t, time.Since(start), 10*time.Second)
+				return nil
+			}))
+		}
+	})
+}
+
+// Canceling while Close runs the rest of a streaming query abandons its writes,
+// so QueryRow.Scan and Commit must report the cancellation, not succeed.
+func TestStreamingResultsCancelDuringDrainIsReported(t *testing.T) {
+	const nextvalQuery = `SELECT nextval('s') FROM range(1000000000000) t(i)`
+
+	t.Run("autocommit", func(t *testing.T) {
+		db := openDbWrapper(t, ``)
+		defer closeDbWrapper(t, db)
+		createTable(t, db, `CREATE SEQUENCE s`)
+
+		ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+		defer cancel()
+		time.AfterFunc(200*time.Millisecond, cancel)
+		var v int64
+		require.ErrorIs(t, db.QueryRowContext(ctx, nextvalQuery).Scan(&v), context.Canceled)
+	})
+
+	t.Run("transaction", func(t *testing.T) {
+		db := openDbWrapper(t, ``)
+		defer closeDbWrapper(t, db)
+		createTable(t, db, `CREATE TABLE t(i BIGINT)`)
+		createTable(t, db, `CREATE SEQUENCE s`)
+
+		tx, err := db.Begin()
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO t VALUES (1)`)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+		defer cancel()
+		time.AfterFunc(200*time.Millisecond, cancel)
+		var v int64
+		require.ErrorIs(t, tx.QueryRowContext(ctx, nextvalQuery).Scan(&v), context.Canceled)
+
+		err = tx.Commit()
+		require.ErrorIs(t, err, errCommit)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, countTableRows(t, db))
+	})
 }

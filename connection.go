@@ -97,6 +97,10 @@ func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.N
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.QueryerContext interface.
 func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	// Link the transaction's context before the interrupter starts, so that it watches both.
+	ctx, releaseTxCancel := conn.withTxCancel(ctx)
+	defer releaseTxCancel()
+
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
