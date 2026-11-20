@@ -346,3 +346,54 @@ func TestArrowClosedConn(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+func TestArrowStreaming(t *testing.T) {
+	t.Run("streaming query error part-way", func(t *testing.T) {
+		c := newConnectorWrapper(t, ``, nil)
+		defer closeConnectorWrapper(t, c)
+
+		innerConn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &innerConn)
+
+		ar, err := NewArrowFromConn(innerConn)
+		require.NoError(t, err)
+
+		rdr, err := ar.QueryContext(WithStreamingResults(context.Background()), failPartWayQuery)
+		require.NoError(t, err)
+
+		var n int64
+		for rdr.Next() {
+			n += rdr.RecordBatch().NumRows()
+		}
+		require.ErrorContains(t, rdr.Err(), "boom", "a failed fetch must not look like the end of the result")
+		require.Positive(t, n)
+		rdr.Release()
+		require.ErrorContains(t, rdr.Err(), "boom")
+	})
+
+	t.Run("streaming early release runs the rest", func(t *testing.T) {
+		c := newConnectorWrapper(t, ``, nil)
+		defer closeConnectorWrapper(t, c)
+
+		innerConn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &innerConn)
+
+		ar, err := NewArrowFromConn(innerConn)
+		require.NoError(t, err)
+
+		_, err = innerConn.(driver.ExecerContext).ExecContext(context.Background(), `CREATE TABLE ins(i BIGINT)`, nil)
+		require.NoError(t, err)
+		rdr, err := ar.QueryContext(WithStreamingResults(context.Background()),
+			`WITH x AS (INSERT INTO ins SELECT i FROM range(100000) r(i) RETURNING i) SELECT i FROM x`)
+		require.NoError(t, err)
+		require.True(t, rdr.Next())
+		rdr.Release()
+		require.NoError(t, rdr.Err())
+
+		rdr, err = ar.QueryContext(context.Background(), `SELECT count(*) FROM ins`)
+		require.NoError(t, err)
+		defer rdr.Release()
+		require.True(t, rdr.Next())
+		require.Equal(t, int64(100000), rdr.RecordBatch().Column(0).(*array.Int64).Value(0))
+	})
+}

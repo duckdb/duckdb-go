@@ -25,6 +25,13 @@ type Conn struct {
 	closed bool
 	// True, if the connection has an open transaction.
 	tx bool
+	// txCtx is the context passed to BeginTx for the open transaction.
+	txCtx context.Context //nolint:containedctx
+	// txErr is set if the open transaction can no longer commit,
+	// because a streaming query in it failed after its rows were closed.
+	txErr error
+	// txCancel is the link of a streaming query to txCtx, while the query call runs.
+	txCancel *txCancelScope
 
 	// stmtsMu guards stmts and serializes statement destruction, so that
 	// Stmt.Close and Conn.Close never destroy the same statement twice.
@@ -113,6 +120,10 @@ func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.N
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.QueryerContext interface.
 func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	// Link the transaction's context before the interrupter starts, so that it watches both.
+	ctx, releaseTxCancel := conn.withTxCancel(ctx)
+	defer releaseTxCancel()
+
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
@@ -195,6 +206,8 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		return nil, err
 	}
 	conn.tx = true
+	conn.txCtx = ctx
+	conn.txErr = nil
 
 	return &tx{conn}, nil
 }

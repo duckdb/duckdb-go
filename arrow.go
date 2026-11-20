@@ -63,6 +63,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"unsafe"
 
@@ -158,7 +159,6 @@ var _ array.RecordReader = (*recordReader)(nil)
 
 type recordReader struct {
 	ctx    context.Context
-	res    mapping.Result
 	opts   arrowmapping.ArrowOptions
 	schema *arrow.Schema
 	rows   *rows
@@ -205,7 +205,6 @@ func recordReaderFromRows(ctx context.Context, from driver.Rows) (array.RecordRe
 
 	return &recordReader{
 		ctx:      ctx,
-		res:      rr.res,
 		opts:     arrowOptions,
 		schema:   schema,
 		rows:     rr,
@@ -241,7 +240,9 @@ func (r *recordReader) Release() {
 		r.current = nil
 	}
 	arrowmapping.DestroyArrowOptions(&r.opts)
-	r.err = r.rows.Close()
+	if err := r.rows.Close(); err != nil || r.err == nil {
+		r.err = err
+	}
 }
 
 func (r *recordReader) Schema() *arrow.Schema {
@@ -270,8 +271,21 @@ func (r *recordReader) Next() bool {
 		r.err = r.ctx.Err()
 		return false
 	default:
-		chunk := mapping.FetchChunk(r.res)
-		if chunk.Ptr == nil {
+		// Share the fetch with rows, so that the rows know how the result ended when closed.
+		chunk, err := fetchChunk(&r.rows.res)
+		if errors.Is(err, io.EOF) {
+			r.rows.eof = true
+			return false
+		}
+		if err != nil {
+			r.rows.failed = true
+			// Report a cancellation as such, as rows.Next does.
+			cancelErr := r.ctx.Err()
+			if r.rows.stream != nil {
+				// Also covers the transaction's context.
+				cancelErr = r.rows.stream.canceled()
+			}
+			r.err = errors.Join(cancelErr, err)
 			return false
 		}
 		defer mapping.DestroyDataChunk(&chunk)
