@@ -1006,6 +1006,55 @@ func TestAppenderUHugeInt(t *testing.T) {
 	}
 }
 
+func TestAppenderHugeIntValues(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (h HUGEINT, u UHUGEINT)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// These are range checks, not bit reinterpretations. A failed append must
+	// not leave a partial row behind.
+	require.ErrorContains(t, a.AppendRow(UHugeInt{Upper: 1 << 63}, UHugeInt{}), "too big for HUGEINT")
+	require.ErrorContains(t, a.AppendRow(HugeInt{}, HugeInt{Upper: -1}), "negative")
+
+	tests := []struct {
+		huge, uhuge any
+		wantH       string
+		wantU       string
+	}{
+		{HugeInt{Lower: 5, Upper: -2}, UHugeInt{Lower: 7, Upper: 3}, "-36893488147419103227", "55340232221128654855"},
+		{
+			&HugeInt{Upper: math.MinInt64}, &UHugeInt{Lower: math.MaxUint64, Upper: math.MaxUint64},
+			"-170141183460469231731687303715884105728", "340282366920938463463374607431768211455",
+		},
+		{
+			UHugeInt{Lower: math.MaxUint64, Upper: math.MaxInt64},
+			HugeInt{Lower: 5, Upper: 2},
+			"170141183460469231731687303715884105727", "36893488147419103237",
+		},
+		{(*HugeInt)(nil), (*UHugeInt)(nil), "", ""},
+	}
+	for _, tt := range tests {
+		require.NoError(t, a.AppendRow(tt.huge, tt.uhuge))
+	}
+	require.NoError(t, a.Flush())
+	rows, err := db.Query(`SELECT h, u FROM test ORDER BY rowid`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+	for _, tt := range tests {
+		require.True(t, rows.Next())
+		var h, u *big.Int
+		require.NoError(t, rows.Scan(&h, &u))
+		if tt.wantH == "" {
+			require.Nil(t, h)
+			require.Nil(t, u)
+		} else {
+			require.Equal(t, tt.wantH, h.String())
+			require.Equal(t, tt.wantU, u.String())
+		}
+	}
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Err())
+}
+
 func TestAppenderBigNum(t *testing.T) {
 	testAppenderSignedHugeInt(t, "BIGNUM")
 }

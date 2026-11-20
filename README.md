@@ -259,6 +259,10 @@ defer db.Close()
 
 Please refer to the [database/sql](https://godoc.org/database/sql) documentation for further instructions on usage.
 
+`HugeInt` and `UHugeInt` support parameter binding and appends without conversion through `*big.Int`.
+For allocation-free vector access, use `GetVectorView[HugeInt]` or `GetVectorView[UHugeInt]` and the matching `GetVectorWriter`.
+Ordinary query results and `DataChunk.GetValue` still return `*big.Int` for both DuckDB types.
+
 ## Linking DuckDB
 
 By default, `duckdb-go` statically links pre-built DuckDB libraries into your binary.
