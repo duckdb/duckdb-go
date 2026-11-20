@@ -59,8 +59,6 @@ type stream struct {
 	releaseTxCancel func()
 }
 
-type txCancelKey struct{}
-
 // txCancelScope links the context of a streaming query to the context of its transaction.
 type txCancelScope struct {
 	// release ends the link. It must run after the interrupter has stopped.
@@ -75,9 +73,11 @@ type txCancelScope struct {
 // The interrupter watches the context it is started with, so the outermost query call links
 // the contexts before starting it, and the returned cleanup must run after it has stopped.
 // The cleanup does nothing once a streaming result has kept the link, see keepTxCancel.
+// The link is kept on the connection, not in ctx: ctx reaches UDFs, which may pass it to
+// queries on other connections, and those must not take over or end the link.
 func (conn *Conn) withTxCancel(ctx context.Context) (context.Context, func()) {
 	txCtx := conn.txCtx
-	if !conn.tx || txCtx == nil || txCtx.Done() == nil || !streamingResults(ctx) || ctx.Value(txCancelKey{}) != nil {
+	if !conn.tx || txCtx == nil || txCtx.Done() == nil || !streamingResults(ctx) || conn.txCancel != nil {
 		return ctx, func() {}
 	}
 
@@ -87,9 +87,10 @@ func (conn *Conn) withTxCancel(ctx context.Context) (context.Context, func()) {
 		stop()
 		cancel(nil)
 	}}
-	ctx = context.WithValue(ctx, txCancelKey{}, scope)
+	conn.txCancel = scope
 
 	return ctx, func() {
+		conn.txCancel = nil
 		if !scope.kept {
 			scope.release()
 		}
@@ -98,9 +99,9 @@ func (conn *Conn) withTxCancel(ctx context.Context) (context.Context, func()) {
 
 // keepTxCancel keeps the link made by withTxCancel after the query call returns,
 // and returns the function that ends it.
-func keepTxCancel(ctx context.Context) func() {
-	scope, ok := ctx.Value(txCancelKey{}).(*txCancelScope)
-	if !ok {
+func (conn *Conn) keepTxCancel() func() {
+	scope := conn.txCancel
+	if scope == nil {
 		return func() {}
 	}
 	scope.kept = true
@@ -108,16 +109,18 @@ func keepTxCancel(ctx context.Context) func() {
 }
 
 // newStream takes over the scope of a streaming query.
-// ctx must be the context passed to fn by runWithCtxInterrupt.
-func (conn *Conn) newStream(ctx context.Context) *stream {
+// ctx is the context of the query, as stored for UDFs, and wctx is the context passed to fn
+// by runWithCtxInterrupt, which also carries the interrupter scope.
+func (conn *Conn) newStream(ctx, wctx context.Context) *stream {
 	return &stream{
 		conn:          conn,
 		ctx:           ctx,
 		inTx:          conn.tx,
-		stopInterrupt: keepCtxInterrupt(ctx),
+		stopInterrupt: keepCtxInterrupt(wctx, conn.conn),
 		// Replace the context stored by the caller, whose cleanup runs when the query returns.
+		// Store ctx rather than wctx, so that UDFs do not get the interrupter scope.
 		clearCtx:        conn.ctxStore.store(conn.id, ctx, true),
-		releaseTxCancel: keepTxCancel(ctx),
+		releaseTxCancel: conn.keepTxCancel(),
 	}
 }
 

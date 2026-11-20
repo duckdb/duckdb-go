@@ -30,6 +30,8 @@ type Conn struct {
 	// txErr is set if the open transaction can no longer commit,
 	// because a streaming query in it failed after its rows were closed.
 	txErr error
+	// txCancel is the link of a streaming query to txCtx, while the query call runs.
+	txCancel *txCancelScope
 
 	// stmtsMu guards stmts and serializes statement destruction, so that
 	// Stmt.Close and Conn.Close never destroy the same statement twice.

@@ -575,3 +575,79 @@ func TestStreamingResultsCancelDuringDrainIsReported(t *testing.T) {
 		require.Zero(t, countTableRows(t, db))
 	})
 }
+
+// nestedQueryUDF runs a query on another connection with the context it is given, once,
+// and returns its argument.
+type nestedQueryUDF struct {
+	db   *sql.DB
+	done atomic.Bool
+	err  atomic.Value
+}
+
+func (*nestedQueryUDF) Config() ScalarFuncConfig {
+	in, _ := NewTypeInfo(TYPE_BIGINT)
+	return ScalarFuncConfig{InputTypeInfos: []TypeInfo{in}, ResultTypeInfo: in, Volatile: true}
+}
+
+func (u *nestedQueryUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{RowContextExecutor: func(ctx context.Context, values []driver.Value) (any, error) {
+		if u.done.CompareAndSwap(false, true) {
+			var v int64
+			if err := u.db.QueryRowContext(ctx, `SELECT 42`).Scan(&v); err != nil {
+				u.err.Store(err)
+			}
+		}
+		return values[0], nil
+	}}
+}
+
+// A UDF may pass its context to a query on another connection.
+// Closing that query must not end the scope of the outer streaming query.
+func TestStreamingResultsNestedQueryInUDF(t *testing.T) {
+	setup := func(t *testing.T) (*sql.DB, *sql.Conn, *nestedQueryUDF) {
+		db := openDbWrapper(t, ``)
+		t.Cleanup(func() { closeDbWrapper(t, db) })
+		c := openConnWrapper(t, db, context.Background())
+		t.Cleanup(func() { closeConnWrapper(t, c) })
+		udf := &nestedQueryUDF{db: db}
+		require.NoError(t, RegisterScalarUDF(c, "nested_query", udf))
+		return db, c, udf
+	}
+
+	t.Run("cancel still interrupts the outer query", func(t *testing.T) {
+		_, c, udf := setup(t)
+		ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+		defer cancel()
+		rows, err := c.QueryContext(ctx, `SELECT count(*) FROM range(1000000000000) t(i) WHERE i >= (SELECT nested_query(0))`)
+		require.NoError(t, err)
+
+		time.AfterFunc(200*time.Millisecond, cancel)
+		start := time.Now()
+		require.False(t, rows.Next())
+		require.ErrorIs(t, rows.Err(), context.Canceled)
+		require.NoError(t, rows.Close())
+		require.Less(t, time.Since(start), 10*time.Second)
+		require.True(t, udf.done.Load())
+		require.Nil(t, udf.err.Load())
+	})
+
+	t.Run("transaction outer query is not canceled", func(t *testing.T) {
+		db, _, udf := setup(t)
+		// A cancelable transaction context, so that the query links to it.
+		tx, err := db.BeginTx(t.Context(), nil)
+		require.NoError(t, err)
+
+		rows, err := tx.QueryContext(WithStreamingResults(context.Background()), `SELECT nested_query(i) FROM range(100000) t(i)`)
+		require.NoError(t, err)
+		n := 0
+		for rows.Next() {
+			n++
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		require.Equal(t, 100000, n)
+		require.NoError(t, tx.Commit())
+		require.True(t, udf.done.Load())
+		require.Nil(t, udf.err.Load())
+	})
+}

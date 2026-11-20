@@ -796,7 +796,7 @@ func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, stream
 		var execErr error
 		res, execErr = exec(wctx, streaming)
 		if execErr == nil && streaming {
-			st = s.conn.newStream(wctx)
+			st = s.conn.newStream(ctx, wctx)
 		}
 		return execErr
 	}); err != nil {

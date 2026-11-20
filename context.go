@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -90,10 +91,12 @@ func runWithCtxInterrupt(ctx context.Context, conn mapping.Connection, fn func(c
 
 	// guard: if an interrupter is already active for this call, don’t spawn another.
 	// We tag the context to indicate an active interrupter scope.
-	if ctx.Value(interruptScopeKey{}) != nil {
+	// The scope belongs to its connection: a call on another connection, such as a query
+	// that a UDF runs with its context, starts its own interrupter.
+	if scope, ok := ctx.Value(interruptScopeKey{}).(*interruptScope); ok && scope.conn == conn.Ptr {
 		return fn(ctx)
 	}
-	scope := &interruptScope{}
+	scope := &interruptScope{conn: conn.Ptr}
 	ctx = context.WithValue(ctx, interruptScopeKey{}, scope)
 
 	bgDoneCh := make(chan struct{})
@@ -133,6 +136,8 @@ type interruptScopeKey struct{}
 
 // interruptScope is the interrupter of the outermost runWithCtxInterrupt call.
 type interruptScope struct {
+	// conn is the connection that the interrupter interrupts.
+	conn unsafe.Pointer
 	// stop stops the interrupter and waits for it to finish. It is safe to call more than once.
 	stop func()
 	// kept is true once a streaming result has taken over the interrupter.
@@ -142,10 +147,11 @@ type interruptScope struct {
 // keepCtxInterrupt keeps the interrupter of the runWithCtxInterrupt call that ctx belongs to
 // running after that call returns, and returns the function that stops it.
 // A streaming result runs its query while it is fetched, so cancellation must reach DuckDB
-// until the result is closed. ctx must be the context passed to fn by runWithCtxInterrupt.
-func keepCtxInterrupt(ctx context.Context) func() {
+// until the result is closed. ctx must be the context passed to fn by runWithCtxInterrupt
+// for conn.
+func keepCtxInterrupt(ctx context.Context, conn mapping.Connection) func() {
 	scope, ok := ctx.Value(interruptScopeKey{}).(*interruptScope)
-	if !ok {
+	if !ok || scope.conn != conn.Ptr {
 		return func() {}
 	}
 	scope.kept = true
