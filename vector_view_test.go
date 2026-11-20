@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/big"
 	"testing"
 	"unsafe"
 
@@ -88,6 +90,122 @@ func TestVarcharVectorView(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, valid)
 	require.Equal(t, namedVarchar(values[1]), namedValue)
+}
+
+func TestHugeIntVectorAccess(t *testing.T) {
+	t.Run("signed", func(t *testing.T) {
+		testHugeIntVectorAccess(t, TYPE_HUGEINT, []HugeInt{
+			{},
+			{Lower: 5, Upper: -2},
+			{Lower: 7, Upper: 3},
+			{Upper: math.MinInt64},
+			{Lower: math.MaxUint64, Upper: math.MaxInt64},
+		}, []string{
+			"0", "-36893488147419103227", "55340232221128654855",
+			"-170141183460469231731687303715884105728", "170141183460469231731687303715884105727",
+		})
+	})
+	t.Run("unsigned", func(t *testing.T) {
+		testHugeIntVectorAccess(t, TYPE_UHUGEINT, []UHugeInt{
+			{},
+			{Lower: 7, Upper: 3},
+			{Lower: 1, Upper: 1 << 63},
+			{Lower: math.MaxUint64, Upper: math.MaxUint64},
+		}, []string{
+			"0", "55340232221128654855", "170141183460469231731687303715884105729",
+			"340282366920938463463374607431768211455",
+		})
+	})
+}
+
+func testHugeIntVectorAccess[T HugeInt | UHugeInt](t *testing.T, typ Type, values []T, decimals []string) {
+	input := newVectorViewTestChunk(t, mustTypeInfo(t, typ))
+	output := newVectorViewTestChunk(t, mustTypeInfo(t, typ))
+	for row, decimal := range decimals {
+		i, ok := new(big.Int).SetString(decimal, 10)
+		require.True(t, ok)
+		require.NoError(t, input.SetValue(0, row, i))
+	}
+	require.NoError(t, input.SetValue(0, len(values), nil))
+	require.NoError(t, input.SetSize(len(values)+1))
+	require.NoError(t, output.SetSize(len(values)+1))
+	view, err := GetVectorView[T](mustGetVector(t, input, 0))
+	require.NoError(t, err)
+	writer, err := GetVectorWriter[T](mustGetVector(t, output, 0))
+	require.NoError(t, err)
+	require.Equal(t, len(values)+1, view.Len())
+	require.Equal(t, view.Len(), writer.Len())
+
+	for row, want := range values {
+		got, valid, getErr := view.GetValueBorrowed(row)
+		require.NoError(t, getErr)
+		require.True(t, valid)
+		require.Equal(t, want, got)
+		require.NoError(t, writer.Set(row, got))
+		owned, getErr := output.GetValue(0, row)
+		require.NoError(t, getErr)
+		require.Equal(t, decimals[row], owned.(*big.Int).String())
+	}
+	var zero T
+	got, valid, err := view.GetValueBorrowed(len(values))
+	require.NoError(t, err)
+	require.False(t, valid)
+	require.Equal(t, zero, got)
+	require.NoError(t, writer.SetNull(1))
+	owned, err := output.GetValue(0, 1)
+	require.NoError(t, err)
+	require.Nil(t, owned)
+	require.NoError(t, writer.Set(1, values[1]))
+	owned, err = output.GetValue(0, 1)
+	require.NoError(t, err)
+	require.Equal(t, decimals[1], owned.(*big.Int).String())
+
+	// Value copies must not retain a dependency on the source row.
+	copied, _, err := view.GetValueBorrowed(1)
+	require.NoError(t, err)
+	require.NoError(t, SetChunkValue(*input, 0, 1, values[0]))
+	require.Equal(t, values[1], copied)
+
+	allocs := testing.AllocsPerRun(100, func() {
+		value, _, getErr := view.GetValueBorrowed(2)
+		if getErr != nil {
+			panic(getErr)
+		}
+		if setErr := writer.Set(2, value); setErr != nil {
+			panic(setErr)
+		}
+	})
+	require.Zero(t, allocs, "typed 128-bit vector reads and writes must not allocate")
+
+	_, _, err = view.GetValueBorrowed(-1)
+	require.ErrorContains(t, err, rowIndexErrMsg)
+	_, _, err = view.GetValueBorrowed(view.Len())
+	require.ErrorContains(t, err, rowIndexErrMsg)
+	require.ErrorContains(t, writer.Set(writer.Len(), zero), rowIndexErrMsg)
+}
+
+func TestHugeIntVectorTypeValidation(t *testing.T) {
+	decimal, err := NewDecimalInfo(38, 0)
+	require.NoError(t, err)
+	chunk := newVectorViewTestChunk(t,
+		mustTypeInfo(t, TYPE_HUGEINT), mustTypeInfo(t, TYPE_UHUGEINT),
+		mustTypeInfo(t, TYPE_UUID), decimal, mustTypeInfo(t, TYPE_VARCHAR),
+	)
+	for column := range chunk.ColumnCount() {
+		vector := mustGetVector(t, chunk, column)
+		if column != 0 {
+			_, err = GetVectorView[HugeInt](vector)
+			require.ErrorContains(t, err, "cannot be read as Go duckdb.HugeInt")
+			_, err = GetVectorWriter[HugeInt](vector)
+			require.ErrorContains(t, err, "cannot be written as Go duckdb.HugeInt")
+		}
+		if column != 1 {
+			_, err = GetVectorView[UHugeInt](vector)
+			require.ErrorContains(t, err, "cannot be read as Go duckdb.UHugeInt")
+			_, err = GetVectorWriter[UHugeInt](vector)
+			require.ErrorContains(t, err, "cannot be written as Go duckdb.UHugeInt")
+		}
+	}
 }
 
 func TestVarcharVectorViewValidation(t *testing.T) {
