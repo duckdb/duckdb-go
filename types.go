@@ -892,5 +892,20 @@ func inferTimeTZ(val any) (mapping.TimeTZ, error) {
 func wallClockMicros(ti time.Time) int64 {
 	// DuckDB stores time as microseconds since 00:00:00.
 	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	return base.UnixMicro()
+	micros := base.UnixMicro()
+	if micros == 0 && isEndOfDay(ti) {
+		return microsPerDay
+	}
+	return micros
+}
+
+// microsPerDay is TIME '24:00:00', the largest TIME value.
+const microsPerDay = int64(24 * time.Hour / time.Microsecond)
+
+// isEndOfDay reports whether ti is midnight of the day after 0001-01-01 or 1970-01-01.
+// Reading TIME '24:00:00' gives 0001-01-02 00:00:00 (see getTime), so this keeps that value
+// instead of wrapping it around to 00:00:00 when it is written back.
+func isEndOfDay(ti time.Time) bool {
+	year, month, day := ti.Date()
+	return month == time.January && day == 2 && (year == 1 || year == 1970)
 }
