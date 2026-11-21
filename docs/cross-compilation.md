@@ -39,10 +39,13 @@ Consumer applications queried DuckDB successfully under Rosetta, in Debian 13 co
 - **Older Linux runtimes:** the tested messense GCC 15.2 linux/amd64 build requires `GLIBCXX_3.4.32`.
   It runs on Debian 13 but fails on Debian 12's stock `libstdc++` with ``version `GLIBCXX_3.4.32' not found``.
   Build in a container matching the target runtime if the cross-toolchain requires newer system libraries.
-- **Windows CRT:** the pre-built Windows library requires UCRT.
+- **Windows AMD64 CRT:** the pre-built Windows AMD64 library requires UCRT.
   MSVCRT-based toolchains can fail with unresolved symbols such as `__stdio_common_vsnprintf_s`.
   The UCRT package above requires Debian 13; see the [MinGW-w64 Debian instructions](https://www.mingw-w64.org/getting-started/debian/).
-- **C++ runtime compatibility:** Linux and Windows prebuilts use `libstdc++`, while Darwin prebuilts use `libc++`.
+- **Windows ARM64:** no default Go platform module is available.
+  Use `duckdb_use_lib` or `duckdb_use_static_lib` and the [Windows ARM64 setup](../README.md#arm64).
+  Stage libraries with host Go settings before setting `GOOS=windows GOARCH=arm64` for the build.
+- **C++ runtime compatibility:** Linux and Windows AMD64 prebuilts use `libstdc++`, while Darwin prebuilts use `libc++`.
   The target toolchain must be compatible with the library's C++ ABI and runtime.
   The tested Zig 0.17.0 linux/amd64 configuration fails to link the prebuilts with undefined `std::__cxx11` symbols.
 
