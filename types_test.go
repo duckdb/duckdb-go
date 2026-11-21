@@ -1003,6 +1003,11 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, timeUTC, res)
 
+	// TIME '24:00:00' doesn't wrap around to the start of the day.
+	err = db.QueryRow(`SELECT '24:00:00'::TIME`).Scan(&res)
+	require.NoError(t, err)
+	require.Equal(t, time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), res)
+
 	timeTZ := time.Date(1, time.January, 1, 11, 42, 7, 0, IST)
 
 	err = db.QueryRow(`SELECT ?::TIMETZ`, timeTZ).Scan(&res)
