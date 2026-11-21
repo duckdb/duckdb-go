@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/apache/arrow-go/v18 v18.5.2
-	github.com/duckdb/duckdb-go-bindings v0.20000.1-0.20261110174022-faa21b4c6cad
+	github.com/duckdb/duckdb-go-bindings v0.20001.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.12.1
@@ -17,11 +17,11 @@ require (
 	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
-	go.duckdb.org/libduckdb/darwin-amd64 v0.20000.0 // indirect
-	go.duckdb.org/libduckdb/darwin-arm64 v0.20000.0 // indirect
-	go.duckdb.org/libduckdb/linux-amd64 v0.20000.0 // indirect
-	go.duckdb.org/libduckdb/linux-arm64 v0.20000.0 // indirect
-	go.duckdb.org/libduckdb/windows-amd64 v0.20000.0 // indirect
+	go.duckdb.org/libduckdb/darwin-amd64 v0.20001.0 // indirect
+	go.duckdb.org/libduckdb/darwin-arm64 v0.20001.0 // indirect
+	go.duckdb.org/libduckdb/linux-amd64 v0.20001.0 // indirect
+	go.duckdb.org/libduckdb/linux-arm64 v0.20001.0 // indirect
+	go.duckdb.org/libduckdb/windows-amd64 v0.20001.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/mod v0.33.0 // indirect
