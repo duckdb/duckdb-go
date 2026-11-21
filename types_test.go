@@ -1008,6 +1008,31 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), res)
 
+	// Binding it again keeps 24:00:00, and so does midnight of 1970-01-02.
+	// Midnight of any other day is 00:00:00.
+	var str string
+	for _, tc := range []struct {
+		in   time.Time
+		want string
+	}{
+		{res, "24:00:00"},
+		{time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC), "24:00:00"},
+		{time.Date(1, time.January, 2, 0, 0, 0, 1000, time.UTC), "00:00:00.000001"},
+		{time.Date(2024, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
+		{time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC), "00:00:00"},
+	} {
+		err = db.QueryRow(`SELECT ?::TIME::VARCHAR`, tc.in).Scan(&str)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, str, "binding %v", tc.in)
+	}
+
+	// The same holds for TIMETZ.
+	err = db.QueryRow(`SELECT '24:00:00+05:30'::TIMETZ`).Scan(&res)
+	require.NoError(t, err)
+	err = db.QueryRow(`SELECT ?::TIMETZ::VARCHAR`, res).Scan(&str)
+	require.NoError(t, err)
+	require.Equal(t, "24:00:00+05:30", str)
+
 	timeTZ := time.Date(1, time.January, 1, 11, 42, 7, 0, IST)
 
 	err = db.QueryRow(`SELECT ?::TIMETZ`, timeTZ).Scan(&res)

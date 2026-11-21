@@ -1059,6 +1059,26 @@ func TestAppenderTime(t *testing.T) {
 	require.Equal(t, base.UnixMicro(), r.UnixMicro())
 }
 
+func TestAppenderTimeEndOfDay(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id INT, time TIME)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	// TIME '24:00:00' as getTime returns it, and as midnight of 1970-01-02.
+	require.NoError(t, a.AppendRow(int32(1), time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, a.AppendRow(int32(2), time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, a.Flush())
+
+	rows, err := db.QueryContext(context.Background(), `SELECT time::VARCHAR FROM test ORDER BY id`)
+	require.NoError(t, err)
+	defer closeRowsWrapper(t, rows)
+	for rows.Next() {
+		var r string
+		require.NoError(t, rows.Scan(&r))
+		require.Equal(t, "24:00:00", r)
+	}
+	require.NoError(t, rows.Err())
+}
+
 func TestAppenderNullTimestampTZ(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (ts TIMESTAMPTZ)`)
 	defer cleanupAppender(t, c, db, conn, a)
