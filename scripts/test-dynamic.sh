@@ -36,7 +36,15 @@ if ! verify "$ARCHIVE" >/dev/null 2>&1; then
 fi
 tar -xzf "$ARCHIVE" -C "$LIB_DIR"
 
+if [[ $PLATFORM == windows-* ]]; then
+  # Link the import library and make duckdb.dll visible to the test executable.
+  LIB_LINK_DIR="$(cygpath -m "$LIB_DIR")"
+  export CGO_LDFLAGS="${CGO_LDFLAGS:+$CGO_LDFLAGS }\"-L$LIB_LINK_DIR\""
+  PATH="$LIB_DIR:$PATH" go test -tags="${TAGS:+$TAGS,}duckdb_use_lib" "$@"
+  exit
+fi
+
 # Prefer the verified library over any inherited Linux library search path.
 LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  go test -tags=duckdb_use_lib \
+  go test -tags="${TAGS:+$TAGS,}duckdb_use_lib" \
     -ldflags="-extldflags '-L$LIB_DIR -Wl,-rpath,$LIB_DIR'" "$@"

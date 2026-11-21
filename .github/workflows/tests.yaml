@@ -28,8 +28,12 @@ jobs:
           - linux-arm64
           - windows-amd64
         go: [1.24]
-        # Keep Intel macOS and Windows AMD64 coverage after merge without delaying PR checks.
-        exclude: &skip-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"},{"platform":"windows-amd64"}]' || '[]') }}
+        # PRs use the fast runner pool: Linux AMD64/ARM64 and macOS ARM64.
+        # Namespace availability alone does not qualify a platform for PRs:
+        # Windows AMD64 also stays off the PR path to avoid runner contention.
+        # Intel macOS and Windows ARM64 use GitHub-hosted runners and stay off it too.
+        # Main/release pushes and manual runs retain the full platform matrix.
+        exclude: &skip-on-pr ${{ fromJSON(github.event_name == 'pull_request' && '[{"platform":"darwin-amd64"},{"platform":"windows-amd64"},{"platform":"windows-arm64"}]' || '[]') }}
         # Platforms map to GitHub-hosted runners by default and to DuckDB's Namespace
         # runners when the workflow runs in the duckdb organization. There is no
         # Namespace profile for Intel macOS, so runs-on falls back to github.
@@ -138,13 +142,59 @@ jobs:
           - darwin-arm64
           - linux-amd64
           - linux-arm64
+          - windows-arm64
         exclude: *skip-on-pr
-        include: [*darwin-amd64, *darwin-arm64, *linux-amd64, *linux-arm64]
+        include:
+          - *darwin-amd64
+          - *darwin-arm64
+          - *linux-amd64
+          - *linux-arm64
+          - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"windows-arm64","github":"windows-11-vs2026-arm"}]') }}
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
+      - name: Install ARM64 C compiler
+        if: matrix.platform == 'windows-arm64'
+        shell: pwsh
+        run: |
+          # The Go matcher misclassifies Clang notes in Arrow's cgo code as errors.
+          Write-Output '::remove-matcher owner=go::'
+          $name = "llvm-mingw-20261020-ucrt-aarch64"
+          $archive = "$env:RUNNER_TEMP/$name.zip"
+          Invoke-WebRequest "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/$name.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() -ne "8f24fedd0b75c674c6c83dec2d76a7ac31a690120212843a17e465ef49854f69") {
+            throw "llvm-mingw checksum mismatch"
+          }
+          Expand-Archive $archive -DestinationPath $env:RUNNER_TEMP
+          "$env:RUNNER_TEMP/$name/bin" >> $env:GITHUB_PATH
+          "CC=aarch64-w64-mingw32-clang" >> $env:GITHUB_ENV
+          "CXX=aarch64-w64-mingw32-clang++" >> $env:GITHUB_ENV
+      - name: Locate ARM64 Microsoft runtime libraries
+        if: matrix.platform == 'windows-arm64' && matrix.link == 'static'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -version '[18.0,19.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          if (!$vs) { throw "Visual Studio 2026 ARM64 tools are required" }
+          $tools = (Get-Content "$vs/VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt").Trim()
+          $sdkRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots').KitsRoot10
+          $sdk = Get-ChildItem "${sdkRoot}Lib" -Directory |
+            Where-Object { Test-Path "$($_.FullName)/ucrt/arm64/libucrt.lib" } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (!$sdk) { throw "Windows SDK ARM64 libraries are required" }
+          $paths = @{
+            MSVC_LIB_DIR = "$vs/VC/Tools/MSVC/$tools/lib/arm64"
+            UCRT_LIB_DIR = "$($sdk.FullName)/ucrt/arm64"
+            WINDOWS_LIB_DIR = "$($sdk.FullName)/um/arm64"
+          }
+          foreach ($entry in $paths.GetEnumerator()) {
+            if (!(Test-Path $entry.Value)) { throw "Missing $($entry.Value)" }
+            $setting = "$($entry.Key)=$($entry.Value.Replace('\', '/'))"
+            Write-Host $setting
+            $setting >> $env:GITHUB_ENV
+          }
       - name: Run Lib Tests
-        run: make test.${{ matrix.link }}
+        run: TAGS=duckdb_arrow make test.${{ matrix.link }}

@@ -5,9 +5,9 @@
 
 The DuckDB driver conforms to the built-in `database/sql` interface.
 
-**Current DuckDB version: `v2.0.0`.**
+**Current DuckDB version: `v2.0.1`.**
 
-The first duckdb-go tag with that version is `v2.20000.0`.
+The first duckdb-go tag with that version is `v2.20001.0`.
 
 Starting with DuckDB `v1.5.0`, the duckdb-go version encodes the DuckDB version in its second semver component.
 The format is `v2.MAJOR_MINOR_PATCH.x`, e.g., DuckDB `v1.5.0` maps to duckdb-go `v2.10500.x`.
@@ -16,6 +16,7 @@ Previous DuckDB versions:
 
 | DuckDB   | duckdb-go    |
 |----------|--------------|
+| `v2.0.1` | `v2.20001.0` |
 | `v2.0.0` | `v2.20000.0` |
 | `v1.5.6` | `v2.10506.0` |
 | `v1.5.5` | `v2.10505.0` |
@@ -170,6 +171,8 @@ go get github.com/duckdb/duckdb-go/v2
 
 ### Windows
 
+#### AMD64
+
 You must have the correct version of gcc and the necessary runtime libraries installed on Windows.
 One method to do this is using msys64.
 To begin, install msys64 using their installer.
@@ -183,6 +186,17 @@ Select "yes" when necessary; it is okay if the shell closes.
 Then, add gcc to the path using whatever method you prefer.
 In powershell this is `$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"`.
 After, you can compile this package in Windows.
+
+#### ARM64
+
+Windows ARM64 requires explicit linking with `duckdb_use_lib` or `duckdb_use_static_lib`.
+There is no default pre-built Go platform module; both modes use official DuckDB ARM64 archives.
+Use an ARM64-targeting llvm-mingw compiler.
+For dynamic linking, provide the import library at build time and keep `duckdb.dll` beside the executable or on `PATH` at runtime.
+Static linking also requires Visual Studio 2026 ARM64 C++ tools (MSVC 14.51+) and Windows SDK ARM64 libraries.
+Apply the CRT settings to the entire build, including `runtime/cgo` and Arrow, not just the bindings.
+Follow the [bindings' Windows ARM64 setup](https://github.com/duckdb/duckdb-go-bindings#windows-arm64),
+using the bindings version selected by your application's `go.mod`.
 
 ### Vendoring
 
@@ -260,6 +274,8 @@ Avoid forcing static glibc linking with `-static`: runtime library loading can f
 - Linux: amd64, arm64.
 - Windows: amd64.
 
+Windows ARM64 is supported with explicit [static or dynamic linking setup](#arm64), not through the default libraries above.
+
 ### Linking a Static Library
 
 If none of the pre-built libraries satisfy your needs, you can link your own DuckDB static libraries
@@ -300,7 +316,7 @@ Thus, you must build your static library for FreeBSD using the steps above.
 ### Linking a Dynamic Library
 
 Alternatively, you can dynamically link DuckDB by passing `-tags=duckdb_use_lib` to `go build`.
-You must have a copy of `libduckdb` available on your system (`.so` on Linux or `.dylib` on macOS).
+You must have a copy of `libduckdb` available on your system (`.so` on Linux, `.dylib` on macOS, or `duckdb.dll` and its import library on Windows).
 DuckDB releases publish it as `duckdb-shared-libs-<platform>.tar.gz`,
 and `curl https://install.duckdb.org | DUCKDB_INSTALL=shared sh` installs it into `~/.duckdb/lib/<version>/release_<platform>`.
 
