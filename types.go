@@ -870,7 +870,20 @@ func inferDate[T any](val T) (mapping.Date, error) {
 	return mapping.NewDate(int32(midnight.Unix() / secondsPerDay)), nil
 }
 
+// maxTimeMicros is TIME '24:00:00', the largest TIME value.
+const maxTimeMicros = int64(24 * time.Hour / time.Microsecond)
+
 func inferTime(val any) (mapping.Time, error) {
+	// A mapping.Time is written as is, so callers can write TIME '24:00:00',
+	// which the clock of a time.Time cannot represent.
+	if ti, ok := val.(mapping.Time); ok {
+		micros := mapping.TimeMembers(&ti)
+		if micros < 0 || micros > maxTimeMicros {
+			return mapping.Time{}, timeRangeError(micros, 0, maxTimeMicros)
+		}
+		return ti, nil
+	}
+
 	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.Time{}, err
@@ -892,20 +905,5 @@ func inferTimeTZ(val any) (mapping.TimeTZ, error) {
 func wallClockMicros(ti time.Time) int64 {
 	// DuckDB stores time as microseconds since 00:00:00.
 	base := time.Date(1970, time.January, 1, ti.Hour(), ti.Minute(), ti.Second(), ti.Nanosecond(), time.UTC)
-	micros := base.UnixMicro()
-	if micros == 0 && isEndOfDay(ti) {
-		return microsPerDay
-	}
-	return micros
-}
-
-// microsPerDay is TIME '24:00:00', the largest TIME value.
-const microsPerDay = int64(24 * time.Hour / time.Microsecond)
-
-// isEndOfDay reports whether ti is midnight of the day after 0001-01-01 or 1970-01-01.
-// Reading TIME '24:00:00' gives 0001-01-02 00:00:00 (see getTime), so this keeps that value
-// instead of wrapping it around to 00:00:00 when it is written back.
-func isEndOfDay(ti time.Time) bool {
-	year, month, day := ti.Date()
-	return month == time.January && day == 2 && (year == 1 || year == 1970)
+	return base.UnixMicro()
 }

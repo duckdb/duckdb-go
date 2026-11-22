@@ -774,6 +774,17 @@ func TestErrAppenderTSConversion(t *testing.T) {
 	}
 }
 
+func TestErrAppenderTimeConversion(t *testing.T) {
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (t TIME)`)
+	defer cleanupAppender(t, c, db, conn, a)
+
+	err := a.AppendRow(mapping.NewTime(-1))
+	testError(t, err, errAppenderAppendRow.Error(), convertErrMsg)
+
+	err = a.AppendRow(mapping.NewTime(86_400_000_001))
+	testError(t, err, errAppenderAppendRow.Error(), convertErrMsg)
+}
+
 func TestErrAPISetValue(t *testing.T) {
 	var chunk DataChunk
 	err := chunk.SetValue(1, 42, "hello")

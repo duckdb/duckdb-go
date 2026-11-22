@@ -20,6 +20,8 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 type simpleStruct struct {
@@ -1059,24 +1061,31 @@ func TestAppenderTime(t *testing.T) {
 	require.Equal(t, base.UnixMicro(), r.UnixMicro())
 }
 
-func TestAppenderTimeEndOfDay(t *testing.T) {
+func TestAppenderTimeMicros(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id INT, time TIME)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
-	// TIME '24:00:00' as getTime returns it, and as midnight of 1970-01-02.
-	require.NoError(t, a.AppendRow(int32(1), time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)))
-	require.NoError(t, a.AppendRow(int32(2), time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	// A mapping.Time is appended as is, including TIME '24:00:00'.
+	// A time.Time keeps only its clock, so midnight of the next day is 00:00:00.
+	want := []string{"00:00:00", "24:00:00", "00:00:00", "00:00:00"}
+	require.NoError(t, a.AppendRow(int32(0), mapping.NewTime(0)))
+	require.NoError(t, a.AppendRow(int32(1), mapping.NewTime(86_400_000_000)))
+	require.NoError(t, a.AppendRow(int32(2), time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, a.AppendRow(int32(3), time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC)))
 	require.NoError(t, a.Flush())
 
 	rows, err := db.QueryContext(context.Background(), `SELECT time::VARCHAR FROM test ORDER BY id`)
 	require.NoError(t, err)
 	defer closeRowsWrapper(t, rows)
+
+	var got []string
 	for rows.Next() {
 		var r string
 		require.NoError(t, rows.Scan(&r))
-		require.Equal(t, "24:00:00", r)
+		got = append(got, r)
 	}
 	require.NoError(t, rows.Err())
+	require.Equal(t, want, got)
 }
 
 func TestAppenderNullTimestampTZ(t *testing.T) {
