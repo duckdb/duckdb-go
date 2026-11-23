@@ -329,6 +329,13 @@ var jsonWriteTests = []struct {
 	{name: "raw message is a JSON document", value: json.RawMessage(`{"a":1}`), want: `{"a":1}`},
 	{name: "map is a JSON object", value: map[string]any{"a": 1}, want: `{"a":1}`},
 	{name: "byte slice is a base64 JSON string", value: []byte(`{"a":1}`), want: `"eyJhIjoxfQ=="`},
+	{name: "HugeInt is a JSON integer", value: HugeInt{Lower: 5}, want: `5`},
+	{name: "HugeInt pointer is a JSON integer", value: &HugeInt{Lower: 5, Upper: -2}, want: `-36893488147419103227`},
+	{name: "UHugeInt is a JSON integer", value: UHugeInt{Lower: 1, Upper: 1 << 63}, want: `170141183460469231731687303715884105729`},
+	{name: "UHugeInt pointer is a JSON integer", value: &UHugeInt{Lower: math.MaxUint64, Upper: math.MaxUint64}, want: `340282366920938463463374607431768211455`},
+	{name: "nested huge integers", value: []any{HugeInt{Lower: 5}, UHugeInt{Lower: 7}}, want: `[5,7]`},
+	{name: "nil HugeInt is NULL", value: (*HugeInt)(nil), want: nil},
+	{name: "nil UHugeInt is NULL", value: (*UHugeInt)(nil), want: nil},
 	{name: "nil is NULL", value: nil, want: nil},
 }
 
@@ -1057,6 +1064,41 @@ func TestAppenderHugeIntValues(t *testing.T) {
 
 func TestAppenderBigNum(t *testing.T) {
 	testAppenderSignedHugeInt(t, "BIGNUM")
+
+	t.Run("hugeint values", func(t *testing.T) {
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (v BIGNUM)`)
+		defer cleanupAppender(t, c, db, conn, a)
+
+		tests := []struct {
+			value any
+			want  any
+		}{
+			{HugeInt{Lower: 5, Upper: -2}, "-36893488147419103227"},
+			{&HugeInt{Upper: math.MinInt64}, "-170141183460469231731687303715884105728"},
+			{UHugeInt{Lower: 1, Upper: 1 << 63}, "170141183460469231731687303715884105729"},
+			{&UHugeInt{Lower: math.MaxUint64, Upper: math.MaxUint64}, "340282366920938463463374607431768211455"},
+			{(*HugeInt)(nil), nil},
+			{(*UHugeInt)(nil), nil},
+		}
+		for _, tt := range tests {
+			require.NoError(t, a.AppendRow(tt.value))
+		}
+		require.NoError(t, a.Flush())
+		rows, err := db.Query(`SELECT v::VARCHAR FROM test ORDER BY rowid`)
+		require.NoError(t, err)
+		defer closeRowsWrapper(t, rows)
+		for _, tt := range tests {
+			require.True(t, rows.Next())
+			var got any
+			require.NoError(t, rows.Scan(&got))
+			require.Equal(t, tt.want, got)
+			var bound any
+			require.NoError(t, db.QueryRow(`SELECT ?::BIGNUM::VARCHAR`, tt.value).Scan(&bound))
+			require.Equal(t, tt.want, bound)
+		}
+		require.False(t, rows.Next())
+		require.NoError(t, rows.Err())
+	})
 }
 
 func TestAppenderTsNs(t *testing.T) {
