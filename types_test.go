@@ -20,6 +20,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
 // First, this test inserts all types (except UUID and DECIMAL) with the Appender.
@@ -1014,6 +1016,43 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 	// TIMETZ preserves the time and timezone offset.
 	require.True(t, timeTZ.Equal(res), "expected %v, got %v", timeTZ, res)
+}
+
+func TestTimeMicros(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	_, err := db.Exec(`CREATE TABLE test (id INT, time TIME)`)
+	require.NoError(t, err)
+
+	// A mapping.Time binds as is, including TIME '24:00:00'.
+	// A time.Time keeps only its clock, so midnight of the next day is 00:00:00.
+	for i, tc := range []struct {
+		in   any
+		want string
+	}{
+		{mapping.NewTime(0), "00:00:00"},
+		{mapping.NewTime(86_400_000_000), "24:00:00"},
+		{time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
+		{time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
+	} {
+		var str string
+		err = db.QueryRow(`SELECT ?::TIME::VARCHAR`, tc.in).Scan(&str)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, str, "binding %v", tc.in)
+
+		_, err = db.Exec(`INSERT INTO test VALUES (?, ?)`, i, tc.in)
+		require.NoError(t, err)
+		err = db.QueryRow(`SELECT time::VARCHAR FROM test WHERE id = ?`, i).Scan(&str)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, str, "inserting %v", tc.in)
+	}
+
+	for _, micros := range []int64{-1, 86_400_000_001} {
+		_, err = db.Exec(`INSERT INTO test VALUES (?, ?)`, 0, mapping.NewTime(micros))
+		require.ErrorIs(t, err, errCouldNotBind)
+		require.ErrorContains(t, err, convertErrMsg)
+	}
 }
 
 func TestENUMs(t *testing.T) {

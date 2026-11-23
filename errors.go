@@ -34,6 +34,10 @@ func conversionError(actual, min, max int) error {
 	return fmt.Errorf("%s: cannot convert %d, minimum: %d, maximum: %d", convertErrMsg, actual, min, max)
 }
 
+func timeRangeError(actual, min, max int64) error {
+	return fmt.Errorf("%s: cannot convert TIME %d microseconds, minimum: %d, maximum: %d", convertErrMsg, actual, min, max)
+}
+
 func dateRangeError(actual, min, max time.Time) error {
 	return fmt.Errorf("%s: cannot convert %s, minimum: %s, maximum: %s",
 		convertErrMsg, actual.Format(time.DateOnly), min.Format(time.DateOnly), max.Format(time.DateOnly))

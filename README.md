@@ -406,6 +406,10 @@ Call `value.UTC()` first to get the UTC date and clock.
 Query parameters must bind as `DATE` or `TIME` for this: a bare `time.Time` in `?::DATE` binds as
 `TIMESTAMP_TZ`, so the cast uses the session `TimeZone`; use `Typed(value, TYPE_DATE)` instead.
 
+A `time.Time` cannot write `TIME '24:00:00'`, since its clock wraps to `00:00:00`.
+To write it, pass `mapping.NewTime(86_400_000_000)` to a `TIME` parameter or the appender;
+`mapping.Time` values must be between 0 and 86,400,000,000 microseconds.
+
 **Connection lifetime**
 
 Temporary objects and state, such as temporary tables, are scoped to connections.

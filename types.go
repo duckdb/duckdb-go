@@ -870,7 +870,20 @@ func inferDate[T any](val T) (mapping.Date, error) {
 	return mapping.NewDate(int32(midnight.Unix() / secondsPerDay)), nil
 }
 
+// maxTimeMicros is TIME '24:00:00', the largest TIME value.
+const maxTimeMicros = int64(24 * time.Hour / time.Microsecond)
+
 func inferTime(val any) (mapping.Time, error) {
+	// A mapping.Time is written as is, so callers can write TIME '24:00:00',
+	// which the clock of a time.Time cannot represent.
+	if ti, ok := val.(mapping.Time); ok {
+		micros := mapping.TimeMembers(&ti)
+		if micros < 0 || micros > maxTimeMicros {
+			return mapping.Time{}, timeRangeError(micros, 0, maxTimeMicros)
+		}
+		return ti, nil
+	}
+
 	ti, err := castToTime(val)
 	if err != nil {
 		return mapping.Time{}, err
