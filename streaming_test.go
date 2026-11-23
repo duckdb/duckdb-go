@@ -411,8 +411,12 @@ func TestStreamingResultsCancelAbandonsTheRest(t *testing.T) {
 		cancel()
 		// database/sql closes the rows and rolls back once the transaction context is canceled.
 		require.Eventually(t, func() bool { return errors.Is(tx.Commit(), sql.ErrTxDone) }, 10*time.Second, 10*time.Millisecond)
-		// database/sql has closed the rows already, and reports the cancellation by Err.
-		require.NoError(t, rows.Close())
+		// database/sql closes the rows on its own goroutine, which may not have run yet when Commit
+		// reports ErrTxDone. If it has, Close returns nil; if not, this Close abandons the rest and
+		// reports the cancellation. Either way, Err reports it.
+		if err := rows.Close(); err != nil {
+			require.ErrorIs(t, err, context.Canceled)
+		}
 		require.ErrorIs(t, rows.Err(), context.Canceled)
 		require.Less(t, time.Since(start), 10*time.Second)
 	})
