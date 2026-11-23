@@ -26,6 +26,11 @@ LIB_DIR="$REPO_ROOT/static-dir"
 rm -rf "$LIB_DIR"
 mkdir -p "$LIB_DIR"
 
+# Go invokes the native linker without Git Bash's automatic path conversion.
+if [[ $PLATFORM == windows-* ]]; then
+  LIB_DIR="$(cygpath -m "$LIB_DIR")"
+fi
+
 # Split the compiler command and flag lists into separate arguments.
 read -r -a COMPILER <<<"$(go env CC)"
 read -r -a COMPILER_FLAGS <<<"$(go env GOGCCFLAGS) $(go env CGO_CPPFLAGS) $(go env CGO_CFLAGS)"

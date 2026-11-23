@@ -21,12 +21,23 @@ Adhering to these guidelines is not a complete guarantee that your pull request 
 `duckdb-go` aims to contain tests that are fast, cover a significant portion of the code, 
 are comprehensible, and can serve as documentation.
 
-On Linux or macOS, run the tests against the libraries that the bindings pin
+On Linux, macOS, or Windows AMD64, run the tests against the libraries that the bindings pin
 for the current platform:
 
 ```sh
 make test.dynamic
 make test.static
+```
+
+On Windows AMD64, use Git Bash with `make` and the [UCRT compiler setup](README.md#amd64) on `PATH`.
+Both linking modes require `cygpath` (included with Git Bash) for native Windows paths.
+The dynamic tests add the DLL directory to `PATH` for the test executable.
+
+To include Arrow tests, as the custom-linking CI jobs do:
+
+```sh
+TAGS=duckdb_arrow make test.dynamic
+TAGS=duckdb_arrow make test.static
 ```
 
 The targets run `scripts/test-dynamic.sh` and `scripts/test-static.sh`.
