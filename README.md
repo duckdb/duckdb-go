@@ -409,6 +409,7 @@ Query parameters must bind as `DATE` or `TIME` for this: a bare `time.Time` in `
 A `time.Time` cannot write `TIME '24:00:00'`, since its clock wraps to `00:00:00`.
 To write it, pass `mapping.NewTime(86_400_000_000)` to a `TIME` parameter or the appender;
 `mapping.Time` values must be between 0 and 86,400,000,000 microseconds.
+A `mapping.Time` bound to a parameter without a type, as in `SELECT ?`, binds as `TIME`.
 
 **Connection lifetime**
 
