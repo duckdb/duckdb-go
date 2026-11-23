@@ -1067,11 +1067,14 @@ func TestAppenderTimeMicros(t *testing.T) {
 
 	// A mapping.Time is appended as is, including TIME '24:00:00'.
 	// A time.Time keeps only its clock, so midnight of the next day is 00:00:00.
-	want := []string{"00:00:00", "24:00:00", "00:00:00", "00:00:00"}
+	// Fractional seconds are kept to the microsecond.
+	want := []string{"00:00:00", "24:00:00", "00:00:00", "00:00:00", "12:34:56.789012", "12:34:56.789012"}
 	require.NoError(t, a.AppendRow(int32(0), mapping.NewTime(0)))
 	require.NoError(t, a.AppendRow(int32(1), mapping.NewTime(86_400_000_000)))
 	require.NoError(t, a.AppendRow(int32(2), time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)))
 	require.NoError(t, a.AppendRow(int32(3), time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, a.AppendRow(int32(4), mapping.NewTime(45_296_789_012)))
+	require.NoError(t, a.AppendRow(int32(5), time.Date(1, time.January, 1, 12, 34, 56, 789_012_000, time.UTC)))
 	require.NoError(t, a.Flush())
 
 	rows, err := db.QueryContext(context.Background(), `SELECT time::VARCHAR FROM test ORDER BY id`)

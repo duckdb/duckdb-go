@@ -1035,6 +1035,9 @@ func TestTimeMicros(t *testing.T) {
 		{mapping.NewTime(86_400_000_000), "24:00:00"},
 		{time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
 		{time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
+		// Fractional seconds are kept to the microsecond.
+		{mapping.NewTime(45_296_789_012), "12:34:56.789012"},
+		{time.Date(1, time.January, 1, 12, 34, 56, 789_012_000, time.UTC), "12:34:56.789012"},
 	} {
 		var str string
 		err = db.QueryRow(`SELECT ?::TIME::VARCHAR`, tc.in).Scan(&str)
@@ -1050,6 +1053,42 @@ func TestTimeMicros(t *testing.T) {
 
 	for _, micros := range []int64{-1, 86_400_000_001} {
 		_, err = db.Exec(`INSERT INTO test VALUES (?, ?)`, 0, mapping.NewTime(micros))
+		require.ErrorIs(t, err, errCouldNotBind)
+		require.ErrorContains(t, err, convertErrMsg)
+	}
+}
+
+func TestTimeMicrosUntypedParam(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// A mapping.Time bound to a parameter without a type is a TIME.
+	var typ string
+	err := db.QueryRow(`SELECT typeof(?)`, mapping.NewTime(1)).Scan(&typ)
+	require.NoError(t, err)
+	require.Equal(t, "TIME", typ)
+
+	for _, tc := range []struct {
+		micros int64
+		want   string
+	}{
+		{0, "00:00:00"},
+		{45_296_789_012, "12:34:56.789012"},
+		{86_400_000_000, "24:00:00"},
+	} {
+		var str string
+		err = db.QueryRow(`SELECT x::VARCHAR FROM (SELECT ? AS x)`, mapping.NewTime(tc.micros)).Scan(&str)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, str, "binding %d", tc.micros)
+	}
+
+	var res time.Time
+	err = db.QueryRow(`SELECT ?`, mapping.NewTime(45_296_789_012)).Scan(&res)
+	require.NoError(t, err)
+	require.Equal(t, time.Date(1, time.January, 1, 12, 34, 56, 789_012_000, time.UTC), res)
+
+	for _, micros := range []int64{-1, 86_400_000_001} {
+		err = db.QueryRow(`SELECT ?`, mapping.NewTime(micros)).Scan(&res)
 		require.ErrorIs(t, err, errCouldNotBind)
 		require.ErrorContains(t, err, convertErrMsg)
 	}

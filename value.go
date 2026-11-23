@@ -400,6 +400,8 @@ func inferPrimitiveType(v any) (Type, any) {
 		// Go's time.Time always carries timezone information (via Location),
 		// so TIMESTAMP WITH TIME ZONE is the correct semantic mapping.
 		t = TYPE_TIMESTAMP_TZ
+	case mapping.Time:
+		t = TYPE_TIME
 	case Interval:
 		t = TYPE_INTERVAL
 	case *big.Int:
