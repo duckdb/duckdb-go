@@ -784,11 +784,12 @@ func (s *Stmt) QueryBound(ctx context.Context) (driver.Rows, error) {
 // Under WithStreamingResults, the rows take over the query scope, see newStream.
 func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, streaming bool) (*mapping.Result, error)) (driver.Rows, error) {
 	streaming := streamingResults(ctx)
-	ctx, releaseTxCancel := s.conn.withTxCancel(ctx)
-	defer releaseTxCancel()
-
+	// Store the caller's context for UDFs before linking the transaction's context to it.
 	cleanupCtx := s.conn.setContext(ctx)
 	defer cleanupCtx()
+
+	ctx, releaseTxCancel := s.conn.withTxCancel(ctx)
+	defer releaseTxCancel()
 
 	var res *mapping.Result
 	var st *stream

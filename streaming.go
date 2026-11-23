@@ -109,17 +109,20 @@ func (conn *Conn) keepTxCancel() func() {
 }
 
 // newStream takes over the scope of a streaming query.
-// ctx is the context of the query, as stored for UDFs, and wctx is the context passed to fn
-// by runWithCtxInterrupt, which also carries the interrupter scope.
+// ctx is the context of the query, linked to the transaction's context by withTxCancel,
+// and wctx is the context passed to fn by runWithCtxInterrupt, which also carries the
+// interrupter scope.
 func (conn *Conn) newStream(ctx, wctx context.Context) *stream {
 	return &stream{
 		conn:          conn,
 		ctx:           ctx,
 		inTx:          conn.tx,
 		stopInterrupt: keepCtxInterrupt(wctx, conn.conn),
-		// Replace the context stored by the caller, whose cleanup runs when the query returns.
-		// Store ctx rather than wctx, so that UDFs do not get the interrupter scope.
-		clearCtx:        conn.ctxStore.store(conn.id, ctx, true),
+		// Keep the context that the outermost query call stored for UDFs, whose cleanup runs
+		// when that call returns. It is the caller's context, as without streaming: UDFs may
+		// keep it and use it after the rows are closed, so it must not carry the interrupter
+		// scope or the link to the transaction's context, which end then.
+		clearCtx:        conn.ctxStore.keep(conn.id),
 		releaseTxCancel: conn.keepTxCancel(),
 	}
 }

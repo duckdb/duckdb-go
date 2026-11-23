@@ -57,6 +57,29 @@ func (s *contextStore) store(connId uint64, ctx context.Context, replace bool) f
 	}
 }
 
+// keep takes over the context stored for a connection, so that the cleanup of the call that
+// stored it no longer removes it. The returned cleanup removes it, unless another call replaced it since.
+func (s *contextStore) keep(connId uint64) func() {
+	v, ok := s.m.Load(connId)
+	if !ok {
+		return func() {}
+	}
+	old, ok := v.(*ctxEntry)
+	if !ok {
+		return func() {}
+	}
+
+	// A new entry for the same context, as the cleanup of the call deletes only its own entry.
+	entry := &ctxEntry{ctx: old.ctx}
+	if !s.m.CompareAndSwap(connId, old, entry) {
+		return func() {}
+	}
+
+	return func() {
+		s.m.CompareAndDelete(connId, entry)
+	}
+}
+
 func (s *contextStore) delete(connId uint64) {
 	s.m.Delete(connId)
 }

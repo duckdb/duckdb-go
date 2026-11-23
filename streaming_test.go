@@ -655,3 +655,71 @@ func TestStreamingResultsNestedQueryInUDF(t *testing.T) {
 		require.Nil(t, udf.err.Load())
 	})
 }
+
+// savedCtxUDF keeps the first context that it runs with, and returns its argument.
+type savedCtxUDF struct {
+	ctx atomic.Pointer[context.Context]
+}
+
+func (*savedCtxUDF) Config() ScalarFuncConfig {
+	in, _ := NewTypeInfo(TYPE_BIGINT)
+	return ScalarFuncConfig{InputTypeInfos: []TypeInfo{in}, ResultTypeInfo: in, Volatile: true}
+}
+
+func (u *savedCtxUDF) Executor() ScalarFuncExecutor {
+	return ScalarFuncExecutor{RowContextExecutor: func(ctx context.Context, values []driver.Value) (any, error) {
+		u.ctx.CompareAndSwap(nil, &ctx)
+		return values[0], nil
+	}}
+}
+
+// A UDF may keep its context and use it after the query is closed, as it could the caller's
+// context. Closing the query must not cancel it, also in a transaction, and canceling it must
+// still interrupt a later query on the same connection.
+func TestStreamingResultsSavedUDFContext(t *testing.T) {
+	for _, inTx := range []bool{false, true} {
+		for _, path := range streamPaths {
+			name := path.name
+			if inTx {
+				name = "transaction " + name
+			}
+			t.Run(name, func(t *testing.T) {
+				db := openDbWrapper(t, ``)
+				defer closeDbWrapper(t, db)
+				c := openConnWrapper(t, db, context.Background())
+				defer closeConnWrapper(t, c)
+				udf := &savedCtxUDF{}
+				require.NoError(t, RegisterScalarUDF(c, "saved_ctx", udf))
+
+				var tx *sql.Tx
+				if inTx {
+					// A cancelable transaction context, so that the query links to it.
+					var err error
+					tx, err = c.BeginTx(t.Context(), nil)
+					require.NoError(t, err)
+				}
+
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.WithValue(context.Background(), streamingCtxKey{}, "query")))
+				defer cancel()
+				vals, nextErr, closeErr := path.run(t, c, ctx, `SELECT saved_ctx(i) FROM range(10) t(i)`, -1, nil)
+				require.NoError(t, nextErr)
+				require.NoError(t, closeErr)
+				require.Len(t, vals, 10)
+				if tx != nil {
+					require.NoError(t, tx.Commit())
+				}
+
+				require.NotNil(t, udf.ctx.Load())
+				saved := *udf.ctx.Load()
+				require.Equal(t, "query", saved.Value(streamingCtxKey{}))
+				require.NoError(t, saved.Err(), "closing the query must not cancel the UDF context")
+
+				time.AfterFunc(100*time.Millisecond, cancel)
+				start := time.Now()
+				_, err := c.ExecContext(saved, endlessCountQuery)
+				require.ErrorIs(t, err, context.Canceled)
+				require.Less(t, time.Since(start), 10*time.Second)
+			})
+		}
+	}
+}
