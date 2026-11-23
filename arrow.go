@@ -272,7 +272,7 @@ func (r *recordReader) Next() bool {
 		return false
 	default:
 		// Share the fetch with rows, so that the rows know how the result ended when closed.
-		chunk, err := fetchChunk(&r.rows.res)
+		chunk, err := r.rows.fetchChunk()
 		if errors.Is(err, io.EOF) {
 			r.rows.eof = true
 			return false

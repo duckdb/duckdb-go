@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -396,4 +397,34 @@ func TestArrowStreaming(t *testing.T) {
 		require.True(t, rdr.Next())
 		require.Equal(t, int64(100000), rdr.RecordBatch().Column(0).(*array.Int64).Value(0))
 	})
+}
+
+// Closing the connection and the DB before an Arrow reader of a streaming query must stop
+// the interrupter, which would otherwise interrupt the freed connection.
+func TestArrowStreamingConnCloseBeforeReader(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+
+	db := openDbWrapper(t, ``)
+	c := openConnWrapper(t, db, context.Background())
+
+	ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+	defer cancel()
+	var rdr array.RecordReader
+	require.NoError(t, c.Raw(func(driverConn any) error {
+		ar, err := NewArrowFromConn(driverConn.(driver.Conn))
+		require.NoError(t, err)
+		rdr, err = ar.QueryContext(ctx, endlessQuery)
+		return err
+	}))
+	require.True(t, rdr.Next())
+
+	require.NoError(t, c.Close())
+	require.NoError(t, db.Close())
+	cancel()
+	time.Sleep(5 * interruptInterval)
+
+	// The reader checks its context before it fetches.
+	require.False(t, rdr.Next())
+	require.ErrorIs(t, rdr.Err(), context.Canceled)
+	rdr.Release()
 }

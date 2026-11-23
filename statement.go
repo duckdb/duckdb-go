@@ -796,7 +796,10 @@ func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, stream
 	if err := runWithCtxInterrupt(ctx, s.conn.conn, func(wctx context.Context) error {
 		var execErr error
 		res, execErr = exec(wctx, streaming)
-		if execErr == nil && streaming {
+		// DuckDB does not stream every result, such as of INSERT ... RETURNING or EXPLAIN.
+		// Such a result is complete, so it must not keep the query scope.
+		// The C API has no replacement for duckdb_result_is_streaming.
+		if execErr == nil && streaming && mapping.ResultIsStreaming(*res) { //nolint:staticcheck
 			st = s.conn.newStream(ctx, wctx)
 		}
 		return execErr

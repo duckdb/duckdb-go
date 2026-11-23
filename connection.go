@@ -32,6 +32,9 @@ type Conn struct {
 	txErr error
 	// txCancel is the link of a streaming query to txCtx, while the query call runs.
 	txCancel *txCancelScope
+	// stream is the open streaming result of this connection, if any.
+	// A streaming result occupies its connection, so there is at most one.
+	stream *stream
 
 	// stmtsMu guards stmts and serializes statement destruction, so that
 	// Stmt.Close and Conn.Close never destroy the same statement twice.
@@ -202,6 +205,11 @@ func (conn *Conn) Close() error {
 		return errClosedCon
 	}
 	conn.closed = true
+	if conn.stream != nil {
+		// Stop the interrupter before disconnecting, as it would interrupt the freed connection.
+		// The rows of the stream remain open, and report errClosedCon.
+		conn.stream.end()
+	}
 	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)

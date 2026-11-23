@@ -353,6 +353,8 @@ var (
 	ResultReturnType = bindings.ResultReturnType
 	// Deprecated: See C API documentation.
 	ResultChunkCount = bindings.ResultChunkCount //nolint:staticcheck
+	// Deprecated: See C API documentation.
+	ResultIsStreaming = bindings.ResultIsStreaming
 )
 
 // Deprecated: See C API documentation.

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -719,6 +721,98 @@ func TestStreamingResultsSavedUDFContext(t *testing.T) {
 				_, err := c.ExecContext(saved, endlessCountQuery)
 				require.ErrorIs(t, err, context.Canceled)
 				require.Less(t, time.Since(start), 10*time.Second)
+			})
+		}
+	}
+}
+
+// Closing a connection before its streaming rows must stop the interrupter, which would
+// otherwise interrupt the freed connection once the query's context is canceled.
+// The rows then report that the rest of the query did not run.
+func TestStreamingResultsConnCloseBeforeRows(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+
+	for _, inTx := range []bool{false, true} {
+		for _, readOn := range []bool{false, true} {
+			t.Run(fmt.Sprintf("tx=%v/readOn=%v", inTx, readOn), func(t *testing.T) {
+				c := newConnectorWrapper(t, ``, nil)
+				defer closeConnectorWrapper(t, c)
+				conn := openDriverConnWrapper(t, c).(*Conn)
+
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+				defer cancel()
+				if inTx {
+					_, err := conn.BeginTx(ctx, driver.TxOptions{})
+					require.NoError(t, err)
+				}
+				rows, err := conn.QueryContext(ctx, endlessQuery, nil)
+				require.NoError(t, err)
+				dst := make([]driver.Value, 1)
+				require.NoError(t, rows.Next(dst))
+
+				require.NoError(t, conn.Close())
+				cancel()
+				time.Sleep(5 * interruptInterval)
+
+				if !readOn {
+					require.ErrorIs(t, rows.Close(), errClosedCon)
+					return
+				}
+				// Rows of the current chunk were already fetched; the next fetch fails.
+				for err = rows.Next(dst); err == nil; err = rows.Next(dst) {
+				}
+				require.ErrorIs(t, err, errClosedCon)
+				require.NoError(t, rows.Close(), "Next already reported the failure")
+			})
+		}
+	}
+}
+
+// DuckDB does not stream every result, even under WithStreamingResults. Such a result is
+// complete when the query returns, so canceling its context must not interrupt other
+// statements on the connection while its rows are open.
+func TestStreamingResultsNotStreamedResult(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+	const slow = `SELECT sum(hash(i)) FROM range(50000000) t(i)`
+
+	for _, q := range []string{
+		`INSERT INTO t SELECT i FROM range(10) r(i) RETURNING i`,
+		`EXPLAIN SELECT 42`,
+	} {
+		for _, inTx := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/tx=%v", strings.Fields(q)[0], inTx), func(t *testing.T) {
+				db := openDbWrapper(t, ``)
+				defer closeDbWrapper(t, db)
+				c := openConnWrapper(t, db, context.Background())
+				defer closeConnWrapper(t, c)
+				_, err := c.ExecContext(context.Background(), `CREATE TABLE t (i BIGINT)`)
+				require.NoError(t, err)
+
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+				defer cancel()
+				var rows *sql.Rows
+				exec := func() error { _, err := c.ExecContext(context.Background(), slow); return err }
+				if inTx {
+					tx, err := c.BeginTx(context.Background(), nil)
+					require.NoError(t, err)
+					defer func() { require.NoError(t, tx.Rollback()) }()
+					rows, err = tx.QueryContext(ctx, q)
+					require.NoError(t, err)
+					exec = func() error { _, err := tx.ExecContext(context.Background(), slow); return err }
+				} else {
+					rows, err = c.QueryContext(ctx, q)
+					require.NoError(t, err)
+				}
+				require.True(t, rows.Next())
+
+				// The statement runs while the rows are open: it holds the connection,
+				// so database/sql closes the rows only after it.
+				errCh := make(chan error, 1)
+				go func() { errCh <- exec() }()
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+				require.NoError(t, <-errCh)
+				require.NoError(t, rows.Close())
 			})
 		}
 	}

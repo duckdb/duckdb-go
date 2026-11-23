@@ -69,7 +69,7 @@ func (r *rows) Next(dst []driver.Value) error {
 			r.chunk.close()
 			r.closeChunk = false
 		}
-		chunk, err := fetchChunk(&r.res)
+		chunk, err := r.fetchChunk()
 		if errors.Is(err, io.EOF) {
 			r.eof = true
 			return err

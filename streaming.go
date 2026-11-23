@@ -33,6 +33,11 @@ type streamingResultsKey struct{}
 // To abandon the rest of the query instead, cancel ctx or the context of the transaction,
 // before or during the close: the unread work does not run, and the cancellation is reported
 // in the same way as a failure, as the query did not complete.
+// Closing the connection before the rows also abandons the rest: the rows then report
+// a closed connection.
+//
+// DuckDB does not stream every result, such as of INSERT ... RETURNING or EXPLAIN.
+// Such a result is complete when QueryContext returns, and behaves as without streaming.
 func WithStreamingResults(ctx context.Context) context.Context {
 	return context.WithValue(ctx, streamingResultsKey{}, true)
 }
@@ -57,6 +62,8 @@ type stream struct {
 	clearCtx func()
 	// releaseTxCancel ends the link between ctx and the transaction's context.
 	releaseTxCancel func()
+	// ended is true once the scope has ended, by closing the rows or the connection.
+	ended bool
 }
 
 // txCancelScope links the context of a streaming query to the context of its transaction.
@@ -113,7 +120,7 @@ func (conn *Conn) keepTxCancel() func() {
 // and wctx is the context passed to fn by runWithCtxInterrupt, which also carries the
 // interrupter scope.
 func (conn *Conn) newStream(ctx, wctx context.Context) *stream {
-	return &stream{
+	s := &stream{
 		conn:          conn,
 		ctx:           ctx,
 		inTx:          conn.tx,
@@ -125,6 +132,8 @@ func (conn *Conn) newStream(ctx, wctx context.Context) *stream {
 		clearCtx:        conn.ctxStore.keep(conn.id),
 		releaseTxCancel: conn.keepTxCancel(),
 	}
+	conn.stream = s
+	return s
 }
 
 // canceled returns the cause if the query or its transaction was canceled, or nil.
@@ -136,10 +145,27 @@ func (s *stream) canceled() error {
 }
 
 // end ends the scope of the query. Afterward, the connection can run other statements.
+// It runs when the rows are closed, or when the connection is closed first.
 func (s *stream) end() {
+	if s.ended {
+		return
+	}
+	s.ended = true
 	s.stopInterrupt()
 	s.clearCtx()
 	s.releaseTxCancel()
+	if s.conn.stream == s {
+		s.conn.stream = nil
+	}
+}
+
+// fetchChunk returns the next chunk of the result of r, or io.EOF after the last one.
+// The result of a streaming query whose connection was closed can no longer be fetched.
+func (r *rows) fetchChunk() (mapping.DataChunk, error) {
+	if r.stream != nil && r.stream.ended {
+		return mapping.DataChunk{}, errClosedCon
+	}
+	return fetchChunk(&r.res)
 }
 
 // fetchChunk returns the next chunk of res, or io.EOF after the last one.
@@ -166,6 +192,10 @@ func (r *rows) finishStream() error {
 	if r.eof || r.failed {
 		return nil
 	}
+	if s.ended {
+		// The connection was closed before the rows, so the rest of the query did not run.
+		return errClosedCon
+	}
 
 	var err error
 	for {
@@ -174,7 +204,7 @@ func (r *rows) finishStream() error {
 			break
 		}
 		var chunk mapping.DataChunk
-		chunk, err = fetchChunk(&r.res)
+		chunk, err = r.fetchChunk()
 		if errors.Is(err, io.EOF) {
 			r.eof = true
 			return nil
