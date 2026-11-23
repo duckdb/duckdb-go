@@ -29,10 +29,9 @@ make test.dynamic
 make test.static
 ```
 
-On Windows AMD64, use Git Bash with `make` and the
-[UCRT compiler setup](README.md#amd64) on `PATH`.
-The dynamic tests also require `cygpath` (included with Git Bash) and add the DLL directory
-to `PATH` for the test executable.
+On Windows AMD64, use Git Bash with `make` and the [UCRT compiler setup](README.md#amd64) on `PATH`.
+Both linking modes require `cygpath` (included with Git Bash) for native Windows paths.
+The dynamic tests add the DLL directory to `PATH` for the test executable.
 
 To include Arrow tests, as the custom-linking CI jobs do:
 
