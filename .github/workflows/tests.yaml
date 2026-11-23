@@ -142,6 +142,7 @@ jobs:
           - darwin-arm64
           - linux-amd64
           - linux-arm64
+          - windows-amd64
           - windows-arm64
         exclude: *skip-on-pr
         include:
@@ -149,6 +150,7 @@ jobs:
           - *darwin-arm64
           - *linux-amd64
           - *linux-arm64
+          - *windows-amd64
           - ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"platform":"windows-arm64","github":"windows-11-vs2026-arm"}]') }}
       fail-fast: false
     steps:
