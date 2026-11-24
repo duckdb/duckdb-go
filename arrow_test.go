@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -427,4 +428,70 @@ func TestArrowStreamingConnCloseBeforeReader(t *testing.T) {
 	require.False(t, rdr.Next())
 	require.ErrorIs(t, rdr.Err(), context.Canceled)
 	rdr.Release()
+}
+
+// A streaming query is complete once its reader reaches the end of the result or a fetch
+// fails, and its connection can run other statements before the reader is released.
+// Canceling the reader's context must then not interrupt them.
+func TestArrowStreamingEndsBeforeRelease(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+	const slow = `SELECT sum(hash(i)) FROM range(50000000) t(i)`
+
+	for _, tc := range []struct {
+		name, query, err string
+	}{
+		{name: "eof", query: `SELECT i FROM range(10000) t(i)`},
+		{name: "fetch error", query: failPartWayQuery, err: "boom"},
+	} {
+		for _, inTx := range []bool{false, true} {
+			if inTx && tc.err != "" {
+				// A failed statement aborts its transaction, so no other statement can run in it.
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/tx=%v", tc.name, inTx), func(t *testing.T) {
+				c := newConnectorWrapper(t, ``, nil)
+				defer closeConnectorWrapper(t, c)
+				innerConn := openDriverConnWrapper(t, c)
+				defer closeDriverConnWrapper(t, &innerConn)
+
+				if inTx {
+					tx, err := innerConn.(driver.ConnBeginTx).BeginTx(context.Background(), driver.TxOptions{})
+					require.NoError(t, err)
+					defer func() { require.NoError(t, tx.Rollback()) }()
+				}
+
+				ar, err := NewArrowFromConn(innerConn)
+				require.NoError(t, err)
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+				defer cancel()
+				rdr, err := ar.QueryContext(ctx, tc.query)
+				require.NoError(t, err)
+				defer rdr.Release()
+				for rdr.Next() {
+				}
+				if tc.err == "" {
+					require.NoError(t, rdr.Err())
+				} else {
+					require.ErrorContains(t, rdr.Err(), tc.err)
+				}
+
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := innerConn.(driver.ExecerContext).ExecContext(context.Background(), slow, nil)
+					errCh <- err
+				}()
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+				require.NoError(t, <-errCh)
+
+				// Releasing the reader reports how the result ended, not the later cancellation.
+				rdr.Release()
+				if tc.err == "" {
+					require.NoError(t, rdr.Err())
+				} else {
+					require.ErrorContains(t, rdr.Err(), tc.err)
+				}
+			})
+		}
+	}
 }

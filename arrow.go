@@ -274,11 +274,9 @@ func (r *recordReader) Next() bool {
 		// Share the fetch with rows, so that the rows know how the result ended when closed.
 		chunk, err := r.rows.fetchChunk()
 		if errors.Is(err, io.EOF) {
-			r.rows.eof = true
 			return false
 		}
 		if err != nil {
-			r.rows.failed = true
 			// Report a cancellation as such, as rows.Next does.
 			cancelErr := r.ctx.Err()
 			if r.rows.stream != nil {

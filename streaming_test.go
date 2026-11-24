@@ -136,7 +136,14 @@ func readSQLRows(t *testing.T, rows *sql.Rows, limit int, beforeClose func()) ([
 	if beforeClose != nil {
 		beforeClose()
 	}
-	return vals, nextErr, rows.Close()
+	closeErr := rows.Close()
+	if closeErr == nil && nextErr == nil {
+		// If beforeClose canceled the query's context, database/sql closes the rows on its own
+		// goroutine, which may get there before this Close. That Close then returns nil, and
+		// Err reports the cancellation instead.
+		closeErr = rows.Err()
+	}
+	return vals, nextErr, closeErr
 }
 
 type streamingCtxKey struct{}
@@ -812,6 +819,74 @@ func TestStreamingResultsNotStreamedResult(t *testing.T) {
 				time.Sleep(20 * time.Millisecond)
 				cancel()
 				require.NoError(t, <-errCh)
+				require.NoError(t, rows.Close())
+			})
+		}
+	}
+}
+
+// Driver rows of a streaming query, used without database/sql, are complete once Next
+// reports the end of the result or a failed fetch. Their connection can then run other
+// statements before the rows are closed, and canceling the query's context must not
+// interrupt them. database/sql closes the rows at that point anyway.
+func TestStreamingResultsEndBeforeClose(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+	const slow = `SELECT sum(hash(i)) FROM range(50000000) t(i)`
+
+	for _, tc := range []struct {
+		name, query, err string
+	}{
+		{name: "eof", query: `SELECT i FROM range(10000) t(i)`},
+		{name: "fetch error", query: failPartWayQuery, err: "boom"},
+	} {
+		for _, inTx := range []bool{false, true} {
+			if inTx && tc.err != "" {
+				// A failed statement aborts its transaction, so no other statement can run in it.
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/tx=%v", tc.name, inTx), func(t *testing.T) {
+				c := newConnectorWrapper(t, ``, nil)
+				defer closeConnectorWrapper(t, c)
+				conn := openDriverConnWrapper(t, c).(*Conn)
+				defer func() { require.NoError(t, conn.Close()) }()
+
+				if inTx {
+					tx, err := conn.BeginTx(context.Background(), driver.TxOptions{})
+					require.NoError(t, err)
+					defer func() { require.NoError(t, tx.Rollback()) }()
+				}
+
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+				defer cancel()
+				rows, err := conn.QueryContext(ctx, tc.query, nil)
+				require.NoError(t, err)
+				dst := make([]driver.Value, len(rows.Columns()))
+				for err == nil {
+					err = rows.Next(dst)
+				}
+				if tc.err == "" {
+					require.ErrorIs(t, err, io.EOF)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+				}
+
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := conn.ExecContext(context.Background(), slow, nil)
+					errCh <- err
+				}()
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+				require.NoError(t, <-errCh)
+
+				// The rows still report how the result ended, and closing them reports no failure:
+				// the failure was already returned by Next.
+				err = rows.Next(dst)
+				if tc.err == "" {
+					require.ErrorIs(t, err, io.EOF)
+				} else {
+					require.ErrorContains(t, err, tc.err)
+				}
 				require.NoError(t, rows.Close())
 			})
 		}

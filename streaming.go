@@ -22,8 +22,9 @@ type streamingResultsKey struct{}
 // Rows.Err, not by QueryContext. Cancelling ctx, or the context of the transaction that the
 // query runs in, interrupts the query while it is fetched.
 //
-// Until the rows are closed, the query occupies its connection, and other statements on that
-// connection (such as on the same sql.Tx or sql.Conn) fail.
+// Until the rows are closed, or read to the end of the result or a failed fetch, the query
+// occupies its connection, and other statements on that connection (such as on the same
+// sql.Tx or sql.Conn) fail. database/sql closes the rows at that point.
 //
 // Closing the rows before reading all of them runs the rest of the query, so that its side
 // effects, such as nextval() or an INSERT in a CTE, apply just as without streaming. This
@@ -62,8 +63,11 @@ type stream struct {
 	clearCtx func()
 	// releaseTxCancel ends the link between ctx and the transaction's context.
 	releaseTxCancel func()
-	// ended is true once the scope has ended, by closing the rows or the connection.
+	// ended is true once the scope has ended: the result was read to its end or a fetch
+	// failed, or the rows or the connection were closed.
 	ended bool
+	// cause is the cancellation of the query when its scope ended, or nil.
+	cause error
 }
 
 // txCancelScope links the context of a streaming query to the context of its transaction.
@@ -137,7 +141,12 @@ func (conn *Conn) newStream(ctx, wctx context.Context) *stream {
 }
 
 // canceled returns the cause if the query or its transaction was canceled, or nil.
+// Once the scope has ended, it returns the cause at that time: ending the link to the
+// transaction's context cancels ctx, and a later cancellation no longer affects the query.
 func (s *stream) canceled() error {
+	if s.ended {
+		return s.cause
+	}
 	if s.ctx.Err() == nil {
 		return nil
 	}
@@ -145,11 +154,13 @@ func (s *stream) canceled() error {
 }
 
 // end ends the scope of the query. Afterward, the connection can run other statements.
-// It runs when the rows are closed, or when the connection is closed first.
+// It runs when the result was read to its end or a fetch failed, as the query is then
+// complete, or else when the rows are closed, or when the connection is closed first.
 func (s *stream) end() {
 	if s.ended {
 		return
 	}
+	s.cause = s.canceled()
 	s.ended = true
 	s.stopInterrupt()
 	s.clearCtx()
@@ -160,12 +171,36 @@ func (s *stream) end() {
 }
 
 // fetchChunk returns the next chunk of the result of r, or io.EOF after the last one.
+// Once the result was read to its end or a fetch failed, it keeps returning io.EOF or that
+// failure. A streaming query is then complete, so fetchChunk ends its scope: its connection
+// can run other statements before the rows are closed, and canceling the query's context
+// must not interrupt them.
 // The result of a streaming query whose connection was closed can no longer be fetched.
 func (r *rows) fetchChunk() (mapping.DataChunk, error) {
-	if r.stream != nil && r.stream.ended {
-		return mapping.DataChunk{}, errClosedCon
+	if r.eof {
+		return mapping.DataChunk{}, io.EOF
 	}
-	return fetchChunk(&r.res)
+	if r.failed {
+		return mapping.DataChunk{}, r.fetchErr
+	}
+
+	var chunk mapping.DataChunk
+	var err error
+	if r.stream != nil && r.stream.ended {
+		err = errClosedCon
+	} else if chunk, err = fetchChunk(&r.res); err == nil {
+		return chunk, nil
+	}
+	if errors.Is(err, io.EOF) {
+		r.eof = true
+	} else {
+		r.failed = true
+		r.fetchErr = err
+	}
+	if r.stream != nil {
+		r.stream.end()
+	}
+	return chunk, err
 }
 
 // fetchChunk returns the next chunk of res, or io.EOF after the last one.
@@ -206,7 +241,6 @@ func (r *rows) finishStream() error {
 		var chunk mapping.DataChunk
 		chunk, err = r.fetchChunk()
 		if errors.Is(err, io.EOF) {
-			r.eof = true
 			return nil
 		}
 		if err != nil {

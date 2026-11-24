@@ -27,8 +27,9 @@ type rows struct {
 	stream *stream
 	// eof is true after the last chunk was fetched.
 	eof bool
-	// failed is true after a fetch failed.
-	failed bool
+	// failed is true after a fetch failed, with fetchErr.
+	failed   bool
+	fetchErr error
 	// cached column metadata to avoid repeated CGO calls
 	scanTypes   []reflect.Type
 	dbTypeNames []string
@@ -71,11 +72,9 @@ func (r *rows) Next(dst []driver.Value) error {
 		}
 		chunk, err := r.fetchChunk()
 		if errors.Is(err, io.EOF) {
-			r.eof = true
 			return err
 		}
 		if err != nil {
-			r.failed = true
 			if r.stream != nil {
 				// Report a cancellation as such, as executeBound does.
 				err = errors.Join(r.stream.canceled(), err)
