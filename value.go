@@ -396,6 +396,8 @@ func inferPrimitiveType(v any) (Type, any) {
 		// No support for TYPE_BLOB.
 		t = TYPE_VARCHAR
 		v = string(vv)
+	case mapping.Time:
+		t = TYPE_TIME
 	case time.Time:
 		// Go's time.Time always carries timezone information (via Location),
 		// so TIMESTAMP WITH TIME ZONE is the correct semantic mapping.
