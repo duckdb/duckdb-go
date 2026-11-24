@@ -1025,6 +1025,10 @@ func TestTimeMicros(t *testing.T) {
 	_, err := db.Exec(`CREATE TABLE test (id INT, time TIME)`)
 	require.NoError(t, err)
 
+	stmt, err := db.Prepare(`INSERT INTO test VALUES (?, ?)`)
+	require.NoError(t, err)
+	defer closePreparedWrapper(t, stmt)
+
 	// A mapping.Time binds as is, including TIME '24:00:00'.
 	// A time.Time keeps only its clock, so midnight of the next day is 00:00:00.
 	for i, tc := range []struct {
@@ -1035,13 +1039,19 @@ func TestTimeMicros(t *testing.T) {
 		{mapping.NewTime(86_400_000_000), "24:00:00"},
 		{time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
 		{time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC), "00:00:00"},
+		{mapping.NewTime(45_296_789_012), "12:34:56.789012"},
+		{time.Date(2024, time.April, 5, 12, 34, 56, 789012000, time.FixedZone("", 19800)), "12:34:56.789012"},
 	} {
 		var str string
 		err = db.QueryRow(`SELECT ?::TIME::VARCHAR`, tc.in).Scan(&str)
 		require.NoError(t, err)
 		require.Equal(t, tc.want, str, "binding %v", tc.in)
 
-		_, err = db.Exec(`INSERT INTO test VALUES (?, ?)`, i, tc.in)
+		err = db.QueryRow(`SELECT ?::VARCHAR`, Typed(tc.in, TYPE_TIME)).Scan(&str)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, str, "typed binding %v", tc.in)
+
+		_, err = stmt.Exec(i, tc.in)
 		require.NoError(t, err)
 		err = db.QueryRow(`SELECT time::VARCHAR FROM test WHERE id = ?`, i).Scan(&str)
 		require.NoError(t, err)
@@ -1049,7 +1059,76 @@ func TestTimeMicros(t *testing.T) {
 	}
 
 	for _, micros := range []int64{-1, 86_400_000_001} {
-		_, err = db.Exec(`INSERT INTO test VALUES (?, ?)`, 0, mapping.NewTime(micros))
+		raw := mapping.NewTime(micros)
+		for _, in := range []any{raw, Typed(raw, TYPE_TIME)} {
+			_, err = stmt.Exec(-1, in)
+			require.ErrorIs(t, err, errCouldNotBind)
+			require.ErrorContains(t, err, convertErrMsg)
+		}
+	}
+
+	// A rejected bind inserts no row and leaves the statement reusable.
+	_, err = stmt.Exec(-2, mapping.NewTime(45_296_789_012))
+	require.NoError(t, err)
+	var str string
+	require.NoError(t, db.QueryRow(`SELECT time::VARCHAR FROM test WHERE id = -2`).Scan(&str))
+	require.Equal(t, "12:34:56.789012", str)
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT count(*) FROM test WHERE id = -1`).Scan(&count))
+	require.Zero(t, count)
+}
+
+func TestTimeMicrosUntypedParam(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	for _, tc := range []struct {
+		micros int64
+		want   time.Time
+	}{
+		{0, time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)},
+		{1, time.Date(1, time.January, 1, 0, 0, 0, 1000, time.UTC)},
+		{45_296_789_012, time.Date(1, time.January, 1, 12, 34, 56, 789012000, time.UTC)},
+		{86_399_999_999, time.Date(1, time.January, 1, 23, 59, 59, 999999000, time.UTC)},
+		{86_400_000_000, time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)},
+	} {
+		raw := mapping.NewTime(tc.micros)
+		for _, in := range []any{raw, Typed(raw, TYPE_TIME)} {
+			var typ string
+			require.NoError(t, db.QueryRow(`SELECT typeof(?)`, in).Scan(&typ))
+			require.Equal(t, "TIME", typ)
+			var got time.Time
+			require.NoError(t, db.QueryRow(`SELECT ?`, in).Scan(&got))
+			require.Equal(t, tc.want, got)
+		}
+	}
+
+	stmt, err := db.Prepare(`SELECT ?`)
+	require.NoError(t, err)
+	defer closePreparedWrapper(t, stmt)
+	for _, micros := range []int64{-1, 86_400_000_001} {
+		var got time.Time
+		err = stmt.QueryRow(mapping.NewTime(micros)).Scan(&got)
+		require.ErrorIs(t, err, errCouldNotBind)
+		require.ErrorContains(t, err, convertErrMsg)
+		require.NoError(t, stmt.QueryRow(mapping.NewTime(86_400_000_000)).Scan(&got))
+		require.Equal(t, time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC), got)
+	}
+
+	// List elements use the same inference and range validation as scalars.
+	list := []mapping.Time{mapping.NewTime(45_296_789_012), mapping.NewTime(0), mapping.NewTime(86_400_000_000)}
+	var typ string
+	require.NoError(t, db.QueryRow(`SELECT typeof(?)`, list).Scan(&typ))
+	require.Equal(t, "TIME[]", typ)
+	var got []any
+	require.NoError(t, db.QueryRow(`SELECT ?`, list).Scan(&got))
+	require.Equal(t, []any{
+		time.Date(1, time.January, 1, 12, 34, 56, 789012000, time.UTC),
+		time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC),
+	}, got)
+	for _, micros := range []int64{-1, 86_400_000_001} {
+		err = db.QueryRow(`SELECT ?`, []mapping.Time{mapping.NewTime(1), mapping.NewTime(micros)}).Scan(&got)
 		require.ErrorIs(t, err, errCouldNotBind)
 		require.ErrorContains(t, err, convertErrMsg)
 	}

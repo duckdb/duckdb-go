@@ -1067,11 +1067,22 @@ func TestAppenderTimeMicros(t *testing.T) {
 
 	// A mapping.Time is appended as is, including TIME '24:00:00'.
 	// A time.Time keeps only its clock, so midnight of the next day is 00:00:00.
-	want := []string{"00:00:00", "24:00:00", "00:00:00", "00:00:00"}
+	want := []string{"00:00:00", "24:00:00", "00:00:00", "00:00:00", "12:34:56.789012", "12:34:56.789012"}
 	require.NoError(t, a.AppendRow(int32(0), mapping.NewTime(0)))
+
+	// Reject the second column after writing an ID, then flush and reuse the appender.
+	for _, micros := range []int64{-1, 86_400_000_001} {
+		err := a.AppendRow(int32(-1), mapping.NewTime(micros))
+		require.ErrorIs(t, err, errAppenderAppendRow)
+		require.ErrorContains(t, err, convertErrMsg)
+		require.NoError(t, a.Flush())
+	}
+
 	require.NoError(t, a.AppendRow(int32(1), mapping.NewTime(86_400_000_000)))
 	require.NoError(t, a.AppendRow(int32(2), time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)))
 	require.NoError(t, a.AppendRow(int32(3), time.Date(1970, time.January, 2, 0, 0, 0, 0, time.UTC)))
+	require.NoError(t, a.AppendRow(int32(4), mapping.NewTime(45_296_789_012)))
+	require.NoError(t, a.AppendRow(int32(5), time.Date(2024, time.April, 5, 12, 34, 56, 789012000, time.FixedZone("", 19800))))
 	require.NoError(t, a.Flush())
 
 	rows, err := db.QueryContext(context.Background(), `SELECT time::VARCHAR FROM test ORDER BY id`)
