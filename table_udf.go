@@ -358,6 +358,9 @@ type tableFuncContext[T tableSource] struct {
 
 func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tableFunction[T]) error {
 	function := mapping.CreateTableFunction()
+	// Registration copies the function, so destroy it on every return.
+	// On errors, this also releases the pinned extra info handle.
+	defer mapping.DestroyTableFunction(&function)
 	mapping.TableFunctionSetName(function, name)
 
 	var config TableFunctionConfig
@@ -365,7 +368,6 @@ func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tabl
 	// Get the context store for the connection.
 	ctxStore, err := contextStoreFromConn(conn)
 	if err != nil {
-		mapping.DestroyTableFunction(&function)
 		return err
 	}
 
@@ -440,7 +442,6 @@ func registerParallelTableUDF[T tableSource](conn *sql.Conn, name string, f tabl
 	err = conn.Raw(func(driverConn any) error {
 		c := driverConn.(*Conn)
 		state := mapping.RegisterTableFunction(c.conn, function)
-		mapping.DestroyTableFunction(&function)
 		if state == mapping.StateError {
 			return getError(errAPI, errTableUDFCreate)
 		}

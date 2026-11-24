@@ -1018,6 +1018,27 @@ func TestErrTableUDF(t *testing.T) {
 	err := RegisterTableUDF(conn, "", emptyNameUDF.GetFunction())
 	testError(t, err, errAPI.Error(), errTableUDFCreate.Error(), errTableUDFNoName.Error())
 
+	// The following errors occur after the function and its pinned extra info
+	// exist. With debug_bindings, TestMain verifies that they are released.
+
+	// Missing bind function.
+	err = RegisterTableUDF(conn, "missing_bind", RowTableFunction{})
+	testError(t, err, errAPI.Error(), errTableUDFCreate.Error(), errTableUDFMissingBindArgs.Error())
+
+	// Nil argument types.
+	bind := func(map[string]any, ...any) (RowTableSource, error) { return nil, nil }
+	err = RegisterTableUDF(conn, "nil_argument", RowTableFunction{
+		Config:        TableFunctionConfig{Arguments: []TypeInfo{nil}},
+		BindArguments: bind,
+	})
+	testError(t, err, errAPI.Error(), errTableUDFCreate.Error(), errTableUDFArgumentIsNil.Error())
+
+	err = RegisterTableUDF(conn, "nil_named_argument", RowTableFunction{
+		Config:        TableFunctionConfig{NamedArguments: map[string]TypeInfo{"arg": nil}},
+		BindArguments: bind,
+	})
+	testError(t, err, errAPI.Error(), errTableUDFCreate.Error(), errTableUDFArgumentIsNil.Error())
+
 	// FIXME: add more error tests.
 }
 
