@@ -17,10 +17,14 @@ type HugeInt struct {
 	Upper int64
 }
 
+func (value HugeInt) bigInt() *big.Int {
+	hi := mapping.NewHugeInt(value.Lower, value.Upper)
+	return hugeIntToNative(&hi)
+}
+
 // MarshalJSON encodes the value as a JSON integer.
 func (value HugeInt) MarshalJSON() ([]byte, error) {
-	hi := mapping.NewHugeInt(value.Lower, value.Upper)
-	return hugeIntToNative(&hi).MarshalJSON()
+	return value.bigInt().MarshalJSON()
 }
 
 // UnmarshalJSON decodes a JSON integer in the signed 128-bit range.
@@ -50,10 +54,14 @@ type UHugeInt struct {
 	Upper uint64
 }
 
+func (value UHugeInt) bigInt() *big.Int {
+	uhi := mapping.NewUHugeInt(value.Lower, value.Upper)
+	return uhugeIntToNative(&uhi)
+}
+
 // MarshalJSON encodes the value as a JSON integer.
 func (value UHugeInt) MarshalJSON() ([]byte, error) {
-	uhi := mapping.NewUHugeInt(value.Lower, value.Upper)
-	return uhugeIntToNative(&uhi).MarshalJSON()
+	return value.bigInt().MarshalJSON()
 }
 
 // UnmarshalJSON decodes a JSON integer in the unsigned 128-bit range.

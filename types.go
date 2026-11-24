@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/big"
 	"reflect"
 	"slices"
@@ -317,21 +316,19 @@ func numToBigInt(val any) (*big.Int, error) {
 		bigInt, _ := bigFloat.Int(nil)
 		return bigInt, nil
 	case HugeInt:
-		hi := mapping.NewHugeInt(v.Lower, v.Upper)
-		return hugeIntToNative(&hi), nil
+		return v.bigInt(), nil
 	case *HugeInt:
 		if v == nil {
 			return nil, castError("nil *HugeInt", "*big.Int")
 		}
-		return numToBigInt(*v)
+		return v.bigInt(), nil
 	case UHugeInt:
-		uhi := mapping.NewUHugeInt(v.Lower, v.Upper)
-		return uhugeIntToNative(&uhi), nil
+		return v.bigInt(), nil
 	case *UHugeInt:
 		if v == nil {
 			return nil, castError("nil *UHugeInt", "*big.Int")
 		}
-		return numToBigInt(*v)
+		return v.bigInt(), nil
 	case *big.Int:
 		if v == nil {
 			return nil, castError("nil *big.Int", "*big.Int")
@@ -401,17 +398,7 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 		if v == nil {
 			return mapping.HugeInt{}, castError("nil *HugeInt", "HUGEINT")
 		}
-		return inferHugeInt(*v)
-	case UHugeInt:
-		if v.Upper > math.MaxInt64 {
-			return mapping.HugeInt{}, fmt.Errorf("UHugeInt is too big for HUGEINT")
-		}
-		hi = mapping.NewHugeInt(v.Lower, int64(v.Upper))
-	case *UHugeInt:
-		if v == nil {
-			return mapping.HugeInt{}, castError("nil *UHugeInt", "HUGEINT")
-		}
-		return inferHugeInt(*v)
+		hi = mapping.NewHugeInt(v.Lower, v.Upper)
 	case uint8:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int8:
@@ -513,17 +500,7 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 		if v == nil {
 			return mapping.UHugeInt{}, castError("nil *UHugeInt", "UHUGEINT")
 		}
-		return inferUHugeInt(*v)
-	case HugeInt:
-		if v.Upper < 0 {
-			return mapping.UHugeInt{}, fmt.Errorf("negative HugeInt cannot be converted to UHUGEINT")
-		}
-		uhi = mapping.NewUHugeInt(v.Lower, uint64(v.Upper))
-	case *HugeInt:
-		if v == nil {
-			return mapping.UHugeInt{}, castError("nil *HugeInt", "UHUGEINT")
-		}
-		return inferUHugeInt(*v)
+		uhi = mapping.NewUHugeInt(v.Lower, v.Upper)
 	case uint8:
 		uhi = mapping.NewUHugeInt(uint64(v), 0)
 	case int8:

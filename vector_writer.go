@@ -48,23 +48,19 @@ func (writer VectorWriter[T]) Set(row int, value T) error {
 		return getError(errAPI, err)
 	}
 
-	rowIdx := mapping.IdxT(row)
-	switch v := any(value).(type) {
-	case HugeInt:
-		setPrimitive(writer.vector.v, rowIdx, mapping.NewHugeInt(v.Lower, v.Upper))
-	case UHugeInt:
-		setPrimitive(writer.vector.v, rowIdx, mapping.NewUHugeInt(v.Lower, v.Upper))
-	default:
-		// The constraint leaves only string and named string types here.
-		stringValue := value
-		s := *(*string)(unsafe.Pointer(&stringValue))
+	vec, rowIdx := writer.vector.v, mapping.IdxT(row)
+	if vec.Type == TYPE_VARCHAR {
+		// T is string or a named string type.
+		s := *(*string)(unsafe.Pointer(&value))
 		b := unsafe.Slice(unsafe.StringData(s), len(s))
 		if !validUTF8(b) {
 			return getError(errAPI, errInvalidUTF8)
 		}
-		mapping.UnsafeVectorAssignStringElementLen(writer.vector.v.vec, rowIdx, b)
+		mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, b)
+	} else {
+		setPrimitive(vec, rowIdx, value)
 	}
-	writer.vector.v.clearNull(rowIdx)
+	vec.clearNull(rowIdx)
 	return nil
 }
 

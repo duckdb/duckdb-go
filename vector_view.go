@@ -8,10 +8,18 @@ import (
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
 
-// vectorValue is the set of Go values supported by vector access.
+// vectorValue is the set of Go values supported by vector access. Strings
+// are converted; every other type has the memory layout of its DuckDB
+// storage and is copied as is.
 type vectorValue interface {
 	~string | HugeInt | UHugeInt
 }
+
+// Adding a fixed-width type to vectorValue needs its size check here.
+var (
+	_ [unsafe.Sizeof(mapping.HugeInt{})]byte  = [unsafe.Sizeof(HugeInt{})]byte{}
+	_ [unsafe.Sizeof(mapping.UHugeInt{})]byte = [unsafe.Sizeof(UHugeInt{})]byte{}
+)
 
 func vectorValueType[T vectorValue]() Type {
 	var zero T
@@ -57,27 +65,18 @@ func (view VectorView[T]) GetValueBorrowed(rowIdx int) (T, bool, error) {
 		return zero, false, getError(errAPI, err)
 	}
 
-	if view.vector.v.getNull(mapping.IdxT(rowIdx)) {
+	vec, idx := view.vector.v, mapping.IdxT(rowIdx)
+	if vec.getNull(idx) {
 		var zero T
 		return zero, false, nil
 	}
 
-	// Pass DuckDB storage to the mapping accessors: taking the address of a
-	// Go copy would make it escape through mapping's function variables.
-	switch view.vector.v.Type {
-	case TYPE_HUGEINT:
-		hi := (*mapping.HugeInt)(unsafe.Add(view.vector.v.dataPtr, uintptr(rowIdx)*unsafe.Sizeof(mapping.HugeInt{})))
-		lower, upper := mapping.HugeIntMembers(hi)
-		return any(HugeInt{Lower: lower, Upper: upper}).(T), true, nil
-	case TYPE_UHUGEINT:
-		uhi := (*mapping.UHugeInt)(unsafe.Add(view.vector.v.dataPtr, uintptr(rowIdx)*unsafe.Sizeof(mapping.UHugeInt{})))
-		lower, upper := mapping.UHugeIntMembers(uhi)
-		return any(UHugeInt{Lower: lower, Upper: upper}).(T), true, nil
-	default:
-		// The constraint leaves only string and named string types here.
-		s := getBorrowedStringAt(view.vector.v.dataPtr, mapping.IdxT(rowIdx))
+	if vec.Type == TYPE_VARCHAR {
+		// T is string or a named string type.
+		s := getBorrowedStringAt(vec.dataPtr, idx)
 		return *(*T)(unsafe.Pointer(&s)), true, nil
 	}
+	return getPrimitive[T](vec, idx), true, nil
 }
 
 func (view VectorView[T]) checkRow(rowIdx int) error {
