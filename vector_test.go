@@ -420,6 +420,8 @@ func TestSetChunkValueNilSetsNull(t *testing.T) {
 func TestSetChunkValueTypedNilSetsNull(t *testing.T) {
 	var (
 		nilBigInt   *big.Int
+		nilHugeInt  *HugeInt
+		nilUHugeInt *UHugeInt
 		nilTime     *time.Time
 		nilInterval *Interval
 		nilBit      *Bit
@@ -433,6 +435,8 @@ func TestSetChunkValueTypedNilSetsNull(t *testing.T) {
 	}{
 		{"HUGEINT_from_nil_bigint", TYPE_HUGEINT, nilBigInt},
 		{"UHUGEINT_from_nil_bigint", TYPE_UHUGEINT, nilBigInt},
+		{"HUGEINT_from_nil_hugeint", TYPE_HUGEINT, nilHugeInt},
+		{"UHUGEINT_from_nil_uhugeint", TYPE_UHUGEINT, nilUHugeInt},
 		{"BIGNUM_from_nil_bigint", TYPE_BIGNUM, nilBigInt},
 		{"TIMESTAMP_from_nil_time", TYPE_TIMESTAMP, nilTime},
 		{"DATE_from_nil_time", TYPE_DATE, nilTime},
@@ -442,6 +446,8 @@ func TestSetChunkValueTypedNilSetsNull(t *testing.T) {
 		// A typed nil is a NULL write regardless of the column it targets.
 		{"VARCHAR_from_nil_time", TYPE_VARCHAR, nilTime},
 		{"BIGINT_from_nil_bigint", TYPE_BIGINT, nilBigInt},
+		{"VARCHAR_from_nil_hugeint", TYPE_VARCHAR, nilHugeInt},
+		{"BIGINT_from_nil_uhugeint", TYPE_BIGINT, nilUHugeInt},
 	}
 
 	for _, tc := range tests {

@@ -20,7 +20,8 @@ import (
 )
 
 // duckdb-go exports the following type wrappers:
-// UUID, Bit, Map, Interval, Decimal, Union, Composite (optional, used to scan LIST and STRUCT).
+// UUID, Bit, HugeInt, UHugeInt, Map, Interval, Decimal, Union,
+// Composite (optional, used to scan LIST and STRUCT).
 
 // Pre-computed reflect type values to avoid repeated allocations.
 var (
@@ -314,6 +315,20 @@ func numToBigInt(val any) (*big.Int, error) {
 		bigFloat := new(big.Float).SetFloat64(v)
 		bigInt, _ := bigFloat.Int(nil)
 		return bigInt, nil
+	case HugeInt:
+		return v.bigInt(), nil
+	case *HugeInt:
+		if v == nil {
+			return nil, castError("nil *HugeInt", "*big.Int")
+		}
+		return v.bigInt(), nil
+	case UHugeInt:
+		return v.bigInt(), nil
+	case *UHugeInt:
+		if v == nil {
+			return nil, castError("nil *UHugeInt", "*big.Int")
+		}
+		return v.bigInt(), nil
 	case *big.Int:
 		if v == nil {
 			return nil, castError("nil *big.Int", "*big.Int")
@@ -377,6 +392,13 @@ func inferHugeInt(val any) (mapping.HugeInt, error) {
 	var err error
 	var hi mapping.HugeInt
 	switch v := val.(type) {
+	case HugeInt:
+		hi = mapping.NewHugeInt(v.Lower, v.Upper)
+	case *HugeInt:
+		if v == nil {
+			return mapping.HugeInt{}, castError("nil *HugeInt", "HUGEINT")
+		}
+		hi = mapping.NewHugeInt(v.Lower, v.Upper)
 	case uint8:
 		hi = mapping.NewHugeInt(uint64(v), 0)
 	case int8:
@@ -472,6 +494,13 @@ func inferUHugeInt(val any) (mapping.UHugeInt, error) {
 	var err error
 	var uhi mapping.UHugeInt
 	switch v := val.(type) {
+	case UHugeInt:
+		uhi = mapping.NewUHugeInt(v.Lower, v.Upper)
+	case *UHugeInt:
+		if v == nil {
+			return mapping.UHugeInt{}, castError("nil *UHugeInt", "UHUGEINT")
+		}
+		uhi = mapping.NewUHugeInt(v.Lower, v.Upper)
 	case uint8:
 		uhi = mapping.NewUHugeInt(uint64(v), 0)
 	case int8:

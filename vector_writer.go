@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"fmt"
+	"reflect"
 	"unsafe"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
@@ -15,6 +16,8 @@ type VectorWriter[T vectorValue] struct {
 
 // GetVectorWriter returns a typed writer for a writable DuckDB vector. The
 // caller must get the vector from a writable source.
+// T must be string (including named string types), HugeInt, or UHugeInt,
+// matching VARCHAR, HUGEINT, or UHUGEINT respectively.
 func GetVectorWriter[T vectorValue](vector Vector) (VectorWriter[T], error) {
 	writer, err := newVectorWriter[T](vector)
 	if err != nil {
@@ -27,8 +30,8 @@ func newVectorWriter[T vectorValue](vector Vector) (VectorWriter[T], error) {
 	if vector.v == nil {
 		return VectorWriter[T]{}, errUninitializedVectorWriter
 	}
-	if vector.v.Type != TYPE_VARCHAR || vector.v.isJSON {
-		return VectorWriter[T]{}, vectorWriterTypeError(vector.v)
+	if vector.v.Type != vectorValueType[T]() || vector.v.isJSON {
+		return VectorWriter[T]{}, vectorWriterTypeError[T](vector.v)
 	}
 	return VectorWriter[T]{vector: vector}, nil
 }
@@ -38,20 +41,26 @@ func (writer VectorWriter[T]) Len() int {
 	return writer.vector.logicalCount
 }
 
-// Set writes value at row. DuckDB copies the value. Set returns an error if
-// value is not valid UTF-8 and leaves the row unchanged.
+// Set writes value at row. DuckDB copies the value. For strings, Set returns
+// an error if value is not valid UTF-8 and leaves the row unchanged.
 func (writer VectorWriter[T]) Set(row int, value T) error {
 	if err := writer.checkRow(row); err != nil {
 		return getError(errAPI, err)
 	}
 
-	b := unsafe.Slice(unsafe.StringData(string(value)), len(value))
-	if !validUTF8(b) {
-		return getError(errAPI, errInvalidUTF8)
+	vec, rowIdx := writer.vector.v, mapping.IdxT(row)
+	if vec.Type == TYPE_VARCHAR {
+		// T is string or a named string type.
+		s := *(*string)(unsafe.Pointer(&value))
+		b := unsafe.Slice(unsafe.StringData(s), len(s))
+		if !validUTF8(b) {
+			return getError(errAPI, errInvalidUTF8)
+		}
+		mapping.UnsafeVectorAssignStringElementLen(vec.vec, rowIdx, b)
+	} else {
+		setPrimitive(vec, rowIdx, value)
 	}
-	rowIdx := mapping.IdxT(row)
-	mapping.ValiditySetRowValidity(writer.vector.v.maskPtr, rowIdx, true)
-	mapping.UnsafeVectorAssignStringElementLen(writer.vector.v.vec, rowIdx, b)
+	vec.clearNull(rowIdx)
 	return nil
 }
 
@@ -74,10 +83,10 @@ func (writer VectorWriter[T]) checkRow(row int) error {
 	return nil
 }
 
-func vectorWriterTypeError(vec *vector) error {
+func vectorWriterTypeError[T vectorValue](vec *vector) error {
 	actual := typeName(vec.Type)
 	if vec.isJSON {
 		actual = aliasJSON
 	}
-	return fmt.Errorf("vector writer type mismatch: DuckDB %s cannot be written as Go string", actual)
+	return fmt.Errorf("vector writer type mismatch: DuckDB %s cannot be written as Go %s", actual, reflect.TypeFor[T]())
 }

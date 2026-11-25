@@ -13,9 +13,9 @@ import (
 )
 
 // isNullInput reports whether val is a NULL write. An untyped nil or a nil
-// pointer to time.Time, big.Int, Interval, Bit, or UUID writes NULL regardless
-// of the target column. Unlike isNil, this check is allocation-free and does
-// not treat nil maps or slices as NULL: a nil []any is an empty LIST.
+// pointer to time.Time, big.Int, HugeInt, UHugeInt, Interval, Bit, or UUID writes
+// NULL regardless of the target column. Unlike isNil, this check is allocation-free
+// and does not treat nil maps or slices as NULL: a nil []any is an empty LIST.
 func isNullInput[S any](val S) bool {
 	switch v := any(val).(type) {
 	case nil:
@@ -23,6 +23,10 @@ func isNullInput[S any](val S) bool {
 	case *time.Time:
 		return v == nil
 	case *big.Int:
+		return v == nil
+	case *HugeInt:
+		return v == nil
+	case *UHugeInt:
 		return v == nil
 	case *Interval:
 		return v == nil

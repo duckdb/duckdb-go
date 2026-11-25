@@ -183,8 +183,8 @@ func (s *Stmt) BindWithCtx(ctx context.Context, args []driver.NamedValue) error 
 	return s.bind(args)
 }
 
-func (s *Stmt) bindHugeint(val *big.Int, n int) (mapping.State, error) {
-	hugeint, err := hugeIntFromNative(val)
+func (s *Stmt) bindHugeint(val any, n int) (mapping.State, error) {
+	hugeint, err := inferHugeInt(val)
 	if err != nil {
 		return mapping.StateError, err
 	}
@@ -192,8 +192,8 @@ func (s *Stmt) bindHugeint(val *big.Int, n int) (mapping.State, error) {
 	return state, nil
 }
 
-func (s *Stmt) bindUhugeint(val *big.Int, n int) (mapping.State, error) {
-	uhugeint, err := uhugeIntFromNative(val)
+func (s *Stmt) bindUhugeint(val any, n int) (mapping.State, error) {
+	uhugeint, err := inferUHugeInt(val)
 	if err != nil {
 		return mapping.StateError, err
 	}
@@ -506,6 +506,16 @@ func (s *Stmt) bindValue(val driver.NamedValue, n int) (mapping.State, error) {
 	case int:
 		// int is at least 32 bits.
 		return mapping.BindInt64(*s.preparedStmt, mapping.IdxT(n+1), int64(v)), nil
+	case HugeInt, *HugeInt:
+		if isNullInput(v) {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindHugeint(v, n)
+	case UHugeInt, *UHugeInt:
+		if isNullInput(v) {
+			return mapping.BindNull(*s.preparedStmt, mapping.IdxT(n+1)), nil
+		}
+		return s.bindUhugeint(v, n)
 	case *big.Int:
 		if t == TYPE_HUGEINT {
 			return s.bindHugeint(v, n)

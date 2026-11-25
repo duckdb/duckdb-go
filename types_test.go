@@ -1333,6 +1333,134 @@ func TestUHugeInt(t *testing.T) {
 	})
 }
 
+func TestHugeIntNilPointerInference(t *testing.T) {
+	for _, value := range []any{(*HugeInt)(nil), (*UHugeInt)(nil)} {
+		t.Run(fmt.Sprintf("%T/HUGEINT", value), func(t *testing.T) {
+			_, err := inferHugeInt(value)
+			require.Error(t, err)
+		})
+		t.Run(fmt.Sprintf("%T/UHUGEINT", value), func(t *testing.T) {
+			_, err := inferUHugeInt(value)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestHugeIntValueBinding(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		typ   string
+		value any
+		want  string
+	}{
+		{"signed zero", "HUGEINT", HugeInt{}, "0"},
+		{"signed words", "HUGEINT", HugeInt{Lower: 5, Upper: -2}, "-36893488147419103227"},
+		{"signed pointer", "HUGEINT", &HugeInt{Lower: 7, Upper: 3}, "55340232221128654855"},
+		{"signed min", "HUGEINT", HugeInt{Upper: math.MinInt64}, "-170141183460469231731687303715884105728"},
+		{"signed max", "HUGEINT", HugeInt{Lower: math.MaxUint64, Upper: math.MaxInt64}, "170141183460469231731687303715884105727"},
+		{"unsigned zero", "UHUGEINT", UHugeInt{}, "0"},
+		{"unsigned words", "UHUGEINT", UHugeInt{Lower: 7, Upper: 3}, "55340232221128654855"},
+		{"unsigned pointer", "UHUGEINT", &UHugeInt{Lower: 5, Upper: 2}, "36893488147419103237"},
+		{"unsigned high bit", "UHUGEINT", UHugeInt{Lower: 1, Upper: 1 << 63}, "170141183460469231731687303715884105729"},
+		{"unsigned max", "UHUGEINT", UHugeInt{Lower: math.MaxUint64, Upper: math.MaxUint64}, "340282366920938463463374607431768211455"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, query := range []string{
+				`SELECT typeof(v), v FROM (SELECT ? AS v)`,
+				`SELECT typeof(v), v FROM (SELECT ?::` + tt.typ + ` AS v)`,
+			} {
+				var typ string
+				var got any
+				require.NoError(t, db.QueryRow(query, tt.value).Scan(&typ, &got))
+				require.Equal(t, tt.typ, typ)
+				require.IsType(t, (*big.Int)(nil), got)
+				require.Equal(t, tt.want, got.(*big.Int).String())
+			}
+		})
+	}
+
+	for _, value := range []any{(*HugeInt)(nil), (*UHugeInt)(nil)} {
+		var got any
+		require.NoError(t, db.QueryRow(`SELECT ?`, value).Scan(&got))
+		require.Nil(t, got)
+	}
+
+	// Nested values must be inferred as integers, not as structs of two words.
+	for _, tt := range []struct {
+		value any
+		typ   string
+	}{
+		{[]HugeInt{{Lower: 7, Upper: 3}}, "HUGEINT[]"},
+		{[]UHugeInt{{Lower: 7, Upper: 3}}, "UHUGEINT[]"},
+	} {
+		var typ string
+		var got *big.Int
+		require.NoError(t, db.QueryRow(`SELECT typeof(v), v[1] FROM (SELECT ? AS v)`, tt.value).Scan(&typ, &got))
+		require.Equal(t, tt.typ, typ)
+		require.Equal(t, "55340232221128654855", got.String())
+	}
+}
+
+func TestHugeIntJSON(t *testing.T) {
+	testHugeIntJSON(t, []HugeInt{
+		{},
+		{Lower: 5, Upper: -2},
+		{Lower: 7, Upper: 3},
+		{Upper: math.MinInt64},
+		{Lower: math.MaxUint64, Upper: math.MaxInt64},
+	}, []string{
+		"0", "-36893488147419103227", "55340232221128654855",
+		"-170141183460469231731687303715884105728", "170141183460469231731687303715884105727",
+	}, []string{
+		"-170141183460469231731687303715884105729", "170141183460469231731687303715884105728",
+	})
+}
+
+func TestUHugeIntJSON(t *testing.T) {
+	testHugeIntJSON(t, []UHugeInt{
+		{},
+		{Lower: 7, Upper: 3},
+		{Lower: 1, Upper: 1 << 63},
+		{Lower: math.MaxUint64, Upper: math.MaxUint64},
+	}, []string{
+		"0", "55340232221128654855", "170141183460469231731687303715884105729",
+		"340282366920938463463374607431768211455",
+	}, []string{"-1", "340282366920938463463374607431768211456"})
+}
+
+func testHugeIntJSON[T HugeInt | UHugeInt](t *testing.T, values []T, decimals, invalid []string) {
+	t.Helper()
+	for i, value := range values {
+		t.Run(decimals[i], func(t *testing.T) {
+			for _, input := range []any{value, &value} {
+				data, err := json.Marshal(input)
+				require.NoError(t, err)
+				require.Equal(t, decimals[i], string(data))
+			}
+			var got T
+			require.NoError(t, json.Unmarshal([]byte(decimals[i]), &got))
+			require.Equal(t, value, got)
+		})
+	}
+	invalid = append(invalid, `1.5`, `1e3`, `"5"`, `{}`, `[]`, `true`)
+	for _, data := range invalid {
+		got := values[1]
+		require.Error(t, json.Unmarshal([]byte(data), &got), data)
+		require.Equal(t, values[1], got, "invalid JSON must leave the value unchanged")
+	}
+	got := values[1]
+	require.NoError(t, json.Unmarshal([]byte(" null "), &got))
+	require.Equal(t, values[1], got, "null leaves non-nullable numbers unchanged")
+	var pointer *T
+	data, err := json.Marshal(pointer)
+	require.NoError(t, err)
+	require.Equal(t, "null", string(data))
+}
+
 func TestTimestampTZ(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
