@@ -25,6 +25,16 @@ type Conn struct {
 	closed bool
 	// True, if the connection has an open transaction.
 	tx bool
+	// txCtx is the context passed to BeginTx for the open transaction.
+	txCtx context.Context //nolint:containedctx
+	// txErr is set if the open transaction can no longer commit,
+	// because a streaming query in it failed after its rows were closed.
+	txErr error
+	// txCancel is the link of a streaming query to txCtx, while the query call runs.
+	txCancel *txCancelScope
+	// stream is the open streaming result of this connection, if any.
+	// A streaming result occupies its connection, so there is at most one.
+	stream *stream
 
 	// stmtsMu guards stmts and serializes statement destruction, so that
 	// Stmt.Close and Conn.Close never destroy the same statement twice.
@@ -113,8 +123,13 @@ func (conn *Conn) ExecContext(ctx context.Context, query string, args []driver.N
 // QueryContext executes a query that may return rows, such as a SELECT.
 // It implements the driver.QueryerContext interface.
 func (conn *Conn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	// Store the caller's context for UDFs before linking the transaction's context to it.
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
+
+	// Link the transaction's context before the interrupter starts, so that it watches both.
+	ctx, releaseTxCancel := conn.withTxCancel(ctx)
+	defer releaseTxCancel()
 
 	var rows driver.Rows
 	err := runWithCtxInterrupt(ctx, conn.conn, func(wctx context.Context) error {
@@ -195,6 +210,8 @@ func (conn *Conn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx
 		return nil, err
 	}
 	conn.tx = true
+	conn.txCtx = ctx
+	conn.txErr = nil
 
 	return &tx{conn}, nil
 }
@@ -209,6 +226,11 @@ func (conn *Conn) Close() error {
 		return errClosedCon
 	}
 	conn.closed = true
+	if conn.stream != nil {
+		// Stop the interrupter before disconnecting, as it would interrupt the freed connection.
+		// The rows of the stream remain open, and report errClosedCon.
+		conn.stream.end()
+	}
 	conn.closeStmts()
 	mapping.Disconnect(&conn.conn)
 	conn.ctxStore.delete(conn.id)

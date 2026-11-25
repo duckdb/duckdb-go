@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -345,4 +347,151 @@ func TestArrowClosedConn(t *testing.T) {
 		return driver.ErrBadConn
 	})
 	require.Error(t, err)
+}
+
+func TestArrowStreaming(t *testing.T) {
+	t.Run("streaming query error part-way", func(t *testing.T) {
+		c := newConnectorWrapper(t, ``, nil)
+		defer closeConnectorWrapper(t, c)
+
+		innerConn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &innerConn)
+
+		ar, err := NewArrowFromConn(innerConn)
+		require.NoError(t, err)
+
+		rdr, err := ar.QueryContext(WithStreamingResults(context.Background()), failPartWayQuery)
+		require.NoError(t, err)
+
+		var n int64
+		for rdr.Next() {
+			n += rdr.RecordBatch().NumRows()
+		}
+		require.ErrorContains(t, rdr.Err(), "boom", "a failed fetch must not look like the end of the result")
+		require.Positive(t, n)
+		rdr.Release()
+		require.ErrorContains(t, rdr.Err(), "boom")
+	})
+
+	t.Run("streaming early release runs the rest", func(t *testing.T) {
+		c := newConnectorWrapper(t, ``, nil)
+		defer closeConnectorWrapper(t, c)
+
+		innerConn := openDriverConnWrapper(t, c)
+		defer closeDriverConnWrapper(t, &innerConn)
+
+		ar, err := NewArrowFromConn(innerConn)
+		require.NoError(t, err)
+
+		_, err = innerConn.(driver.ExecerContext).ExecContext(context.Background(), `CREATE TABLE ins(i BIGINT)`, nil)
+		require.NoError(t, err)
+		rdr, err := ar.QueryContext(WithStreamingResults(context.Background()),
+			`WITH x AS (INSERT INTO ins SELECT i FROM range(100000) r(i) RETURNING i) SELECT i FROM x`)
+		require.NoError(t, err)
+		require.True(t, rdr.Next())
+		rdr.Release()
+		require.NoError(t, rdr.Err())
+
+		rdr, err = ar.QueryContext(context.Background(), `SELECT count(*) FROM ins`)
+		require.NoError(t, err)
+		defer rdr.Release()
+		require.True(t, rdr.Next())
+		require.Equal(t, int64(100000), rdr.RecordBatch().Column(0).(*array.Int64).Value(0))
+	})
+}
+
+// Closing the connection and the DB before an Arrow reader of a streaming query must stop
+// the interrupter, which would otherwise interrupt the freed connection.
+func TestArrowStreamingConnCloseBeforeReader(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+
+	db := openDbWrapper(t, ``)
+	c := openConnWrapper(t, db, context.Background())
+
+	ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+	defer cancel()
+	var rdr array.RecordReader
+	require.NoError(t, c.Raw(func(driverConn any) error {
+		ar, err := NewArrowFromConn(driverConn.(driver.Conn))
+		require.NoError(t, err)
+		rdr, err = ar.QueryContext(ctx, endlessQuery)
+		return err
+	}))
+	require.True(t, rdr.Next())
+
+	require.NoError(t, c.Close())
+	require.NoError(t, db.Close())
+	cancel()
+	time.Sleep(5 * interruptInterval)
+
+	// The reader checks its context before it fetches.
+	require.False(t, rdr.Next())
+	require.ErrorIs(t, rdr.Err(), context.Canceled)
+	rdr.Release()
+}
+
+// A streaming query is complete once its reader reaches the end of the result or a fetch
+// fails, and its connection can run other statements before the reader is released.
+// Canceling the reader's context must then not interrupt them.
+func TestArrowStreamingEndsBeforeRelease(t *testing.T) {
+	patchVar(t, &interruptInterval, 10*time.Millisecond)
+	const slow = `SELECT sum(hash(i)) FROM range(50000000) t(i)`
+
+	for _, tc := range []struct {
+		name, query, err string
+	}{
+		{name: "eof", query: `SELECT i FROM range(10000) t(i)`},
+		{name: "fetch error", query: failPartWayQuery, err: "boom"},
+	} {
+		for _, inTx := range []bool{false, true} {
+			if inTx && tc.err != "" {
+				// A failed statement aborts its transaction, so no other statement can run in it.
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/tx=%v", tc.name, inTx), func(t *testing.T) {
+				c := newConnectorWrapper(t, ``, nil)
+				defer closeConnectorWrapper(t, c)
+				innerConn := openDriverConnWrapper(t, c)
+				defer closeDriverConnWrapper(t, &innerConn)
+
+				if inTx {
+					tx, err := innerConn.(driver.ConnBeginTx).BeginTx(context.Background(), driver.TxOptions{})
+					require.NoError(t, err)
+					defer func() { require.NoError(t, tx.Rollback()) }()
+				}
+
+				ar, err := NewArrowFromConn(innerConn)
+				require.NoError(t, err)
+				ctx, cancel := context.WithCancel(WithStreamingResults(context.Background()))
+				defer cancel()
+				rdr, err := ar.QueryContext(ctx, tc.query)
+				require.NoError(t, err)
+				defer rdr.Release()
+				for rdr.Next() {
+				}
+				if tc.err == "" {
+					require.NoError(t, rdr.Err())
+				} else {
+					require.ErrorContains(t, rdr.Err(), tc.err)
+				}
+
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := innerConn.(driver.ExecerContext).ExecContext(context.Background(), slow, nil)
+					errCh <- err
+				}()
+				time.Sleep(20 * time.Millisecond)
+				cancel()
+				require.NoError(t, <-errCh)
+
+				// Releasing the reader reports how the result ended, not the later cancellation.
+				rdr.Release()
+				if tc.err == "" {
+					require.NoError(t, rdr.Err())
+				} else {
+					require.ErrorContains(t, rdr.Err(), tc.err)
+				}
+			})
+		}
+	}
 }

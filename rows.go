@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -22,6 +23,13 @@ type rows struct {
 	closeChunk bool
 	// rowCount is the number of scanned rows.
 	rowCount int
+	// stream is set for a streaming result, see WithStreamingResults.
+	stream *stream
+	// eof is true after the last chunk was fetched.
+	eof bool
+	// failed is true after a fetch failed, with fetchErr.
+	failed   bool
+	fetchErr error
 	// cached column metadata to avoid repeated CGO calls
 	scanTypes   []reflect.Type
 	dbTypeNames []string
@@ -62,9 +70,16 @@ func (r *rows) Next(dst []driver.Value) error {
 			r.chunk.close()
 			r.closeChunk = false
 		}
-		chunk := mapping.FetchChunk(r.res)
-		if chunk.Ptr == nil {
-			return io.EOF
+		chunk, err := r.fetchChunk()
+		if errors.Is(err, io.EOF) {
+			return err
+		}
+		if err != nil {
+			if r.stream != nil {
+				// Report a cancellation as such, as executeBound does.
+				err = errors.Join(r.stream.canceled(), err)
+			}
+			return err
 		}
 		r.closeChunk = true
 		if err := r.chunk.initFromDuckDataChunk(chunk, false); err != nil {
@@ -169,14 +184,25 @@ func (r *rows) ColumnTypeDatabaseTypeName(index int) string {
 func (r *rows) Close() error {
 	if r.closeChunk {
 		r.chunk.close()
+		r.closeChunk = false
 	}
-	mapping.DestroyResult(&r.res)
 
 	var err error
+	if r.stream != nil {
+		// Run the rest of the query while its context and interrupter are still in place.
+		err = r.finishStream()
+	}
+	mapping.DestroyResult(&r.res)
+	if r.stream != nil {
+		// End the query scope before database/sql reuses the connection.
+		r.stream.end()
+		r.stream = nil
+	}
+
 	if r.stmt != nil {
 		r.stmt.rows = false
 		if r.stmt.closeOnRowsClose {
-			err = r.stmt.Close()
+			err = errors.Join(err, r.stmt.Close())
 		}
 		r.stmt = nil
 	}

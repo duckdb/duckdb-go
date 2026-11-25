@@ -1,6 +1,9 @@
 package duckdb
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type tx struct {
 	c *Conn
@@ -12,6 +15,15 @@ func (t *tx) Commit() error {
 	}
 
 	t.c.tx = false
+	t.c.txCtx = nil
+	txErr := t.c.txErr
+	t.c.txErr = nil
+	if txErr != nil {
+		_, err := t.c.ExecContext(context.Background(), "ROLLBACK", nil)
+		t.c = nil
+		return errors.Join(errCommit, txErr, err)
+	}
+
 	_, err := t.c.ExecContext(context.Background(), "COMMIT TRANSACTION", nil)
 	t.c = nil
 
@@ -24,6 +36,8 @@ func (t *tx) Rollback() error {
 	}
 
 	t.c.tx = false
+	t.c.txCtx = nil
+	t.c.txErr = nil
 	_, err := t.c.ExecContext(context.Background(), "ROLLBACK", nil)
 	t.c = nil
 
