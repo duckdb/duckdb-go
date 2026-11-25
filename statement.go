@@ -809,7 +809,10 @@ func (s *Stmt) query(ctx context.Context, exec func(wctx context.Context, stream
 
 	s.rows = true
 	r := newRowsWithStmt(*res, s)
-	r.stream = st
+	if st != nil {
+		r.stream = st
+		st.rows = r
+	}
 	return r, nil
 }
 

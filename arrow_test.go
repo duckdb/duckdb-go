@@ -430,6 +430,43 @@ func TestArrowStreamingConnCloseBeforeReader(t *testing.T) {
 	rdr.Release()
 }
 
+// Commit and Rollback must end the transaction while an Arrow reader of a streaming query is
+// still open. The reader then reports that it is not complete.
+func TestArrowStreamingReaderOpenAtTxEnd(t *testing.T) {
+	for _, commit := range []bool{true, false} {
+		t.Run(fmt.Sprintf("commit=%v", commit), func(t *testing.T) {
+			c := newConnectorWrapper(t, ``, nil)
+			defer closeConnectorWrapper(t, c)
+			innerConn := openDriverConnWrapper(t, c)
+			defer closeDriverConnWrapper(t, &innerConn)
+			beginTx := func() driver.Tx {
+				tx, err := innerConn.(driver.ConnBeginTx).BeginTx(context.Background(), driver.TxOptions{})
+				require.NoError(t, err)
+				return tx
+			}
+
+			tx := beginTx()
+			ar, err := NewArrowFromConn(innerConn)
+			require.NoError(t, err)
+			rdr, err := ar.QueryContext(WithStreamingResults(context.Background()), `SELECT i FROM range(100000) t(i)`)
+			require.NoError(t, err)
+			defer rdr.Release()
+			require.True(t, rdr.Next())
+
+			if commit {
+				require.NoError(t, tx.Commit())
+			} else {
+				require.NoError(t, tx.Rollback())
+			}
+			require.False(t, rdr.Next())
+			require.ErrorIs(t, rdr.Err(), errStreamTxEnded)
+
+			// The transaction has ended, so the connection can begin another.
+			require.NoError(t, beginTx().Commit())
+		})
+	}
+}
+
 // A streaming query is complete once its reader reaches the end of the result or a fetch
 // fails, and its connection can run other statements before the reader is released.
 // Canceling the reader's context must then not interrupt them.

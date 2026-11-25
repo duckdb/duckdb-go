@@ -96,6 +96,11 @@ func NewArrowFromConn(driverConn driver.Conn) (*Arrow, error) {
 
 // QueryContext prepares statements, executes them, and returns an Apache Arrow array.RecordReader as a result of the last
 // executed statement. Arguments are bound to the last statement.
+//
+// Under WithStreamingResults, the reader fetches from the connection until it is released.
+// If the connection comes from sql.Conn.Raw, use and release the reader before the callback
+// returns. database/sql may otherwise use the connection at the same time, such as to roll
+// back a transaction whose context was canceled, which is not safe.
 func (a *Arrow) QueryContext(ctx context.Context, query string, args ...any) (array.RecordReader, error) {
 	if a.conn.closed {
 		return nil, errClosedCon
