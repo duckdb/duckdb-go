@@ -30,12 +30,18 @@ type streamingResultsKey struct{}
 // effects, such as nextval() or an INSERT in a CTE, apply just as without streaming. This
 // can take as long as reading the remaining rows. A failure is reported by Rows.Close,
 // Rows.Err, and Row.Scan. Inside a transaction, it also makes Commit fail.
-// Rolling back a transaction closes its open rows in the same way.
 // To abandon the rest of the query instead, cancel ctx or the context of the transaction,
 // before or during the close: the unread work does not run, and the cancellation is reported
 // in the same way as a failure, as the query did not complete.
 // Closing the connection before the rows also abandons the rest: the rows then report
 // a closed connection.
+//
+// database/sql closes the open rows of a sql.Tx before Commit and Rollback, so both first
+// run the rest of their queries, as above. The driver ends a streaming result that is still
+// open then, such as rows queried through the sql.Conn of the transaction, or an Arrow
+// reader: Commit runs the rest of its query as well, and waits for it, and Rollback abandons
+// it. These rows then report an error instead of the end of the result, unless Commit found
+// no rows left to read.
 //
 // DuckDB does not stream every result, such as of INSERT ... RETURNING or EXPLAIN.
 // Such a result is complete when QueryContext returns, and behaves as without streaming.
@@ -52,6 +58,8 @@ func streamingResults(ctx context.Context) bool {
 // the context visible to UDFs, and the interrupter that propagates cancellation to DuckDB.
 type stream struct {
 	conn *Conn
+	// rows are the rows of the query, which hold its result.
+	rows *rows
 	// ctx is the context of the query. In a transaction, it is also canceled with the
 	// transaction's context, see Conn.withTxCancel.
 	ctx context.Context //nolint:containedctx
@@ -170,6 +178,35 @@ func (s *stream) end() {
 	}
 }
 
+// endStreamAtTxEnd ends the open streaming result of the connection, if any, so that the
+// connection can run the statement that ends its transaction. DuckDB rejects that statement
+// while a result is open, which would leave the transaction open.
+// database/sql closes the rows of a sql.Tx before Commit and Rollback, but not other results
+// of the connection, such as rows queried through its sql.Conn.
+// If finish is true, the rest of the query runs first, as when its rows are closed, and a
+// failure makes Commit fail. Otherwise, the rest is abandoned.
+// The rows remain open. After the chunk that they hold, they report errStreamTxEnded or the
+// failure of the query, as they are not complete, unless no rows were left unread.
+func (conn *Conn) endStreamAtTxEnd(finish bool) {
+	s := conn.stream
+	if s == nil {
+		return
+	}
+	r := s.rows
+	if finish {
+		// finishStream keeps a failure in conn.txErr.
+		_ = r.finishStream()
+	}
+	mapping.DestroyResult(&r.res)
+	s.end()
+	if r.failed || (r.eof && !r.unread) {
+		return
+	}
+	r.eof = false
+	r.failed = true
+	r.fetchErr = errStreamTxEnded
+}
+
 // fetchChunk returns the next chunk of the result of r, or io.EOF after the last one.
 // Once the result was read to its end or a fetch failed, it keeps returning io.EOF or that
 // failure. A streaming query is then complete, so fetchChunk ends its scope: its connection
@@ -251,6 +288,7 @@ func (r *rows) finishStream() error {
 			break
 		}
 		mapping.DestroyDataChunk(&chunk)
+		r.unread = true
 	}
 
 	if s.inTx {

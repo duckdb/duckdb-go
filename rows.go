@@ -27,6 +27,8 @@ type rows struct {
 	stream *stream
 	// eof is true after the last chunk was fetched.
 	eof bool
+	// unread is true once finishStream has discarded rows that were not read.
+	unread bool
 	// failed is true after a fetch failed, with fetchErr.
 	failed   bool
 	fetchErr error

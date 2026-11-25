@@ -14,6 +14,7 @@ func (t *tx) Commit() error {
 		panic("database/sql/driver: misuse of duckdb driver: extra Commit")
 	}
 
+	t.c.endStreamAtTxEnd(true)
 	t.c.tx = false
 	t.c.txCtx = nil
 	txErr := t.c.txErr
@@ -35,6 +36,7 @@ func (t *tx) Rollback() error {
 		panic("database/sql/driver: misuse of duckdb driver: extra Rollback")
 	}
 
+	t.c.endStreamAtTxEnd(false)
 	t.c.tx = false
 	t.c.txCtx = nil
 	t.c.txErr = nil

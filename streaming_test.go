@@ -458,6 +458,104 @@ func TestStreamingResultsOccupyTheConnection(t *testing.T) {
 	require.NoError(t, tx.Commit())
 }
 
+// Commit and Rollback must end the transaction even if a streaming result is still open that
+// database/sql does not close for them, such as rows queried through the sql.Conn of the
+// transaction. DuckDB would otherwise reject the statement, and leave the transaction open.
+func TestStreamingResultsOpenAtTxEnd(t *testing.T) {
+	// setup returns a transaction with a pending insert, and open streaming rows of query
+	// on the connection of that transaction.
+	setup := func(t *testing.T, query string) (*sql.DB, *sql.Conn, *sql.Tx, *sql.Rows) {
+		t.Helper()
+		db := openDbWrapper(t, ``)
+		t.Cleanup(func() { closeDbWrapper(t, db) })
+		createTable(t, db, `CREATE TABLE t(i BIGINT)`)
+		createTable(t, db, `CREATE SEQUENCE s`)
+		c := openConnWrapper(t, db, context.Background())
+		t.Cleanup(func() { closeConnWrapper(t, c) })
+
+		tx, err := c.BeginTx(context.Background(), nil)
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO t VALUES (1)`)
+		require.NoError(t, err)
+		rows, err := c.QueryContext(WithStreamingResults(context.Background()), query)
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		return db, c, tx, rows
+	}
+	// requireEnded checks that the rows report the end of the transaction, not the end of
+	// the result, as they are not complete.
+	requireEnded := func(t *testing.T, rows *sql.Rows) {
+		t.Helper()
+		for rows.Next() {
+		}
+		require.ErrorIs(t, rows.Err(), errStreamTxEnded)
+		require.NoError(t, rows.Close())
+	}
+	// requireNextTx checks that the connection can run another transaction.
+	requireNextTx := func(t *testing.T, c *sql.Conn) {
+		t.Helper()
+		tx, err := c.BeginTx(context.Background(), nil)
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO t VALUES (2)`)
+		require.NoError(t, err)
+		require.NoError(t, tx.Commit())
+	}
+
+	t.Run("Commit runs the rest", func(t *testing.T) {
+		db, c, tx, rows := setup(t, `SELECT nextval('s') FROM range(100000) t(i)`)
+		require.NoError(t, tx.Commit())
+		require.Equal(t, int64(1), countTableRows(t, db))
+		var v int64
+		require.NoError(t, db.QueryRow(`SELECT nextval('s')`).Scan(&v))
+		require.Equal(t, int64(100001), v)
+
+		requireEnded(t, rows)
+		requireNextTx(t, c)
+		require.Equal(t, int64(2), countTableRows(t, db))
+	})
+
+	// Rows that were all fetched are complete, although they were still open at Commit.
+	t.Run("Commit with no rows left", func(t *testing.T) {
+		db, c, tx, rows := setup(t, `SELECT i FROM range(100) t(i)`)
+		require.NoError(t, tx.Commit())
+
+		n := 1
+		for rows.Next() {
+			n++
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, 100, n)
+		require.NoError(t, rows.Close())
+		requireNextTx(t, c)
+		require.Equal(t, int64(2), countTableRows(t, db))
+	})
+
+	t.Run("Commit fails if the rest fails", func(t *testing.T) {
+		db, c, tx, rows := setup(t, failPartWayQuery)
+		err := tx.Commit()
+		require.ErrorIs(t, err, errCommit)
+		require.ErrorContains(t, err, "boom")
+		require.Zero(t, countTableRows(t, db))
+
+		for rows.Next() {
+		}
+		require.ErrorContains(t, rows.Err(), "boom")
+		require.NoError(t, rows.Close())
+		requireNextTx(t, c)
+		require.Equal(t, int64(1), countTableRows(t, db))
+	})
+
+	t.Run("Rollback abandons the rest", func(t *testing.T) {
+		db, c, tx, rows := setup(t, endlessQuery)
+		require.NoError(t, tx.Rollback())
+		require.Zero(t, countTableRows(t, db))
+
+		requireEnded(t, rows)
+		requireNextTx(t, c)
+		require.Equal(t, int64(1), countTableRows(t, db))
+	})
+}
+
 // countTableRows returns the number of rows in table t.
 func countTableRows(t *testing.T, db *sql.DB) int64 {
 	t.Helper()

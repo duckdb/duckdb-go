@@ -158,6 +158,7 @@ var (
 	errBeginTx                    = errors.New("could not begin transaction")
 	errMultipleTx                 = errors.New("multiple transactions")
 	errCommit                     = errors.New("could not commit transaction: rolled back")
+	errStreamTxEnded              = errors.New("streaming result was open when its transaction ended")
 	errReadOnlyTxNotSupported     = errors.New("read-only transactions are not supported")
 	errIsolationLevelNotSupported = errors.New("isolation level not supported: duckdb-go only supports the default isolation level")
 
