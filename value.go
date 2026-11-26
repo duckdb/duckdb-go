@@ -92,12 +92,21 @@ func getValue(v mapping.Value) (any, error) {
 }
 
 func createValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
+	// database/sql converts only top-level arguments.
+	val, err := elementValue(val)
+	if err != nil {
+		return mapping.Value{}, err
+	}
 	if isNil(val) {
 		return mapping.CreateNullValue(), nil
 	}
 
 	t := mapping.GetTypeId(lt)
 	if isPrimitiveType(t) {
+		val, _ = underlyingValue(val)
+		if val, err = coerceElementValue(t, val); err != nil {
+			return mapping.Value{}, err
+		}
 		return createPrimitiveValue(t, val)
 	}
 
@@ -273,11 +282,117 @@ func getPointerValue(v any) any {
 			if vo.IsNil() {
 				return nil
 			}
+			// A *big.Int is a HUGEINT, UHUGEINT, or BIGNUM value rather than a pointer to one.
+			if _, ok := v.(*big.Int); ok {
+				return v
+			}
 			v = vo.Elem().Interface()
 			continue
 		}
 		return v
 	}
+}
+
+func needsNoConversion(v any) bool {
+	switch v.(type) {
+	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
+		float32, float64, string, []byte, time.Time, []any, map[string]any,
+		Interval, Decimal, UUID, Bit, Map, OrderedMap, Union:
+		return true
+	}
+	return false
+}
+
+// valuerValue calls driver.Valuer like database/sql and returns nil for nil pointers. It keeps a
+// *UUID, whose Value returns text, so that UUIDs are written in their binary form.
+func valuerValue(v any) (any, error) {
+	if needsNoConversion(v) {
+		return v, nil
+	}
+	if id, ok := v.(*UUID); ok {
+		if id == nil {
+			return nil, nil
+		}
+		return v, nil
+	}
+
+	v, _, err := driverValue(v)
+	if err != nil {
+		return nil, err
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return nil, nil
+	}
+	return v, nil
+}
+
+func elementValue(v any) (any, error) {
+	v, err := valuerValue(v)
+	if err != nil || needsNoConversion(v) {
+		return v, err
+	}
+	switch vv := v.(type) {
+	case *big.Int:
+		return v, nil
+	case *UUID:
+		return *vv, nil
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer {
+		return elementValue(rv.Elem().Interface())
+	}
+	return v, nil
+}
+
+var underlyingTypes = map[reflect.Kind]reflect.Type{
+	reflect.Bool:    reflectTypeBool,
+	reflect.Int:     reflect.TypeFor[int](),
+	reflect.Int8:    reflectTypeInt8,
+	reflect.Int16:   reflectTypeInt16,
+	reflect.Int32:   reflectTypeInt32,
+	reflect.Int64:   reflectTypeInt64,
+	reflect.Uint:    reflect.TypeFor[uint](),
+	reflect.Uint8:   reflectTypeUint8,
+	reflect.Uint16:  reflectTypeUint16,
+	reflect.Uint32:  reflectTypeUint32,
+	reflect.Uint64:  reflectTypeUint64,
+	reflect.Float32: reflectTypeFloat32,
+	reflect.Float64: reflectTypeFloat64,
+	reflect.String:  reflectTypeString,
+}
+
+// underlyingValue converts a named type such as `type Status string` to its underlying type.
+// Unlike database/sql, it keeps the size of numbers instead of widening them.
+func underlyingValue(v any) (any, bool) {
+	if needsNoConversion(v) {
+		return v, false
+	}
+	rv := reflect.ValueOf(v)
+	// Predeclared types and type literals have no package path.
+	if rv.Type().PkgPath() == "" {
+		return v, false
+	}
+	if t, ok := underlyingTypes[rv.Kind()]; ok {
+		return rv.Convert(t).Interface(), true
+	}
+	if rv.Kind() == reflect.Slice && rv.Type().Elem().Kind() == reflect.Uint8 {
+		return rv.Bytes(), true
+	}
+	return v, false
+}
+
+// coerceElementValue converts integers between sizes and float64 to FLOAT, as DuckDB casts
+// top-level parameters, because Valuers such as sql.NullInt32 return int64.
+func coerceElementValue(t Type, v any) (any, error) {
+	// This also binds a []byte to VARCHAR as text.
+	if inferred, vv := inferPrimitiveType(v); inferred == t {
+		return vv, nil
+	}
+	switch t {
+	case TYPE_TINYINT, TYPE_SMALLINT, TYPE_INTEGER, TYPE_BIGINT,
+		TYPE_UTINYINT, TYPE_USMALLINT, TYPE_UINTEGER, TYPE_UBIGINT, TYPE_FLOAT, TYPE_DOUBLE:
+		return coerceTypedValue(t, v)
+	}
+	return v, nil
 }
 
 func isNil(i any) bool {
@@ -297,6 +412,12 @@ func isNil(i any) bool {
 }
 
 func inferLogicalTypeAndValue(v any) (mapping.LogicalType, mapping.Value, error) {
+	// database/sql has not converted the elements of LIST and ARRAY values.
+	v, err := valuerValue(v)
+	if err != nil {
+		return mapping.LogicalType{}, mapping.Value{}, err
+	}
+
 	// Try to create a primitive type.
 	t, vv := inferPrimitiveType(v)
 	if isPrimitiveType(t) {
@@ -336,6 +457,11 @@ func inferLogicalTypeAndValue(v any) (mapping.LogicalType, mapping.Value, error)
 			return mapping.LogicalType{}, mapping.Value{}, err
 		}
 		return mapping.CreateLogicalType(t), val, err
+	}
+
+	// Named types such as `type Status string` infer their underlying type.
+	if u, ok := underlyingValue(v); ok {
+		return inferLogicalTypeAndValue(u)
 	}
 
 	// Complex types.
@@ -574,6 +700,10 @@ func createMapValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 	keys := make([]mapping.Value, m.Len())
 	defer destroyValueSlice(keys)
 	for i, k := range m.keys {
+		k, err := elementValue(k)
+		if err != nil {
+			return mapping.Value{}, err
+		}
 		if isNil(k) {
 			return mapping.Value{}, errNullMapKey
 		}
