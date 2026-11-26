@@ -1,0 +1,8 @@
+{
+  "duckdb_version": "v2.0.1",
+  "source": "8d78114e90a53823803660bf821f6073ac87da8c",
+  "headers": {
+    "duckdb_v2.h": "29da1359d15bb473faf14ceb781a2a2259ac3749311f79516588b13006772278",
+    "duckdb_extension_v2.h": "eee01b7cab77b72343ee10e404ebd7590b523f41cf887168ccd51266b0bfbd31"
+  }
+}
