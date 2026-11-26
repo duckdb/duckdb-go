@@ -1982,6 +1982,49 @@ func TestBindBlobWithNullBytes(t *testing.T) {
 	require.Equal(t, input, got)
 }
 
+func TestBindNamedByteSlice(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	type blob []byte
+
+	// Named byte slices bind like []byte.
+	tests := []struct {
+		name  string
+		value blob
+	}{
+		{name: "bytes", value: blob("Hello\x00World")},
+		{name: "nil", value: nil},
+	}
+	for _, query := range []string{`SELECT ?`, `SELECT typeof(?)`, `SELECT ?::BLOB`, `SELECT ?::VARCHAR`} {
+		for _, tt := range tests {
+			t.Run(query+"/"+tt.name, func(t *testing.T) {
+				var want, got any
+				require.NoError(t, db.QueryRow(query, []byte(tt.value)).Scan(&want))
+				require.NoError(t, db.QueryRow(query, tt.value).Scan(&got))
+				require.Equal(t, want, got)
+			})
+		}
+	}
+
+	t.Run("BLOB column", func(t *testing.T) {
+		createTable(t, db, `CREATE TABLE named_bytes (data BLOB)`)
+		_, err := db.Exec(`INSERT INTO named_bytes VALUES (?)`, blob("Hello\x00World"))
+		require.NoError(t, err)
+
+		var got []byte
+		require.NoError(t, db.QueryRow(`SELECT data FROM named_bytes`).Scan(&got))
+		require.Equal(t, []byte("Hello\x00World"), got)
+	})
+
+	// A LIST or ARRAY parameter binds the slice's elements instead.
+	t.Run("UTINYINT list", func(t *testing.T) {
+		var got any
+		require.NoError(t, db.QueryRow(`SELECT ?::UTINYINT[]`, blob("ab")).Scan(&got))
+		require.Equal(t, []any{uint8('a'), uint8('b')}, got)
+	})
+}
+
 func TestBindCompositeNullElements(t *testing.T) {
 	tests := []struct {
 		name  string
