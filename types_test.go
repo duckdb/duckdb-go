@@ -635,6 +635,14 @@ func TestDecimalString(t *testing.T) {
 	}
 }
 
+func TestDecimalNilValue(t *testing.T) {
+	for _, d := range []Decimal{{}, {Width: 18, Scale: 2}} {
+		require.Equal(t, "<nil>", d.String())
+		require.Equal(t, "<nil>", fmt.Sprint(d))
+		require.True(t, math.IsNaN(d.Float64()))
+	}
+}
+
 func TestBit(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

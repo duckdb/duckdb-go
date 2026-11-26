@@ -2298,6 +2298,12 @@ func TestBindDecimalErrors(t *testing.T) {
 		require.ErrorContains(t, err, "nil Decimal.Value")
 	})
 
+	t.Run("nil value in inferred list", func(t *testing.T) {
+		var got any
+		err := db.QueryRow(`SELECT ?`, []any{Decimal{Width: 2}}).Scan(&got)
+		require.ErrorContains(t, err, "nil Decimal.Value")
+	})
+
 	t.Run("second parameter", func(t *testing.T) {
 		var a, b Decimal
 		ok := Decimal{Width: 2, Value: big.NewInt(99)}

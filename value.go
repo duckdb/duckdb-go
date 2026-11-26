@@ -316,6 +316,11 @@ func inferLogicalTypeAndValue(v any) (mapping.LogicalType, mapping.Value, error)
 		return mapping.LogicalType{}, mapping.Value{}, unsupportedTypeError(typeToStringMap[t])
 	}
 
+	// A Decimal without a Value must not bind as its String text.
+	if d, ok := v.(Decimal); ok && d.Value == nil {
+		return mapping.LogicalType{}, mapping.Value{}, castError("nil Decimal.Value", "*big.Int")
+	}
+
 	// User-provided type with a Stringer interface:
 	// We create a string and return a VARCHAR value.
 	// TYPE_DECIMAL has a Stringer interface.

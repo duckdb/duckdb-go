@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
@@ -742,7 +743,11 @@ type Decimal struct {
 	Value *big.Int
 }
 
+// Float64 returns the decimal as a float64, or NaN if it has no Value.
 func (d Decimal) Float64() float64 {
+	if d.Value == nil {
+		return math.NaN()
+	}
 	scale := big.NewInt(int64(d.Scale))
 	factor := new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), scale, nil))
 	value := new(big.Float).SetInt(d.Value)
@@ -751,7 +756,12 @@ func (d Decimal) Float64() float64 {
 	return f
 }
 
+// String returns the decimal as text, or "<nil>" like a nil *big.Int if it has no Value.
 func (d Decimal) String() string {
+	if d.Value == nil {
+		return "<nil>"
+	}
+
 	// Get the sign, and return early, if zero.
 	if d.Value.Sign() == 0 {
 		return "0"
