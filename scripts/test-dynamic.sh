@@ -7,6 +7,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 export CGO_ENABLED=1
 
+if [[ $# == 0 ]]; then
+  set -- ./...
+fi
+
 PLATFORM="$(go env GOOS)-$(go env GOARCH)"
 BINDINGS_DIR="$(go mod download -json github.com/duckdb/duckdb-go-bindings | jq -r .Dir)"
 MANIFEST="$BINDINGS_DIR/duckdb-release.json"
@@ -35,6 +39,7 @@ if ! verify "$ARCHIVE" >/dev/null 2>&1; then
   mv "$DOWNLOAD" "$ARCHIVE"
 fi
 tar -xzf "$ARCHIVE" -C "$LIB_DIR"
+./scripts/check-capi2-native.sh dynamic "$LIB_DIR" "$MANIFEST"
 
 if [[ $PLATFORM == windows-* ]]; then
   # Link the import library and make duckdb.dll visible to the test executable.
