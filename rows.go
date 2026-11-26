@@ -237,21 +237,30 @@ func logicalTypeNameList(logicalType mapping.LogicalType) string {
 }
 
 func logicalTypeNameStruct(logicalType mapping.LogicalType) string {
-	var sb strings.Builder
-	sb.WriteString("STRUCT(")
-
 	count := mapping.StructTypeChildCount(logicalType)
+
+	// DuckDB names an unnamed STRUCT, whose children have empty names, a TUPLE.
+	unnamed := count > 0 && mapping.StructTypeChildName(logicalType, 0) == ""
+
+	var sb strings.Builder
+	if unnamed {
+		sb.WriteString("TUPLE(")
+	} else {
+		sb.WriteString("STRUCT(")
+	}
 
 	for i := range uint64(count) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 
-		childName := mapping.StructTypeChildName(logicalType, mapping.IdxT(i))
 		childType := mapping.StructTypeChildType(logicalType, mapping.IdxT(i))
 
-		sb.WriteString(escapeStructFieldName(childName))
-		sb.WriteByte(' ')
+		if !unnamed {
+			childName := mapping.StructTypeChildName(logicalType, mapping.IdxT(i))
+			sb.WriteString(escapeStructFieldName(childName))
+			sb.WriteByte(' ')
+		}
 		sb.WriteString(logicalTypeName(childType))
 
 		mapping.DestroyLogicalType(&childType)
