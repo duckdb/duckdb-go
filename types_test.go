@@ -1505,6 +1505,68 @@ func TestArray(t *testing.T) {
 	}
 }
 
+func TestUnnamedStruct(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// TUPLE fields scan with the positional names DuckDB uses when unnesting them.
+	pair := map[string]any{"element1": int32(1), "element2": int32(2)}
+	tests := []struct {
+		name  string
+		query string
+		want  any
+	}{
+		{name: "ROW", query: `SELECT ROW(1, 'a')`, want: map[string]any{"element1": int32(1), "element2": "a"}},
+		{name: "tuple", query: `SELECT (1, 2)`, want: pair},
+		{name: "single field", query: `SELECT ROW(1)`, want: map[string]any{"element1": int32(1)}},
+		{name: "NULL field", query: `SELECT ROW(1, NULL::INTEGER)`, want: map[string]any{"element1": int32(1), "element2": nil}},
+		{name: "NULL", query: `SELECT NULL::TUPLE(INTEGER, INTEGER)`, want: nil},
+		{name: "nested", query: `SELECT ROW(0, ROW(1, 2))`, want: map[string]any{"element1": int32(0), "element2": pair}},
+		{name: "list", query: `SELECT [ROW(1, 2), NULL]`, want: []any{pair, nil}},
+		{name: "map value", query: `SELECT MAP {'k': ROW(1, 2)}`, want: OrderedMap{[]any{"k"}, []any{pair}}},
+		{name: "named STRUCT field", query: `SELECT {'t': ROW(1, 2)}`, want: map[string]any{"t": pair}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			require.NoError(t, db.QueryRow(tt.query).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("column type", func(t *testing.T) {
+		res, err := db.Query(`SELECT ROW(1, 'a'), [ROW(1, ROW(2))]`)
+		require.NoError(t, err)
+		defer closeRowsWrapper(t, res)
+
+		columnTypes, err := res.ColumnTypes()
+		require.NoError(t, err)
+		require.Equal(t, "TUPLE(INTEGER, VARCHAR)", columnTypes[0].DatabaseTypeName())
+		require.Equal(t, "TUPLE(INTEGER, TUPLE(INTEGER))[]", columnTypes[1].DatabaseTypeName())
+		require.Equal(t, reflectTypeMapString, columnTypes[0].ScanType())
+	})
+
+	t.Run("type info", func(t *testing.T) {
+		details, ok := columnTypeInfo(t, db, `SELECT ROW(1, 'a')`).Details().(*StructDetails)
+		require.True(t, ok)
+		require.Len(t, details.Entries, 2)
+		require.Equal(t, "element1", details.Entries[0].Name())
+		require.Equal(t, TYPE_INTEGER, details.Entries[0].Info().InternalType())
+		require.Equal(t, "element2", details.Entries[1].Name())
+		require.Equal(t, TYPE_VARCHAR, details.Entries[1].Info().InternalType())
+	})
+
+	t.Run("scan into Go struct", func(t *testing.T) {
+		type row struct {
+			ID   int32  `mapstructure:"element1"`
+			Name string `mapstructure:"element2"`
+		}
+		var got Composite[row]
+		require.NoError(t, db.QueryRow(`SELECT ROW(1, 'a')`).Scan(&got))
+		require.Equal(t, row{ID: 1, Name: "a"}, got.Get())
+	})
+}
+
 func TestJSONType(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

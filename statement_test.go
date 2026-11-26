@@ -2096,6 +2096,38 @@ func TestBindStructNullFields(t *testing.T) {
 	}
 }
 
+func TestBindUnnamedStruct(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	// TUPLE fields bind by their positional names.
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  any
+	}{
+		{name: "fields", query: "SELECT ?::TUPLE(INTEGER, VARCHAR)", arg: map[string]any{"element1": int32(1), "element2": "a"}, want: map[string]any{"element1": int32(1), "element2": "a"}},
+		{name: "same field types", query: "SELECT ?::TUPLE(INTEGER, INTEGER)", arg: map[string]any{"element1": int32(1), "element2": int32(2)}, want: map[string]any{"element1": int32(1), "element2": int32(2)}},
+		{name: "missing field", query: "SELECT ?::TUPLE(INTEGER, INTEGER)", arg: map[string]any{"element2": int32(2)}, want: map[string]any{"element1": nil, "element2": int32(2)}},
+		{name: "list", query: "SELECT ?::TUPLE(INTEGER, INTEGER)[]", arg: []any{map[string]any{"element1": int32(1), "element2": int32(2)}}, want: []any{map[string]any{"element1": int32(1), "element2": int32(2)}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("round trip", func(t *testing.T) {
+		var scanned, got any
+		require.NoError(t, db.QueryRow(`SELECT ROW(1, 'a')`).Scan(&scanned))
+		require.NoError(t, db.QueryRow(`SELECT ?::TUPLE(INTEGER, VARCHAR) = ROW(1, 'a')`, scanned).Scan(&got))
+		require.Equal(t, true, got)
+	})
+}
+
 func TestBindMapNullValues(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)

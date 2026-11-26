@@ -542,7 +542,7 @@ func createStructValue(lt mapping.LogicalType, val any) (mapping.Value, error) {
 
 	childCount := mapping.StructTypeChildCount(lt)
 	for i := range uint64(childCount) {
-		name := mapping.StructTypeChildName(lt, mapping.IdxT(i))
+		name := structEntryName(lt, mapping.IdxT(i))
 		t := mapping.StructTypeChildType(lt, mapping.IdxT(i))
 		defer mapping.DestroyLogicalType(&t)
 

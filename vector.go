@@ -374,7 +374,7 @@ func (vec *vector) initStruct(logicalType mapping.LogicalType, colIdx int) error
 	childCount := mapping.StructTypeChildCount(logicalType)
 	var structEntries []StructEntry
 	for i := range uint64(childCount) {
-		name := mapping.StructTypeChildName(logicalType, mapping.IdxT(i))
+		name := structEntryName(logicalType, mapping.IdxT(i))
 		entry, err := NewStructEntry(nil, name)
 		structEntries = append(structEntries, entry)
 		if err != nil {

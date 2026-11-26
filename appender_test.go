@@ -669,6 +669,45 @@ func TestAppenderNestedNullStruct(t *testing.T) {
 	}
 }
 
+type tupleStruct struct {
+	ID   int32  `db:"element1"`
+	Name string `db:"element2"`
+}
+
+func TestAppenderUnnamedStruct(t *testing.T) {
+	for _, appenderType := range appenderTypes {
+		t.Run(appenderType, func(t *testing.T) {
+			c, db, conn, a := prepareAppender(t, appenderType,
+				`CREATE TABLE test (id INTEGER, t TUPLE(INTEGER, VARCHAR), l TUPLE(INTEGER, VARCHAR)[])`)
+			defer cleanupAppender(t, c, db, conn, a)
+
+			// TUPLE fields are written by their positional names.
+			fields := map[string]any{"element1": int32(1), "element2": "a"}
+			require.NoError(t, a.AppendRow(int32(0), fields, []any{fields, nil}))
+			require.NoError(t, a.AppendRow(int32(1), tupleStruct{ID: 2, Name: "b"}, []tupleStruct{{ID: 3, Name: "c"}}))
+			require.NoError(t, a.AppendRow(int32(2), nil, nil))
+			require.NoError(t, a.Flush())
+
+			res, err := db.Query(`SELECT t::VARCHAR, l::VARCHAR FROM test ORDER BY id`)
+			require.NoError(t, err)
+			defer closeRowsWrapper(t, res)
+
+			var got [][2]any
+			for res.Next() {
+				var tuple, list any
+				require.NoError(t, res.Scan(&tuple, &list))
+				got = append(got, [2]any{tuple, list})
+			}
+			require.NoError(t, res.Err())
+			require.Equal(t, [][2]any{
+				{"(1, a)", "[(1, a), NULL]"},
+				{"(2, b)", "[(3, c)]"},
+				{nil, nil},
+			}, got)
+		})
+	}
+}
+
 func TestAppenderNullIntAndString(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (id BIGINT, str VARCHAR)`)
 	defer cleanupAppender(t, c, db, conn, a)

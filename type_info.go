@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"strconv"
 
 	"github.com/duckdb/duckdb-go/v2/mapping"
 )
@@ -18,7 +19,8 @@ type structEntry struct {
 type StructEntry interface {
 	// Info returns a STRUCT entry's type information.
 	Info() TypeInfo
-	// Name returns a STRUCT entry's name.
+	// Name returns a STRUCT entry's name. The entries of an unnamed STRUCT (a TUPLE) are named
+	// element1, element2, and so on.
 	Name() string
 }
 
@@ -606,6 +608,16 @@ func newMapInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
 	return NewMapInfo(keyInfo, valueInfo)
 }
 
+// structEntryName returns the name of the STRUCT child at index i. The children of an unnamed
+// STRUCT have empty names, so they get DuckDB's unnest names element1, element2, and so on.
+func structEntryName(lt mapping.LogicalType, i mapping.IdxT) string {
+	name := mapping.StructTypeChildName(lt, i)
+	if name == "" {
+		return "element" + strconv.FormatUint(uint64(i)+1, 10)
+	}
+	return name
+}
+
 func newStructInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
 	count := mapping.StructTypeChildCount(lt)
 	if count == 0 {
@@ -614,7 +626,7 @@ func newStructInfoFromLogicalType(lt mapping.LogicalType) (TypeInfo, error) {
 
 	entries := make([]StructEntry, count)
 	for i := range int(count) {
-		name := mapping.StructTypeChildName(lt, mapping.IdxT(i))
+		name := structEntryName(lt, mapping.IdxT(i))
 		childLT := mapping.StructTypeChildType(lt, mapping.IdxT(i))
 
 		childInfo, err := newTypeInfoFromLogicalType(childLT)
