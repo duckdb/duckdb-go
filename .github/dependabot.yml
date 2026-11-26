@@ -16,3 +16,6 @@ updates:
       interval: daily
       time: "20:00"
     open-pull-requests-limit: 10
+    ignore:
+      # Upgrade native modules together with the pinned C API headers and manifest.
+      - dependency-name: "go.duckdb.org/libduckdb/*"

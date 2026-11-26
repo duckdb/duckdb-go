@@ -50,10 +50,12 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
+      - name: Verify Selected C API v2 Native Artifact
+        run: ./scripts/check-capi2-native.sh prebuilt
       - name: Run Main Tests
-        run: go test -v
+        run: go test -v ./...
       - name: Check Cgo Pointer Rules
-        run: GOEXPERIMENT=cgocheck2 go test -count=1 -tags=debug_bindings,duckdb_arrow
+        run: GOEXPERIMENT=cgocheck2 go test -count=1 -tags=debug_bindings,duckdb_arrow ./...
       - name: Test Vendored Consumer
         if: matrix.platform == 'linux-amd64'
         run: make test.vendor
@@ -200,3 +202,8 @@ jobs:
           }
       - name: Run Lib Tests
         run: TAGS=duckdb_arrow make test.${{ matrix.link }}
+      - name: Check C API v2 Pointer Rules
+        run: GOEXPERIMENT=cgocheck2 TAGS=debug_bindings,duckdb_arrow ./scripts/test-${{ matrix.link }}.sh ./internal/capi2/...
+      - name: Reject Loadable C API v2 Mismatch
+        if: matrix.platform == 'linux-amd64' && matrix.link == 'dynamic'
+        run: ./scripts/test-capi2-mismatch.sh "$GITHUB_WORKSPACE/dynamic-dir"

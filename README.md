@@ -341,11 +341,13 @@ make
 cd /path/to/duckdb-go
 CGO_ENABLED=1 \
 CGO_LDFLAGS="-L/path/to/duckdb/build/release/src -Wl,-rpath,/path/to/duckdb/build/release/src" \
-go test -count=1 -tags=duckdb_use_lib ./...
+go test -count=1 -tags=duckdb_use_lib .
 ```
 
 Use `-count=1` so Go reruns the tests after rebuilding the shared library.
 To run only the test you care about, add `-run TestName -v`.
+This tests the existing driver, not the experimental `internal/capi2` bootstrap.
+The bootstrap is pinned to DuckDB 2.0.1 and rejects other library versions.
 
 ## Cross-Compilation
 

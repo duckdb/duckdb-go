@@ -40,16 +40,19 @@ TAGS=duckdb_arrow make test.dynamic
 TAGS=duckdb_arrow make test.static
 ```
 
-The targets run `scripts/test-dynamic.sh` and `scripts/test-static.sh`.
-To pass `go test` arguments, invoke either script directly, for example:
+The targets run `scripts/test-dynamic.sh` and `scripts/test-static.sh` against `./...`.
+To select packages or pass `go test` arguments, invoke either script directly, for example:
 
 ```sh
-./scripts/test-dynamic.sh -run TestOpen -v
+./scripts/test-dynamic.sh . -run TestOpen -v
+./scripts/test-static.sh ./internal/capi2/... -v
 ```
 
+With flags but no package, the scripts test only the root package, so pass `./...` explicitly to test all packages.
 Do not pass `-tags` or `-ldflags`; they replace the scripts' library and linker settings.
 
-`test.dynamic` requires `curl`, `jq`, `tar`, and `sha256sum` or `shasum`.
+Both targets require `jq` and either `sha256sum` or `shasum`.
+`test.dynamic` also requires `curl` and `tar`.
 It downloads and verifies the shared library before running the tests, caching the archive
 in `dynamic-dir` for subsequent runs, including offline runs.
 `test.static` uses the native module's static libraries.
