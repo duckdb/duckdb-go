@@ -790,6 +790,127 @@ func TestAppenderValuerError(t *testing.T) {
 	require.Equal(t, int64(1), count)
 }
 
+type pointerStruct struct {
+	A *int64  `db:"a"`
+	B *string `db:"b"`
+}
+
+type pointerMarshaler struct{}
+
+func (*pointerMarshaler) MarshalJSON() ([]byte, error) {
+	return []byte(`"pointer receiver"`), nil
+}
+
+func TestAppenderPointerValues(t *testing.T) {
+	one := int64(1)
+	onePtr := &one
+	key, text := "k", "x"
+	id := UUID(uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"))
+
+	// Pointers write the values they point to, or NULL if nil.
+	tests := []struct {
+		name, sqlType string
+		value         driver.Value
+		want          any
+	}{
+		{"pointer", "BIGINT", &one, "1"},
+		{"nil pointer", "BIGINT", (*int64)(nil), nil},
+		{"pointer to pointer", "BIGINT", &onePtr, "1"},
+		{"list", "BIGINT[]", []*int64{&one, nil}, "[1, NULL]"},
+		{"list in any", "BIGINT[]", []any{int64(1), (*int64)(nil)}, "[1, NULL]"},
+		{"nested list", "BIGINT[][]", [][]*int64{{&one, nil}, nil}, "[[1, NULL], NULL]"},
+		{"array", "BIGINT[2]", [2]*int64{&one, nil}, "[1, NULL]"},
+		{"struct fields", "STRUCT(a BIGINT, b VARCHAR)", map[string]any{"a": &one, "b": (*string)(nil)}, "{'a': 1, 'b': NULL}"},
+		{"Go struct fields", "STRUCT(a BIGINT, b VARCHAR)", pointerStruct{A: &one, B: &text}, "{'a': 1, 'b': x}"},
+		{"list of Go struct pointers", "STRUCT(a BIGINT, b VARCHAR)[]", []*pointerStruct{{A: &one}, nil}, "[{'a': 1, 'b': NULL}, NULL]"},
+		{"map key and value", "MAP(VARCHAR, BIGINT)", OrderedMap{[]any{&key, "n"}, []any{&one, (*int64)(nil)}}, "{k=1, n=NULL}"},
+		{"union value", "UNION(num BIGINT, str VARCHAR)", Union{Tag: "num", Value: &one}, "1"},
+		{"big.Int list", "HUGEINT[]", []*big.Int{big.NewInt(1), nil}, "[1, NULL]"},
+		{"UUID list", "UUID[]", []*UUID{&id, nil}, "[123e4567-e89b-12d3-a456-426614174000, NULL]"},
+		{"JSON nil pointer", "JSON", (*pointerMarshaler)(nil), nil},
+		{"JSON list", "JSON[]", []*pointerMarshaler{{}, nil}, `["pointer receiver", NULL]`},
+	}
+	for _, appenderType := range appenderTypes {
+		for _, tt := range tests {
+			t.Run(appenderType+"/"+tt.name, func(t *testing.T) {
+				c, db, conn, a := prepareAppender(t, appenderType, `CREATE TABLE test (value `+tt.sqlType+`)`)
+				defer cleanupAppender(t, c, db, conn, a)
+
+				require.NoError(t, a.AppendRow(tt.value))
+				require.NoError(t, a.Flush())
+
+				var got any
+				require.NoError(t, db.QueryRow(`SELECT value::VARCHAR FROM test`).Scan(&got))
+				require.Equal(t, tt.want, got)
+			})
+		}
+	}
+}
+
+type valuerStruct struct {
+	A sql.NullInt64  `db:"a"`
+	B sql.NullString `db:"b"`
+}
+
+func TestAppenderValuerElements(t *testing.T) {
+	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+
+	// Valuers write their values, and named types their underlying types.
+	tests := []struct {
+		name, sqlType string
+		value         driver.Value
+		want          any
+	}{
+		{"sql.Null list", "BIGINT[]", []sql.Null[int64]{{V: 1, Valid: true}, {}}, "[1, NULL]"},
+		{"custom nullable list", "VARCHAR[]", []testNullable[string]{{V: "a", Valid: true}, {}}, "[a, NULL]"},
+		{"pointers to Valuers", "BIGINT[]", []*sql.NullInt64{{Int64: 1, Valid: true}, nil}, "[1, NULL]"},
+		{"array", "BIGINT[2]", [2]sql.NullInt64{{Int64: 1, Valid: true}}, "[1, NULL]"},
+		{"struct fields", "STRUCT(a BIGINT, b VARCHAR)", map[string]any{"a": sql.NullInt64{Int64: 1, Valid: true}, "b": sql.NullString{}}, "{'a': 1, 'b': NULL}"},
+		{"Go struct fields", "STRUCT(a BIGINT, b VARCHAR)[]", []valuerStruct{{A: sql.NullInt64{Int64: 1, Valid: true}}}, "[{'a': 1, 'b': NULL}]"},
+		{"map key and value", "MAP(VARCHAR, BIGINT)", OrderedMap{[]any{sql.NullString{String: "k", Valid: true}}, []any{sql.NullInt64{}}}, "{k=NULL}"},
+		{"union value", "UNION(num BIGINT, str VARCHAR)", Union{Tag: "str", Value: sql.NullString{String: "x", Valid: true}}, "x"},
+		{"uuid.UUID", "UUID", id, id.String()},
+		{"uuid.UUID list", "UUID[]", []uuid.UUID{id}, "[" + id.String() + "]"},
+		{"named string", "VARCHAR", namedVarchar("a"), "a"},
+		{"named string list", "VARCHAR[]", []namedVarchar{"a"}, "[a]"},
+		{"named integer list", "SMALLINT[]", []namedInt16{1}, "[1]"},
+		{"named byte slice list", "VARCHAR[]", []namedBytes{namedBytes("x")}, "[x]"},
+		{"named byte slice into BLOB", "BLOB", namedBytes("a\x00b"), `a\x00b`},
+		{"named byte slice into VARCHAR", "VARCHAR", namedBytes("ab"), "ab"},
+		{"named byte slice into UTINYINT[]", "UTINYINT[]", namedBytes("ab"), "[97, 98]"},
+		{"named string ENUM", "ENUM('a', 'b')", namedVarchar("b"), "b"},
+		{"JSON Valuer list", "JSON[]", []jsonTextValuer{jsonTextValuer(`{"a":1}`), nil}, `["{\"a\":1}", NULL]`},
+		{"JSON raw message list", "JSON[]", []json.RawMessage{json.RawMessage(`{"a":1}`)}, `[{"a":1}]`},
+	}
+	for _, appenderType := range appenderTypes {
+		for _, tt := range tests {
+			t.Run(appenderType+"/"+tt.name, func(t *testing.T) {
+				c, db, conn, a := prepareAppender(t, appenderType, `CREATE TABLE test (value `+tt.sqlType+`)`)
+				defer cleanupAppender(t, c, db, conn, a)
+
+				require.NoError(t, a.AppendRow(tt.value))
+				require.NoError(t, a.Flush())
+
+				var got any
+				require.NoError(t, db.QueryRow(`SELECT value::VARCHAR FROM test`).Scan(&got))
+				require.Equal(t, tt.want, got)
+			})
+		}
+	}
+
+	t.Run("Valuer error", func(t *testing.T) {
+		c, db, conn, a := prepareAppender(t, appenderTypeDefault,
+			`CREATE TABLE test (l BIGINT[], s STRUCT(a BIGINT), m MAP(BIGINT, BIGINT))`)
+		defer cleanupAppender(t, c, db, conn, a)
+
+		valuerErr := errors.New("cannot convert value")
+		failing := appenderValuer{err: valuerErr}
+		require.ErrorIs(t, a.AppendRow([]any{failing}, nil, nil), valuerErr)
+		require.ErrorIs(t, a.AppendRow(nil, map[string]any{"a": failing}, nil), valuerErr)
+		require.ErrorIs(t, a.AppendRow(nil, nil, OrderedMap{[]any{int64(1)}, []any{failing}}), valuerErr)
+	})
+}
+
 func TestAppenderRowAfterFailedRow(t *testing.T) {
 	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
 	CREATE TABLE test (

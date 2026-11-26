@@ -117,6 +117,13 @@ func inferUUID(val any) (mapping.HugeInt, error) {
 		for i := range uuidLength {
 			id[i] = v[i]
 		}
+	case string:
+		// UUID types such as uuid.UUID return their text from Value.
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			return mapping.HugeInt{}, err
+		}
+		id = UUID(parsed)
 	default:
 		return mapping.HugeInt{}, castError(reflect.TypeOf(val).String(), reflectTypeUUID.String())
 	}

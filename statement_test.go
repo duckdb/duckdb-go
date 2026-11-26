@@ -1069,10 +1069,14 @@ func TestDriverValuer(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO valuer_test (ids) VALUES (?)`, any("[123e4567-e89b-12d3-a456-426614174000,3a92e387-4b7d-4098-b273-967d48f6925f]"))
 	require.NoError(t, err, "any parameter should work for UUID arrays")
 
-	// Expected to fail - no driver.Valuer implementation
+	// The list has no driver.Valuer implementation, but its uuid.UUID elements do.
 	_, err = db.Exec(`INSERT INTO valuer_test (ids) VALUES (?)`, []uuid.UUID{uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"), uuid.MustParse("3a92e387-4b7d-4098-b273-967d48f6925f")})
-	require.Error(t, err, "[]uuid.UUID should fail without driver.Valuer")
-	require.Contains(t, err.Error(), castErrMsg)
+	require.NoError(t, err, "driver.Valuer elements should work for UUID arrays")
+
+	var lists, rows int
+	require.NoError(t, db.QueryRow(`SELECT count(DISTINCT ids), count(*) FROM valuer_test`).Scan(&lists, &rows))
+	require.Equal(t, 1, lists)
+	require.Equal(t, 4, rows)
 }
 
 func TestDriverValuerNilPointer(t *testing.T) {
@@ -2011,6 +2015,158 @@ func TestBindCompositeNullElements(t *testing.T) {
 	}
 }
 
+func TestBindPointerElements(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	one, two := int64(1), int64(2)
+	onePtr := &one
+	key, text := "k", "x"
+	list := []int64{1}
+	id := UUID(uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"))
+
+	// Pointers bind the values they point to, or NULL if nil.
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  any
+	}{
+		{name: "list", query: "SELECT ?::BIGINT[]", arg: []*int64{&one, nil, &two}, want: []any{int64(1), nil, int64(2)}},
+		{name: "list in any", query: "SELECT ?::BIGINT[]", arg: []any{&one, (*int64)(nil)}, want: []any{int64(1), nil}},
+		{name: "pointer to pointer", query: "SELECT ?::BIGINT[]", arg: []**int64{&onePtr}, want: []any{int64(1)}},
+		{name: "nested list", query: "SELECT ?::BIGINT[][]", arg: [][]*int64{{&one, nil}, nil}, want: []any{[]any{int64(1), nil}, nil}},
+		{name: "list of list pointers", query: "SELECT ?::BIGINT[][]", arg: []*[]int64{&list, nil}, want: []any{[]any{int64(1)}, nil}},
+		{name: "array", query: "SELECT ?::BIGINT[2]", arg: [2]*int64{&one, nil}, want: []any{int64(1), nil}},
+		{name: "struct fields", query: "SELECT ?::STRUCT(a BIGINT, b VARCHAR, c VARCHAR)", arg: map[string]any{"a": &one, "b": &text, "c": (*string)(nil)}, want: map[string]any{"a": int64(1), "b": "x", "c": nil}},
+		{name: "map key and value", query: "SELECT ?::MAP(VARCHAR, BIGINT)", arg: OrderedMap{[]any{&key, "n"}, []any{&one, (*int64)(nil)}}, want: OrderedMap{[]any{"k", "n"}, []any{int64(1), nil}}},
+		{name: "Map value", query: "SELECT ?::MAP(VARCHAR, BIGINT)", arg: Map{"k": &one}, want: OrderedMap{[]any{"k"}, []any{int64(1)}}},
+		{name: "big.Int", query: "SELECT ?::HUGEINT[]", arg: []*big.Int{big.NewInt(1), nil}, want: []any{big.NewInt(1), nil}},
+		{name: "UUID", query: "SELECT ?::UUID[]", arg: []*UUID{&id, nil}, want: []any{id[:], nil}},
+		{name: "inferred nested list", query: "SELECT ?", arg: [][]*int64{{&one, nil}}, want: []any{[]any{int64(1), nil}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+type jsonTextValuer []byte
+
+func (v jsonTextValuer) Value() (driver.Value, error) {
+	return string(v), nil
+}
+
+type testNullable[T any] struct {
+	V     T
+	Valid bool
+}
+
+func (n testNullable[T]) Value() (driver.Value, error) {
+	if !n.Valid {
+		return nil, nil
+	}
+	return n.V, nil
+}
+
+type (
+	namedInt16 int16
+	namedBytes []byte
+)
+
+func TestBindValuerElements(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+
+	// database/sql converts only top-level arguments, so the driver converts nested ones.
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  any
+	}{
+		{name: "sql.Null list", query: "SELECT ?::BIGINT[]", arg: []sql.Null[int64]{{V: 1, Valid: true}, {}}, want: []any{int64(1), nil}},
+		{name: "int64 Value into INTEGER", query: "SELECT ?::INTEGER[]", arg: []sql.NullInt32{{Int32: 1, Valid: true}, {}}, want: []any{int32(1), nil}},
+		{name: "float64 Value into FLOAT", query: "SELECT ?::FLOAT[]", arg: []sql.NullFloat64{{Float64: 0.5, Valid: true}}, want: []any{float32(0.5)}},
+		{name: "custom nullable list", query: "SELECT ?::VARCHAR[]", arg: []testNullable[string]{{V: "a", Valid: true}, {}}, want: []any{"a", nil}},
+		{name: "pointers to Valuers", query: "SELECT ?::BIGINT[]", arg: []*sql.NullInt64{{Int64: 1, Valid: true}, nil}, want: []any{int64(1), nil}},
+		{name: "array", query: "SELECT ?::BIGINT[2]", arg: [2]sql.NullInt64{{Int64: 1, Valid: true}}, want: []any{int64(1), nil}},
+		{name: "nested list", query: "SELECT ?::BIGINT[][]", arg: [][]sql.NullInt64{{{Int64: 1, Valid: true}, {}}}, want: []any{[]any{int64(1), nil}}},
+		{name: "struct fields", query: "SELECT ?::STRUCT(a BIGINT, b VARCHAR)", arg: map[string]any{"a": sql.NullInt64{Int64: 1, Valid: true}, "b": sql.NullString{}}, want: map[string]any{"a": int64(1), "b": nil}},
+		{name: "map key and value", query: "SELECT ?::MAP(VARCHAR, BIGINT)", arg: OrderedMap{[]any{sql.NullString{String: "k", Valid: true}}, []any{sql.NullInt64{}}}, want: OrderedMap{[]any{"k"}, []any{nil}}},
+		{name: "Map value", query: "SELECT ?::MAP(VARCHAR, BIGINT)", arg: Map{"k": sql.NullInt64{Int64: 1, Valid: true}}, want: OrderedMap{[]any{"k"}, []any{int64(1)}}},
+		{name: "JSON documents", query: "SELECT (?::JSON[])::VARCHAR", arg: []jsonTextValuer{jsonTextValuer(`{"a":1}`), nil}, want: `[{"a":1}, NULL]`},
+		{name: "uuid.UUID", query: "SELECT ?::UUID[]", arg: []uuid.UUID{id}, want: []any{id[:]}},
+		{name: "named string", query: "SELECT ?::VARCHAR[]", arg: []namedVarchar{"a"}, want: []any{"a"}},
+		{name: "named integer", query: "SELECT ?::SMALLINT[]", arg: []namedInt16{1}, want: []any{int16(1)}},
+		{name: "named byte slice", query: "SELECT ?::VARCHAR[]", arg: []namedBytes{namedBytes("x")}, want: []any{"x"}},
+		{name: "integer size", query: "SELECT ?::INTEGER[]", arg: []int{1}, want: []any{int32(1)}},
+		{name: "inferred sql.Null list", query: "SELECT ?", arg: []sql.NullInt64{{Int64: 1, Valid: true}, {}}, want: []any{int64(1), nil}},
+		{name: "inferred JSON documents", query: "SELECT ?", arg: []jsonTextValuer{jsonTextValuer(`{"a":1}`)}, want: []any{`{"a":1}`}},
+		{name: "inferred named types", query: "SELECT ?", arg: []any{namedInt16(1), namedInt16(2)}, want: []any{int16(1), int16(2)}},
+		{name: "inferred named byte slice", query: "SELECT ?", arg: []namedBytes{namedBytes("x")}, want: []any{"x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			require.NoError(t, db.QueryRow(tt.query, tt.arg).Scan(&got))
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("JSON column", func(t *testing.T) {
+		createTable(t, db, `CREATE TABLE json_lists (j JSON[])`)
+		docs := []jsonTextValuer{jsonTextValuer(`{"a":1}`), nil}
+		_, err := db.Exec(`INSERT INTO json_lists VALUES (?)`, docs)
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO json_lists SELECT ?`, docs)
+		require.NoError(t, err)
+
+		var got []string
+		rows, err := db.Query(`SELECT j::VARCHAR FROM json_lists`)
+		require.NoError(t, err)
+		defer closeRowsWrapper(t, rows)
+		for rows.Next() {
+			var s string
+			require.NoError(t, rows.Scan(&s))
+			got = append(got, s)
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, []string{`[{"a":1}, NULL]`, `[{"a":1}, NULL]`}, got)
+	})
+}
+
+func TestBindElementConversionErrors(t *testing.T) {
+	db := openDbWrapper(t, ``)
+	defer closeDbWrapper(t, db)
+
+	tests := []struct {
+		name  string
+		query string
+		arg   any
+		want  string
+	}{
+		{name: "Valuer error", query: "SELECT ?::BIGINT[]", arg: []any{typedErrValuer{}}, want: "typed valuer error"},
+		{name: "inferred Valuer error", query: "SELECT ?", arg: []any{typedErrValuer{}}, want: "typed valuer error"},
+		{name: "struct field Valuer error", query: "SELECT ?::STRUCT(a BIGINT)", arg: map[string]any{"a": typedErrValuer{}}, want: "typed valuer error"},
+		{name: "map key Valuer error", query: "SELECT ?::MAP(BIGINT, BIGINT)", arg: OrderedMap{[]any{typedErrValuer{}}, []any{int64(1)}}, want: "typed valuer error"},
+		{name: "integer out of range", query: "SELECT ?::TINYINT[]", arg: []int{300}, want: "cannot convert 300 to TINYINT"},
+		{name: "invalid UUID text", query: "SELECT ?::UUID[]", arg: []string{"not a UUID"}, want: "invalid UUID"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got any
+			err := db.QueryRow(tt.query, tt.arg).Scan(&got)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
 func TestBindListElementTypeMismatch(t *testing.T) {
 	db := openDbWrapper(t, ``)
 	defer closeDbWrapper(t, db)
@@ -2137,6 +2293,7 @@ func TestBindMapNullKeys(t *testing.T) {
 	}{
 		{name: "nil key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", key: nil},
 		{name: "typed nil pointer key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", key: (*string)(nil)},
+		{name: "NULL Valuer key", query: "SELECT ?::MAP(VARCHAR, INTEGER)", key: sql.NullString{}},
 		{name: "typed nil list key", query: "SELECT ?::MAP(INTEGER[], INTEGER)", key: []int32(nil)},
 		{name: "typed nil struct key", query: "SELECT ?::MAP(STRUCT(a INTEGER), INTEGER)", key: map[string]any(nil)},
 		{name: "typed nil map key", query: "SELECT ?::MAP(MAP(VARCHAR, INTEGER), INTEGER)", key: Map(nil)},

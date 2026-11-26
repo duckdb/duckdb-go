@@ -434,7 +434,7 @@ func setStruct[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		if !ok {
 			return structFieldError("missing field", name)
 		}
-		err := setVectorVal(child, rowIdx, v)
+		err := setElementVal(child, rowIdx, v)
 		if err != nil {
 			return err
 		}
@@ -463,10 +463,10 @@ func setMap[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	children := vec.childVectors[0].childVectors
 	for i, key := range m.keys {
 		idx := childVectorSize + mapping.IdxT(i)
-		if err := setVectorVal(&children[0], idx, key); err != nil {
+		if err := setElementVal(&children[0], idx, key); err != nil {
 			return err
 		}
-		if err := setVectorVal(&children[1], idx, m.values[i]); err != nil {
+		if err := setElementVal(&children[1], idx, m.values[i]); err != nil {
 			return err
 		}
 	}
@@ -488,7 +488,7 @@ func setSliceChildren(vec *vector, s []any, offset mapping.IdxT) error {
 	childVector := &vec.childVectors[0]
 	for i, entry := range s {
 		rowIdx := mapping.IdxT(i) + offset
-		err := setVectorVal(childVector, rowIdx, entry)
+		err := setElementVal(childVector, rowIdx, entry)
 		if err != nil {
 			return err
 		}
@@ -521,7 +521,7 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		for i := 1; i < len(vec.childVectors); i++ {
 			child := &vec.childVectors[i]
 			if uint32(i) == tag+1 {
-				if err := setVectorVal(child, rowIdx, v.Value); err != nil {
+				if err := setElementVal(child, rowIdx, v.Value); err != nil {
 					return err
 				}
 				continue
@@ -558,6 +558,33 @@ func setUnion[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 		// No member accepted the value.
 		return castError(reflect.TypeOf(val).String(), "UNION member")
 	}
+}
+
+// writeValue converts val like database/sql converts parameters. JSON vectors convert only
+// driver.Valuer implementations and nil pointers and leave the rest to encoding/json.
+func (vec *vector) writeValue(val any) (any, error) {
+	if needsNoConversion(val) {
+		return val, nil
+	}
+	if vec.isJSON {
+		return valuerValue(val)
+	}
+	val, err := elementValue(val)
+	if err != nil {
+		return nil, err
+	}
+	val, _ = underlyingValue(val)
+	return val, nil
+}
+
+func setElementVal(vec *vector, rowIdx mapping.IdxT, val any) error {
+	if !needsNoConversion(val) {
+		var err error
+		if val, err = vec.writeValue(val); err != nil {
+			return err
+		}
+	}
+	return setVectorVal(vec, rowIdx, val)
 }
 
 // setVectorVal writes val to the vector at rowIdx.
