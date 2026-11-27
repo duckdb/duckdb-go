@@ -338,6 +338,17 @@ func setJSON[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 }
 
 func setDecimal[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
+	if d, ok := any(val).(Decimal); ok {
+		converted, err := d.forColumn(vec.decimalWidth, vec.decimalScale)
+		if err != nil {
+			return err
+		}
+		return setDecimalCoefficient(vec, rowIdx, converted)
+	}
+	return setDecimalCoefficient(vec, rowIdx, val)
+}
+
+func setDecimalCoefficient[S any](vec *vector, rowIdx mapping.IdxT, val S) error {
 	switch vec.internalType {
 	case TYPE_SMALLINT:
 		return setNumeric[S, int16](vec, rowIdx, val)

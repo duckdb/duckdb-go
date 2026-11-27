@@ -1513,6 +1513,44 @@ func TestAppenderDecimal(t *testing.T) {
 	require.Equal(t, 3, i)
 }
 
+func TestAppenderDecimalScale(t *testing.T) {
+	for _, appenderType := range appenderTypes {
+		t.Run(appenderType, func(t *testing.T) {
+			c, db, conn, a := prepareAppender(t, appenderType, `
+				CREATE TABLE test (d4 DECIMAL(4,2), d9 DECIMAL(9,2), d18 DECIMAL(18,2), d38 DECIMAL(38,2))`)
+			defer cleanupAppender(t, c, db, conn, a)
+
+			// 99.995 rounds to 100.00 and no longer fits the first column.
+			overflow := Decimal{Width: 5, Scale: 3, Value: big.NewInt(99995)}
+			require.ErrorIs(t, a.AppendRow(overflow, nil, nil, nil), errDecimalValueExceedsWidth)
+
+			for _, tc := range []struct {
+				amount Decimal
+				want   string
+			}{
+				{Decimal{Width: 4, Scale: 1, Value: big.NewInt(45)}, "4.50"},
+				{Decimal{Width: 4, Scale: 3, Value: big.NewInt(4560)}, "4.56"},
+				{Decimal{Width: 4, Scale: 3, Value: big.NewInt(4555)}, "4.56"},
+				{Decimal{Width: 4, Scale: 3, Value: big.NewInt(-4555)}, "-4.56"},
+				{Decimal{Width: 4, Scale: 3, Value: big.NewInt(-4554)}, "-4.55"},
+			} {
+				original := new(big.Int).Set(tc.amount.Value)
+				require.NoError(t, a.AppendRow(tc.amount, tc.amount, tc.amount, tc.amount))
+				require.NoError(t, a.Flush())
+
+				var got [4]string
+				err := db.QueryRow(`SELECT d4::VARCHAR, d9::VARCHAR, d18::VARCHAR, d38::VARCHAR
+					FROM test ORDER BY rowid DESC LIMIT 1`).Scan(&got[0], &got[1], &got[2], &got[3])
+				require.NoError(t, err)
+				for _, amount := range got {
+					require.Equal(t, tc.want, amount)
+				}
+				require.Zero(t, original.Cmp(tc.amount.Value))
+			}
+		})
+	}
+}
+
 func TestAppenderStrings(t *testing.T) {
 	for _, appenderType := range appenderTypes {
 		func() {
