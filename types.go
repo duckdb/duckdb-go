@@ -363,7 +363,7 @@ func decimalFromNative(d Decimal) (mapping.Decimal, error) {
 	}
 	// DuckDB does not validate this: depending on Width, a value with more digits aborts the
 	// process, is truncated, or is stored outside DECIMAL(Width, Scale).
-	if len(new(big.Int).Abs(d.Value).String()) > int(d.Width) {
+	if d.Value.CmpAbs(&decimalPowers[d.Width]) >= 0 {
 		return mapping.Decimal{}, errDecimalValueExceedsWidth
 	}
 	value, err := hugeIntFromNative(d.Value)
@@ -736,10 +736,48 @@ func (s *Composite[T]) Scan(v any) error {
 
 const max_decimal_width = 38
 
+// decimalPowers[n] is 10^n. Treat the entries as read-only.
+var decimalPowers = func() [max_decimal_width + 1]big.Int {
+	var powers [max_decimal_width + 1]big.Int
+	powers[0].SetInt64(1)
+	ten := big.NewInt(10)
+	for i := 1; i < len(powers); i++ {
+		powers[i].Mul(&powers[i-1], ten)
+	}
+	return powers
+}()
+
 type Decimal struct {
 	Width uint8
 	Scale uint8
 	Value *big.Int
+}
+
+// forColumn converts the coefficient to the column's scale before it is stored.
+func (d Decimal) forColumn(width, scale uint8) (Decimal, error) {
+	if d.Value == nil {
+		return Decimal{}, castError("nil Decimal.Value", "*big.Int")
+	}
+	if d.Scale > max_decimal_width {
+		return Decimal{}, errInvalidDecimalScale
+	}
+	if d.Scale < scale {
+		d.Value = new(big.Int).Mul(d.Value, &decimalPowers[scale-d.Scale])
+	} else if d.Scale > scale {
+		divisor := &decimalPowers[d.Scale-scale]
+		// DuckDB rounds ties away from zero when reducing the scale.
+		half := new(big.Int).Rsh(divisor, 1)
+		if d.Value.Sign() < 0 {
+			half.Neg(half)
+		}
+		value := new(big.Int).Add(d.Value, half)
+		d.Value = value.Quo(value, divisor)
+	}
+	if d.Value.CmpAbs(&decimalPowers[width]) >= 0 {
+		return Decimal{}, errDecimalValueExceedsWidth
+	}
+	d.Width, d.Scale = width, scale
+	return d, nil
 }
 
 func (d Decimal) Float64() float64 {
